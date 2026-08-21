@@ -1,0 +1,12 @@
+{
+  "name": "Bivaax",
+  "description": "Bivaax Trade - High Yield Binary Options Trading Platform with Advanced SEO and Secure Firebase Persistence.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API",
+    "MAJOR_CAPABILITY_CLOUD_SQL"
+  ]
+}
