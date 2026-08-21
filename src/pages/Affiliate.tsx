@@ -432,7 +432,7 @@ const menuItems = [
   { id: 'profile', label: 'Profile', icon: User },
   { id: 'partner-bot', label: 'Partner Bot', icon: Bot, isNew: true },
   { id: 'rules', label: 'Rules', icon: ShieldAlert },
-  { id: 'support', label: 'Telegram Manager', icon: Send },
+  { id: 'support', label: 'Support Desk', icon: Headphones },
 ];
 
 export default function AffiliatePage() {
@@ -465,6 +465,7 @@ export default function AffiliatePage() {
   const [impressions, setImpressions] = useState(0);
 
   const [campaignTab, setCampaignTab] = useState<'live' | 'archived'>('live');
+  const [view, setView] = useState<'default' | 'new_ticket' | 'tickets'>('default');
   const [postbacks, setPostbacks] = useState<any[]>([]);
   const [isAddingPostback, setIsAddingPostback] = useState(false);
   const [showAddPostback, setShowAddPostback] = useState(false);
@@ -1443,12 +1444,10 @@ export default function AffiliatePage() {
                          <p className="text-[11px] text-gray-400 font-bold uppercase tracking-widest">Signals & Stats</p>
                       </div>
                    </div>
-                   <button 
-                      onClick={() => window.open('https://t.me/Bivaax_Official', '_blank')}
-                      className="px-4 py-2 bg-[#3b66f5]/20 text-[#3b66f5] rounded-xl text-[11px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-[#3b66f5]/30 transition-colors cursor-pointer"
-                   >
-                      <ExternalLink size={14} /> View on Telegram
-                   </button>
+                   <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                      <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest px-3 py-1 bg-emerald-500/10 rounded-lg">Connected</span>
+                   </div>
                 </div>
                 
                 {/* Chat Area */}
@@ -1779,7 +1778,12 @@ export default function AffiliatePage() {
                        <TrendingUp size={40} className="text-white/20 mb-8 group-hover:scale-110 transition-transform" />
                        <h4 className="text-[24px] font-black tracking-tighter leading-tight mb-4 text-white">Scale Your Reach Today.</h4>
                        <p className="text-emerald-50 text-[14px] font-medium leading-relaxed opacity-70 mb-10">Pro partners with high CR get access to exclusive $5 CPA bonuses per funded user.</p>
-                       <button className="w-full py-5 rounded-2xl bg-white text-emerald-700 font-black text-[13px] uppercase tracking-widest shadow-xl">Contact Manager</button>
+                       <button 
+                          onClick={() => setView('new_ticket')}
+                          className="w-full py-5 rounded-2xl bg-white text-emerald-700 font-black text-[13px] uppercase tracking-widest shadow-xl"
+                       >
+                          Open Ticket
+                       </button>
                     </div>
                  </div>
               </div>
@@ -2410,69 +2414,45 @@ export default function AffiliatePage() {
          {activeTab === 'support' && (
            <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
               <SectionHeading 
-                icon={Send} 
-                title="Affiliate Telegram Manager" 
-                desc="Direct 1-on-1 VIP Support & Growth Assistance via Telegram" 
+                icon={Headphones} 
+                title="Support Desk" 
+                desc="Direct Support & Growth Assistance for Partners" 
               />
               
-              {/* Main VIP Manager Card */}
+              {/* Main Support Card */}
               <div className="bg-[#1a2233] rounded-[36px] p-8 md:p-12 text-white relative overflow-hidden shadow-2xl border border-white/10">
-                 <div className="absolute -right-16 -top-16 w-64 h-64 bg-[#0088cc]/20 rounded-full blur-[70px] pointer-events-none"></div>
+                 <div className="absolute -right-16 -top-16 w-64 h-64 bg-indigo-500/20 rounded-full blur-[70px] pointer-events-none"></div>
                  <div className="absolute right-10 bottom-6 opacity-5 pointer-events-none hidden md:block">
-                    <Send size={240} />
+                    <Headphones size={240} />
                  </div>
 
                  <div className="relative z-10 max-w-2xl">
-                    <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#0088cc]/20 border border-[#0088cc]/30 text-[#38bdf8] text-[11px] font-black uppercase tracking-widest mb-6">
-                       <span className="w-2 h-2 rounded-full bg-[#00dc74] animate-pulse"></span>
-                       24/7 Dedicated Manager Active
+                    <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-indigo-400 text-[11px] font-black uppercase tracking-widest mb-6">
+                       <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                       24/7 Dedicated Support Active
                     </div>
 
                     <h2 className="text-[28px] md:text-[36px] font-black tracking-tight text-white mb-3">
-                       Connect with Your Affiliate Manager
+                       Need Help with Your Affiliate Account?
                     </h2>
 
                     <p className="text-gray-300 text-[15px] md:text-[16px] leading-relaxed mb-8 font-medium">
-                       We handle all partner queries, traffic scaling advice, custom RevShare rates, and expedited payouts directly through our official Telegram desk.
+                       Our specialized partner support team is here to help you scale your traffic, optimize conversions, and manage your payouts.
                     </p>
 
-                    <div className="bg-white/5 border border-white/10 rounded-2xl p-5 mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                       <div className="flex items-center gap-4">
-                          <div className="w-12 h-12 rounded-2xl bg-[#0088cc] flex items-center justify-center shadow-lg shadow-[#0088cc]/30 flex-shrink-0">
-                             <Send size={24} className="text-white" />
-                          </div>
-                          <div>
-                             <div className="text-[12px] font-bold text-gray-400 uppercase tracking-wider">Affiliate Telegram Manager</div>
-                             <div className="text-[18px] font-black text-white tracking-wide">@bivaax_partner</div>
-                          </div>
-                       </div>
-
-                       <button 
-                          onClick={() => {
-                             navigator.clipboard.writeText('@bivaax_partner');
-                             toast.success('Telegram username copied: @bivaax_partner');
-                          }}
-                          className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-[12px] font-bold tracking-wider uppercase flex items-center justify-center gap-2 transition cursor-pointer"
-                       >
-                          <Copy size={16} /> Copy Handle
-                       </button>
-                    </div>
-
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
-                       <a 
-                          href="https://t.me/bivaax_partner" 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="px-8 py-4 bg-[#0088cc] hover:bg-[#0077b5] text-white font-black text-[14px] uppercase tracking-wider rounded-2xl flex items-center justify-center gap-3 shadow-xl shadow-[#0088cc]/30 transition-all transform active:scale-95"
+                       <button 
+                          onClick={() => setView('new_ticket')}
+                          className="px-8 py-4 bg-[#3b66f5] hover:bg-[#3256d1] text-white font-black text-[14px] uppercase tracking-wider rounded-2xl flex items-center justify-center gap-3 shadow-xl shadow-blue-900/30 transition-all transform active:scale-95"
                        >
-                          <Send size={18} /> Chat with Manager (@bivaax_partner)
-                       </a>
+                          <Plus size={18} strokeWidth={3} /> Open New Support Ticket
+                       </button>
 
                        <button 
-                          onClick={() => window.open('https://t.me/Bivaax_Official', '_blank')}
+                          onClick={() => setView('tickets')}
                           className="px-6 py-4 bg-white/10 hover:bg-white/15 text-white font-bold text-[14px] rounded-2xl flex items-center justify-center gap-2 border border-white/10 transition cursor-pointer"
                        >
-                          <ExternalLink size={16} /> Official Channel
+                          <History size={16} /> My Support Tickets
                        </button>
                     </div>
                  </div>
@@ -2481,7 +2461,7 @@ export default function AffiliatePage() {
               {/* Assistance Topics Grid */}
               <div className="space-y-4">
                  <h3 className="text-[20px] font-black text-[#1a2233] tracking-tight px-1">
-                    What You Can Discuss with Your Manager
+                    Partner Assistance Topics
                  </h3>
 
                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -2491,7 +2471,7 @@ export default function AffiliatePage() {
                        </div>
                        <h4 className="text-[16px] font-black text-[#1a2233]">Higher Commission Rates</h4>
                        <p className="text-[13px] text-gray-500 font-medium leading-relaxed">
-                          Request custom RevShare upgrades up to 80% or fixed CPA deals based on your daily trading volume.
+                          Request custom RevShare upgrades based on your active trading volume.
                        </p>
                     </div>
 
@@ -2501,7 +2481,7 @@ export default function AffiliatePage() {
                        </div>
                        <h4 className="text-[16px] font-black text-[#1a2233]">Priority Payout Approvals</h4>
                        <p className="text-[13px] text-gray-500 font-medium leading-relaxed">
-                          Get instant status checks and express clearance on your affiliate commission payouts.
+                          Get fast clearance on your affiliate commission withdrawals.
                        </p>
                     </div>
 
@@ -2511,64 +2491,8 @@ export default function AffiliatePage() {
                        </div>
                        <h4 className="text-[16px] font-black text-[#1a2233]">Custom Promo Materials</h4>
                        <p className="text-[13px] text-gray-500 font-medium leading-relaxed">
-                          Ask for customized high-converting banners, landing pages, and localized promo creatives.
+                          Request customized high-converting banners and creative assets.
                        </p>
-                    </div>
-                 </div>
-              </div>
-
-              {/* Direct Telegram Contacts Overview */}
-              <div className="bg-white rounded-[32px] p-8 border border-gray-100 shadow-sm">
-                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-gray-100">
-                    <div>
-                       <h4 className="text-[18px] font-black text-[#1a2233]">Affiliate Communications Policy</h4>
-                       <p className="text-[13px] text-gray-500 font-medium">All support requests and account escalations are handled exclusively via official Telegram.</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                       <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-                       <span className="text-[12px] font-black text-gray-700 uppercase tracking-wider">Direct Telegram Service</span>
-                    </div>
-                 </div>
-
-                 <div className="pt-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="p-4 bg-gray-50 rounded-2xl flex items-center justify-between">
-                       <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-[#0088cc]/10 text-[#0088cc] flex items-center justify-center">
-                             <Send size={18} />
-                          </div>
-                          <div>
-                             <div className="text-[13px] font-black text-[#1a2233]">Affiliate Manager</div>
-                             <div className="text-[11px] font-bold text-[#0088cc] font-mono">@bivaax_partner</div>
-                          </div>
-                       </div>
-                       <a 
-                          href="https://t.me/bivaax_partner" 
-                          target="_blank" 
-                          rel="noopener noreferrer" 
-                          className="px-3 py-1.5 bg-[#0088cc] text-white rounded-lg text-[11px] font-bold uppercase tracking-wider hover:bg-[#0077b5]"
-                       >
-                          Chat
-                       </a>
-                    </div>
-
-                    <div className="p-4 bg-gray-50 rounded-2xl flex items-center justify-between">
-                       <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                             <Users size={18} />
-                          </div>
-                          <div>
-                             <div className="text-[13px] font-black text-[#1a2233]">Affiliate Community</div>
-                             <div className="text-[11px] font-bold text-gray-400 font-mono">Bivaax Official Channel</div>
-                          </div>
-                       </div>
-                       <a 
-                          href="https://t.me/Bivaax_Official" 
-                          target="_blank" 
-                          rel="noopener noreferrer" 
-                          className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[11px] font-bold uppercase tracking-wider hover:bg-indigo-700"
-                       >
-                          Join
-                       </a>
                     </div>
                  </div>
               </div>

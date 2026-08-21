@@ -60,7 +60,7 @@ export default function ProfilePage() {
   const [dobYear, setDobYear] = useState('---');
   const [emailNewsletter, setEmailNewsletter] = useState(true);
   const [allowNotifications, setAllowNotifications] = useState(true);
-  const [depositCountry, setDepositCountry] = useState('Bangladesh');
+  const [depositCountry, setDepositCountry] = useState('United Kingdom');
   const [platformLanguage, setPlatformLanguage] = useState('en');
 
   useEffect(() => {
@@ -127,7 +127,7 @@ export default function ProfilePage() {
     dobDay: '---',
     dobMonth: '---',
     dobYear: '---',
-    country: 'Bangladesh',
+    country: 'Global',
     idType: 'NID',
     idNumber: '',
     idFrontUrl: '',
@@ -1044,7 +1044,7 @@ export default function ProfilePage() {
                         <option value="kk">Қазақ тілі</option>
                         <option value="de">Deutsch</option>
                         <option value="fr">Français</option>
-                        <option value="bn">বাংলা (Bangladesh)</option>
+                        <option value="bn">বাংলা</option>
                       </select>
                     </div>
 

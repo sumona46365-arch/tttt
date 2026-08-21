@@ -9,8 +9,42 @@ import { getSafeDatabase } from './sqlite-factory.ts';
 
 const lookup = promisify(dns.lookup);
 
-const postgresUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.PG_URL;
-const isPg = Boolean(postgresUrl || process.env.USE_POSTGRES === 'true');
+let postgresUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.PG_URL;
+let isPg = Boolean(postgresUrl || process.env.USE_POSTGRES === 'true');
+
+export async function updatePostgresConfig(newUrl: string) {
+  logger.info("Updating PostgreSQL configuration...");
+  try {
+    if (pgPool) {
+      await pgPool.end();
+    }
+    
+    postgresUrl = newUrl;
+    isPg = true;
+    usePg = true;
+    
+    const connectionString = parseAndFixPgUrl(newUrl);
+    const sslConfig = (connectionString.includes('sslmode=require') || connectionString.includes('neon.tech') || connectionString.includes('supabase') || process.env.PGSSL === 'true')
+      ? { rejectUnauthorized: false }
+      : false;
+
+    pgPool = new pg.Pool({
+      connectionString,
+      ssl: sslConfig,
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+    });
+
+    await pgPool.query('SELECT 1');
+    await initPgTables(pgPool);
+    logger.info("✅ PostgreSQL reconnected successfully with new configuration!");
+    return { success: true };
+  } catch (err: any) {
+    logger.error("Failed to update PostgreSQL config: " + err.message);
+    return { success: false, error: err.message };
+  }
+}
 
 // Helper to check DNS resolution
 async function checkDns(hostname: string) {
@@ -32,10 +66,13 @@ class Mutex {
   private mutex = Promise.resolve();
   lock(): Promise<() => void> {
     let begin: (unlock: () => void) => void;
-    this.mutex = this.mutex.then(() => new Promise(begin));
-    return new Promise(res => {
+    const waiter = new Promise<() => void>(res => {
       begin = (unlock: () => void) => res(unlock);
     });
+    this.mutex = this.mutex.then(() => new Promise(res => {
+      begin(res);
+    }));
+    return waiter;
   }
 }
 const dbMutex = new Mutex();

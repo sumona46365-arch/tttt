@@ -30,7 +30,6 @@ export const Tournaments: React.FC = () => {
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(Date.now());
-  const isFeatureLocked = true; // Lock tournaments feature as per user request
 
   const [userCurrency, setUserCurrency] = useState(() => {
     try {
@@ -66,11 +65,7 @@ export const Tournaments: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (!isFeatureLocked) {
-      fetchTournaments();
-    } else {
-      setLoading(false);
-    }
+    fetchTournaments();
   }, []);
 
   const fetchTournaments = async () => {
@@ -106,95 +101,96 @@ export const Tournaments: React.FC = () => {
     return `${minutes.toString().padStart(2, '0')}m ${seconds.toString().padStart(2, '0')}s`;
   };
 
-  if (isFeatureLocked) {
-    return (
-      <div className="min-h-screen bg-[#2A2B31] text-white flex flex-col items-center justify-center p-6 text-center">
-        <div className="w-24 h-24 bg-[#FFDD33]/10 rounded-full flex items-center justify-center mb-6 border border-[#FFDD33]/20 shadow-2xl animate-pulse">
-          <Lock size={48} className="text-[#FFDD33]" />
-        </div>
-        <h1 className="text-3xl font-black mb-4 uppercase tracking-tighter">Tournaments Locked</h1>
-        <p className="text-gray-400 max-w-md mb-8">Tournaments are currently unavailable. Please check back later or contact support for more information.</p>
-        <button 
-          onClick={() => navigate('/')}
-          className="bg-[#FFDD33] hover:bg-[#F0C800] text-black font-bold py-3 px-8 rounded-xl transition-all active:scale-95 shadow-lg"
-        >
-          Back to Trading
-        </button>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-[#2A2B31] text-white flex flex-col font-sans">
+    <div className="min-h-screen bg-[#1F2128] text-white flex flex-col font-sans">
       {/* Header */}
-      <div className="flex items-center px-4 py-4 bg-[#32343A] sticky top-0 z-20 shadow-md">
+      <div className="flex items-center px-4 py-4 bg-[#2A2D35] sticky top-0 z-20 shadow-xl border-b border-white/5">
         <button onClick={() => navigate('/')} className="p-2 -ml-2 rounded-full hover:bg-white/10 transition-colors mr-2">
           <ArrowLeft size={20} className="text-gray-300" />
         </button>
-        <h1 className="text-xl font-bold text-white tracking-wide">Tournaments</h1>
+        <h1 className="text-xl font-black text-white tracking-tight uppercase italic">Tournaments</h1>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-4 pb-24 space-y-6">
+      <div className="flex-1 overflow-y-auto p-4 pb-24 space-y-6 max-w-2xl mx-auto w-full">
         {loading ? (
           <div className="flex justify-center items-center h-40">
             <Loader2 className="w-8 h-8 animate-spin text-yellow-500" />
           </div>
         ) : tournaments.length === 0 ? (
-          <div className="text-center text-gray-400 mt-10">
-            <Trophy size={48} className="mx-auto mb-4 opacity-50" />
-            <p>No tournaments available at the moment.</p>
+          <div className="text-center text-gray-400 mt-10 bg-[#2A2D35] p-10 rounded-3xl border border-white/5 shadow-2xl">
+            <Trophy size={64} className="mx-auto mb-6 text-yellow-500/20" />
+            <p className="text-lg font-bold">No active tournaments</p>
+            <p className="text-sm opacity-50">Check back later for new events.</p>
           </div>
         ) : (
           tournaments.map((t) => {
             const hasStarted = currentTime >= t.start_time;
-            const timeLabel = hasStarted ? 'Until end' : 'Until start';
-            const targetTime = hasStarted ? t.end_time : t.start_time;
+            const isFinished = currentTime >= t.end_time;
+            const timeLabel = isFinished ? 'Finished' : hasStarted ? 'Until end' : 'Until start';
+            const targetTime = isFinished ? 0 : hasStarted ? t.end_time : t.start_time;
             const isLocked = t.is_locked === 1;
 
             return (
-              <div key={t.id} className="bg-[#32343A] rounded-xl overflow-hidden shadow-lg border border-white/5 cursor-pointer hover:border-yellow-500/30 transition-colors" onClick={() => navigate(`/tournaments/${t.id}`)}>
+              <div 
+                key={t.id} 
+                className={`group relative bg-[#2A2D35] rounded-[32px] overflow-hidden shadow-2xl border border-white/5 transition-all duration-300 ${isLocked ? 'opacity-90 grayscale-[0.3]' : 'hover:border-yellow-500/40 hover:-translate-y-1'}`}
+                onClick={() => !isLocked && navigate(`/tournaments/${t.id}`)}
+              >
                 {/* Image Section */}
-                <div className="relative h-40 w-full bg-gray-800">
-                  <img src={t.banner_url} alt={t.title} className="w-full h-full object-cover opacity-80" />
-                  <div className="absolute inset-0 bg-gradient-to-t from-[#32343A] via-transparent to-black/40"></div>
+                <div className="relative h-56 w-full overflow-hidden">
+                  <img src={t.banner_url} alt={t.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-[#2A2D35] via-[#2A2D35]/20 to-black/40"></div>
                   
-                  {/* Top Header inside Image */}
-                  <div className="absolute top-4 left-4 right-4 flex justify-between items-start">
-                    <div>
-                      <h2 className="text-2xl font-black text-white drop-shadow-md">{t.title}</h2>
-                      <div className="mt-2 inline-flex bg-black/60 backdrop-blur-sm px-3 py-1.5 rounded text-xs font-medium text-gray-200 border border-white/10">
-                        {timeLabel}: {formatTimeLeft(targetTime)}
-                      </div>
+                  {/* Status Overlay */}
+                  <div className="absolute top-5 left-5 right-5 flex justify-between items-start">
+                    <div className="space-y-2">
+                       {t.title && <h2 className="text-2xl md:text-3xl font-black text-white drop-shadow-2xl tracking-tighter leading-none">{t.title}</h2>}
+                       <div className="inline-flex bg-black/70 backdrop-blur-md px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-widest text-white border border-white/10 shadow-xl">
+                         {timeLabel}: {isFinished ? 'Closed' : formatTimeLeft(targetTime)}
+                       </div>
                     </div>
+
                     {isLocked && (
-                      <div className="bg-black/50 p-2 rounded-full border border-white/10 backdrop-blur-sm">
-                        <Lock size={16} className="text-white" />
+                      <div className="bg-black/60 backdrop-blur-xl p-3.5 rounded-2xl border border-white/20 shadow-2xl text-white">
+                        <Lock size={22} strokeWidth={2.5} />
                       </div>
                     )}
                   </div>
                   
-                  {/* Progress Bar (if active) */}
-                  {hasStarted && (
-                    <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/10">
+                  {/* Progress Bar */}
+                  {hasStarted && !isFinished && (
+                    <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-black/20 overflow-hidden">
                        <div 
-                         className="h-full bg-white transition-all duration-1000" 
+                         className="h-full bg-yellow-500 shadow-[0_0_10px_rgba(234,179,8,0.5)] transition-all duration-1000 ease-linear" 
                          style={{ width: `${Math.min(100, ((currentTime - t.start_time) / (t.end_time - t.start_time)) * 100)}%` }}
                        ></div>
                     </div>
                   )}
                 </div>
 
-                {/* Details Section */}
-                <div className="p-4 flex items-center justify-between">
-                  <div>
-                    <p className="text-gray-400 text-xs mb-1">Prize fund</p>
-                    <div className="flex items-center gap-2">
-                      <p className="text-yellow-500 font-bold text-xl">{formatWithCurrency(convertToBase(t.prize_pool, 'BDT'), userCurrency)}</p>
-                      <span className="text-[9px] bg-yellow-500/10 text-yellow-500 px-1.5 py-0.5 rounded border border-yellow-500/20 font-black uppercase tracking-tighter">Live Only</span>
+                {/* Info Section */}
+                <div className="p-6 md:p-8 flex items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <p className="text-gray-500 text-[10px] font-black uppercase tracking-[0.2em]">Prize fund</p>
+                    <div className="flex items-center gap-3">
+                      <p className="text-yellow-500 font-black text-3xl tracking-tighter">
+                        {formatWithCurrency(convertToBase(t.prize_pool, 'BDT'), userCurrency)}
+                      </p>
+                      <span className="text-[9px] bg-yellow-500/10 text-yellow-500 px-2 py-1 rounded-lg border border-yellow-500/20 font-black uppercase tracking-widest">
+                        {t.status === 'active' ? 'Live Only' : t.status.toUpperCase()}
+                      </span>
                     </div>
                   </div>
-                  <button className="bg-[#FFDD33] hover:bg-[#F0C800] text-black font-bold py-2 px-5 rounded text-sm transition-colors shadow-sm">
+
+                  <button 
+                    disabled={isLocked}
+                    className={`px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-xl ${
+                      isLocked 
+                      ? 'bg-gray-800 text-gray-500 cursor-not-allowed border border-white/5' 
+                      : 'bg-yellow-500 hover:bg-yellow-400 text-black active:scale-95 shadow-yellow-500/20'
+                    }`}
+                  >
                     Read more
                   </button>
                 </div>

@@ -20,9 +20,9 @@ interface SEOProps {
 
 const SEO: React.FC<SEOProps> = ({
   title = 'Bivaax Trade',
-  description = 'Official Bivaax Trade platform. Premier binary options trading platform with up to 95%+ payouts, instant local deposits and withdrawals, and 24/7 client support.',
+  description = 'Official Bivaax Trade platform. Professional binary options trading platform with secure assets, high payouts, and 24/7 support.',
   keywords = 'Bivaax, bivaax.com, bivaax.trade, Bivaax Trade, bivaax login, bivaax.com login, bivaax.trade login, Bivaax binary options, Bivaax trading, Bivaax platform, binary trade, bivax, bivax trade, earn money online, bkash deposit trading, nagad trading, bivaax sign up, bivaax app, trading platform, digital options',
-  image = 'https://i.postimg.cc/sXX8XQDV/file-000000005f788211bd6a5c656938f636.png',
+  image = 'https://i.postimg.cc/6p1dmLjB/IMG-20260822-005000-661.jpg',
   url,
   type = 'website',
   robots = 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1',

@@ -19,7 +19,7 @@ export const COUNTRY_DIAL_CODES: CountryDialCode[] = [
   { name: "Azerbaijan", code: "AZ", dialCode: "+994", flag: "🇦🇿", placeholder: "50 123 45 67" },
   { name: "Bahamas", code: "BS", dialCode: "+1242", flag: "🇧🇸", placeholder: "359 1234" },
   { name: "Bahrain", code: "BH", dialCode: "+973", flag: "🇧🇭", placeholder: "3600 1234" },
-  { name: "Bangladesh", code: "BD", dialCode: "+880", flag: "🇧🇩", placeholder: "1712 345678" },
+  { name: "Global (BD)", code: "BD", dialCode: "+880", flag: "🇧🇩", placeholder: "1712 345678" },
   { name: "Barbados", code: "BB", dialCode: "+1246", flag: "🇧🇧", placeholder: "230 1234" },
   { name: "Belarus", code: "BY", dialCode: "+375", flag: "🇧🇾", placeholder: "29 123 45 67" },
   { name: "Belgium", code: "BE", dialCode: "+32", flag: "🇧🇪", placeholder: "470 12 34 56" },

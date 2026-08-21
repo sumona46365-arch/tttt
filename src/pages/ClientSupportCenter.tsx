@@ -81,8 +81,8 @@ export default function ClientSupportCenter() {
   const [attachedFiles, setAttachedFiles] = useState<string[]>([]);
   const [isAiTyping, setIsAiTyping] = useState(false);
   const [socialLinks, setSocialLinks] = useState<any>({
-    whatsapp: 'https://wa.me/message/BIVAAX',
-    telegram: 'https://t.me/Bivaax_Official'
+    whatsapp: '',
+    telegram: ''
   });
 
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -93,23 +93,7 @@ export default function ClientSupportCenter() {
   const currentUser = auth.currentUser;
   const currentUid = currentUser?.uid || '';
 
-  // 1. Fetch Social Links from Config
-  useEffect(() => {
-    const fetchLinks = async () => {
-      try {
-        const docRef = doc(db, 'app_config', 'settings');
-        const snap = await getDoc(docRef);
-        if (snap.exists()) {
-          const data = snap.data();
-          setSocialLinks({
-            whatsapp: data.socialWhatsapp || 'https://wa.me/message/BIVAAX',
-            telegram: data.socialTelegram || 'https://t.me/Bivaax_Official'
-          });
-        }
-      } catch (err) {}
-    };
-    fetchLinks();
-  }, []);
+  // No social links as per user request
 
   // 2. Fetch User Tickets
   useEffect(() => {
@@ -388,45 +372,7 @@ export default function ClientSupportCenter() {
                   <p className="text-xs text-gray-500">Instant connection via your favorite social platforms.</p>
                 </div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                 <a 
-                   href={socialLinks.whatsapp} 
-                   target="_blank" 
-                   rel="noreferrer"
-                   className="group p-8 bg-[#161a1e] border border-white/5 rounded-[28px] hover:border-[#25D366]/30 transition-all flex flex-col items-center text-center space-y-4 hover:shadow-2xl hover:shadow-[#25D366]/10"
-                 >
-                    <div className="w-16 h-16 rounded-[22px] bg-[#25D366]/10 text-[#25D366] flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg">
-                       <MessageSquare size={32} />
-                    </div>
-                    <div>
-                      <h4 className="text-lg font-black text-white">WhatsApp</h4>
-                      <p className="text-xs text-gray-500 mt-1">Direct Live Chat</p>
-                    </div>
-                    <div className="pt-2">
-                       <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase text-[#25D366] bg-[#25D366]/10 px-3 py-1 rounded-full">
-                          Connect <ExternalLink size={10} />
-                       </span>
-                    </div>
-                 </a>
-                 <a 
-                   href={socialLinks.telegram} 
-                   target="_blank" 
-                   rel="noreferrer"
-                   className="group p-8 bg-[#161a1e] border border-white/5 rounded-[28px] hover:border-[#0088CC]/30 transition-all flex flex-col items-center text-center space-y-4 hover:shadow-2xl hover:shadow-[#0088CC]/10"
-                 >
-                    <div className="w-16 h-16 rounded-[22px] bg-[#0088CC]/10 text-[#0088CC] flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg">
-                       <Send size={32} />
-                    </div>
-                    <div>
-                      <h4 className="text-lg font-black text-white">Telegram</h4>
-                      <p className="text-xs text-gray-500 mt-1">Official Channel</p>
-                    </div>
-                    <div className="pt-2">
-                       <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase text-[#0088CC] bg-[#0088CC]/10 px-3 py-1 rounded-full">
-                          Connect <ExternalLink size={10} />
-                       </span>
-                    </div>
-                 </a>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                  {[
                    { label: t('depositIssue'), msg: "I have an issue with my deposit. It's not reflecting." },
                    { label: t('withdrawalStatus'), msg: "I want to check my withdrawal status." },

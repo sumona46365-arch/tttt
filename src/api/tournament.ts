@@ -1,7 +1,7 @@
 import express from 'express';
 import { get, query, run, transaction } from '../db/mysql-db.ts';
 import logger from '../lib/logger.ts';
-import { requireAuth, AuthRequest } from '../middleware/jwtAuth.ts';
+import { requireAuth, requireAdmin, AuthRequest } from '../middleware/jwtAuth.ts';
 import Big from 'big.js';
 
 import { syncTournamentScoreToFirestore } from '../lib/firebase-admin.ts';
@@ -19,12 +19,47 @@ function safeJsonParse(val: any) {
 }
 
 /**
+ * Helper to update tournament statuses based on current time
+ */
+export async function updateTournamentStatuses() {
+  const now = Date.now();
+  try {
+    // 1. Scheduled -> Active
+    await run(
+      "UPDATE tournaments SET status = 'active' WHERE status = 'scheduled' AND start_time <= ?",
+      [now]
+    );
+
+    // 2. Active -> Finished
+    const finishing = await query(
+      "SELECT id FROM tournaments WHERE status = 'active' AND end_time <= ?",
+      [now]
+    ) as any[];
+
+    for (const t of finishing) {
+      await transaction(async (conn) => {
+        await run("UPDATE tournaments SET status = 'finished' WHERE id = ?", [t.id], conn);
+        
+        // Potential logic for rewarding winners could go here
+        logger.info(`Tournament ${t.id} finished.`);
+      });
+    }
+  } catch (err: any) {
+    logger.error(`Tournament status update failed: ${err.message}`);
+  }
+}
+
+// Run status update periodically (every 1 minute)
+setInterval(updateTournamentStatuses, 60 * 1000);
+
+/**
  * 1. Fetch all tournaments
  */
 router.get('/tournaments', async (req, res) => {
-  const { uid } = req.query;
+  const { uid, admin } = req.query;
   try {
-    const tournaments = await query('SELECT * FROM tournaments ORDER BY start_time ASC') as any[];
+    // If admin is true, we might want to see all including finished ones differently
+    const tournaments = await query('SELECT * FROM tournaments ORDER BY created_at DESC') as any[];
     
     // For each tournament, get participant count
     const enriched = await Promise.all(tournaments.map(async (t) => {
@@ -285,6 +320,67 @@ router.post('/tournaments/:id/rebuy', requireAuth, async (req: AuthRequest, res)
     } catch (err: any) {
         res.status(400).json({ error: err.message });
     }
+});
+
+// Admin: Create Tournament
+router.post('/admin/tournaments', requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+  const { id, type, title, description, banner_url, prize_pool, entry_fee, min_players, max_players, start_time, end_time, status, is_locked, requirements } = req.body;
+  try {
+    const tournamentId = id || `t-${Date.now()}`;
+    await run(
+      `INSERT INTO tournaments (id, type, title, description, banner_url, prize_pool, entry_fee, min_players, max_players, start_time, end_time, status, is_locked, requirements, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [tournamentId, type || 'General', title, description, banner_url, prize_pool || 0, entry_fee || 0, min_players || 1, max_players || 0, start_time, end_time, status || 'scheduled', is_locked || 0, JSON.stringify(requirements || {}), Date.now()]
+    );
+    res.json({ success: true, id: tournamentId });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: Update Tournament
+router.put('/admin/tournaments/:id', requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { type, title, description, banner_url, prize_pool, entry_fee, min_players, max_players, start_time, end_time, status, is_locked, requirements } = req.body;
+  try {
+    await run(
+      `UPDATE tournaments SET type = ?, title = ?, description = ?, banner_url = ?, prize_pool = ?, entry_fee = ?, min_players = ?, max_players = ?, start_time = ?, end_time = ?, status = ?, is_locked = ?, requirements = ?
+       WHERE id = ?`,
+      [type, title, description, banner_url, prize_pool, entry_fee, min_players, max_players, start_time, end_time, status, is_locked, JSON.stringify(requirements || {}), id]
+    );
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: Delete Tournament
+router.delete('/admin/tournaments/:id', requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+  const { id } = req.params;
+  try {
+    await transaction(async (conn) => {
+      await run('DELETE FROM tournament_prizes WHERE tournament_id = ?', [id], conn);
+      await run('DELETE FROM tournament_participants WHERE tournament_id = ?', [id], conn);
+      await run('DELETE FROM tournaments WHERE id = ?', [id], conn);
+    });
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: Toggle Lock
+router.post('/admin/tournaments/:id/toggle-lock', requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+  const { id } = req.params;
+  try {
+    const t = await get('SELECT is_locked FROM tournaments WHERE id = ?', [id]) as any;
+    if (!t) return res.status(404).json({ error: 'Tournament not found' });
+    const newLocked = t.is_locked === 1 ? 0 : 1;
+    await run('UPDATE tournaments SET is_locked = ? WHERE id = ?', [newLocked, id]);
+    res.json({ success: true, is_locked: newLocked });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 export default router;

@@ -83,26 +83,7 @@ export const LiveSupport: React.FC<LiveSupportProps> = ({ onClose, userId }) => 
   const { language } = useI18n();
   const { t } = useTranslation(language);
 
-  const [socialLinks, setSocialLinks] = useState({
-    whatsapp: 'https://wa.me/message/BIVAAX',
-    telegram: 'https://t.me/Bivaax_Official'
-  });
-
-  useEffect(() => {
-    const fetchLinks = async () => {
-      try {
-        const snap = await getDoc(doc(db, 'app_config', 'settings'));
-        if (snap.exists()) {
-          const data = snap.data();
-          setSocialLinks({
-            whatsapp: data.socialWhatsapp || 'https://wa.me/message/BIVAAX',
-            telegram: data.socialTelegram || 'https://t.me/Bivaax_Official'
-          });
-        }
-      } catch (err) {}
-    };
-    fetchLinks();
-  }, []);
+  // No social links as per user request
 
   const currentUser = auth.currentUser;
   const currentUid = currentUser?.uid || userId || 'guest_user';
@@ -412,26 +393,6 @@ export const LiveSupport: React.FC<LiveSupportProps> = ({ onClose, userId }) => 
               <Plus size={16} strokeWidth={3} />
               {t('startNewChat')}
             </button>
-
-            {/* Social Shortcuts */}
-            <div className="grid grid-cols-2 gap-3">
-              <a 
-                href={socialLinks.whatsapp}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center justify-center gap-2 py-3 px-4 bg-[#25D366] text-white rounded-2xl shadow-sm hover:opacity-90 transition-all font-bold text-[11px] uppercase tracking-wide"
-              >
-                <MessageSquare size={16} /> WhatsApp
-              </a>
-              <a 
-                href={socialLinks.telegram}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center justify-center gap-2 py-3 px-4 bg-[#0088CC] text-white rounded-2xl shadow-sm hover:opacity-90 transition-all font-bold text-[11px] uppercase tracking-wide"
-              >
-                <Send size={16} /> Telegram
-              </a>
-            </div>
 
             {/* Quick Question Shortcuts */}
             <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">

@@ -32,6 +32,12 @@ import {
 
 const router = express.Router();
 
+// --- Debug: Log all API requests ---
+router.use((req, res, next) => {
+  console.log(`[DEBUG-API] ${req.method} ${req.url}`);
+  next();
+});
+
 // --- Market News ---
 router.get('/news', async (req, res) => {
   try {
@@ -316,7 +322,7 @@ async function getCountryFromIp(ip: string): Promise<{ countryName: string; coun
     ip.startsWith('172.2') ||
     ip.startsWith('172.3')
   ) {
-    return { countryName: 'Bangladesh', countryCode: 'BD' };
+    return { countryName: 'Global', countryCode: 'GB' };
   }
 
   try {
@@ -345,7 +351,7 @@ async function getCountryFromIp(ip: string): Promise<{ countryName: string; coun
     logger.error(`getCountryFromIp error (geojs): ${err}`);
   }
 
-  return { countryName: 'Bangladesh', countryCode: 'BD' };
+  return { countryName: 'Global', countryCode: 'GB' };
 }
 
 // IP Lookup endpoint (proxied for safety and to avoid mixed content warnings)
@@ -1490,6 +1496,7 @@ router.patch('/users/:id', requireAuth, async (req: AuthRequest, res) => {
 // 4. Fetch User Trades
 router.get('/user-trades', async (req, res) => {
   const { userId } = req.query;
+  console.log(`[DEBUG] GET /api/user-trades called with userId: ${userId}`);
   if (!userId) return res.status(400).json({ error: 'userId is required' });
   
   try {
@@ -2364,6 +2371,7 @@ router.patch('/masterTraders/:id', requireAuth, async (req: AuthRequest, res) =>
 import { fetchLeaderboards } from '../services/leaderboardService.ts';
 
 router.get('/leaderboard', async (req, res) => {
+  console.log('[DEBUG] GET /api/leaderboard called');
   try {
     const data = await fetchLeaderboards();
     res.json(data);
@@ -2420,17 +2428,6 @@ router.get('/trades/history', requireAuth, async (req: AuthRequest, res) => {
     [req.user!.uid, isDemo === 'true' ? 1 : 0, Number(limit)]
   );
   res.json(history);
-});
-
-router.get('/user-trades', async (req, res) => {
-  const { userId } = req.query;
-  if (!userId) return res.status(400).json({ error: 'userId is required' });
-  try {
-    const trades = await query('SELECT * FROM trades WHERE user_id = ? ORDER BY created_at DESC LIMIT 200', [userId]);
-    res.json({ success: true, trades: (trades as any[]).map(mapTrade) });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
 });
 
 router.post('/trades/place', 
@@ -3179,6 +3176,59 @@ router.post('/admin/config/fmp-key', requireAuth, async (req: AuthRequest, res) 
   }
 });
 
+router.get('/admin/withdrawals', requireAuth, async (req: AuthRequest, res) => {
+  if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+  try {
+    await syncGlobalTransactionsFromFirestore();
+    const withdrawals = await query('SELECT * FROM transactions WHERE type = \'withdrawal\' ORDER BY created_at DESC');
+    res.json(withdrawals);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/admin/deposits', requireAuth, async (req: AuthRequest, res) => {
+  if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+  try {
+    await syncGlobalTransactionsFromFirestore();
+    const deposits = await query('SELECT * FROM transactions WHERE type = \'deposit\' ORDER BY created_at DESC');
+    res.json(deposits);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/admin/config/db-url', requireAuth, async (req: AuthRequest, res) => {
+  if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+  try {
+    const doc = await adminDb.collection('app_config').doc('settings').get();
+    const data = doc.exists ? doc.data() : {};
+    res.json({ dbUrl: data?.dbUrl || process.env.DATABASE_URL || '' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/admin/config/db-url', requireAuth, async (req: AuthRequest, res) => {
+  if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+  try {
+    const { dbUrl } = req.body;
+    await adminDb.collection('app_config').doc('settings').set({ dbUrl }, { merge: true });
+    
+    // Attempt dynamic re-initialization
+    const { updatePostgresConfig } = await import('../db/mysql-db.ts');
+    const result = await updatePostgresConfig(dbUrl);
+    
+    if (result.success) {
+      res.json({ success: true });
+    } else {
+      res.status(400).json({ error: result.error });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/admin/users', requireAuth, async (req: AuthRequest, res) => {
   if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
   try {
@@ -3760,7 +3810,7 @@ router.post('/kyc/scan', requireAuth, async (req: AuthRequest, res) => {
     const systemInstruction = `You are an expert official KYC compliance officer. 
 Analyze the uploaded National ID (NID), Passport, or Driving License image.
 Verify if:
-1. It is a genuine, official document (NID, Passport, or License) from a country (frequently Bangladesh, but can be other countries).
+1. It is a genuine, official document (NID, Passport, or License) from a country.
 2. It is an original physical card/document itself, NOT a photograph of a computer screen, a photocopy, a piece of paper, a random object, or a fake generated card.
 3. The details are legible.
 
@@ -3873,7 +3923,7 @@ router.post('/kyc/verify-ai', requireAuth, async (req: AuthRequest, res) => {
 Analyze the uploaded image(s). The user claims this is an official ${idType} document (which must be a National ID card, Passport, or Driving License).
 
 You MUST perform a strict verification:
-1. Verify if the document is genuinely an official ${idType} (National ID, Passport, or Driving License) from any country (frequently Bangladesh, but can be other countries).
+1. Verify if the document is genuinely an official ${idType} (National ID, Passport, or Driving License) from any country.
 2. If it is NOT an official ${idType} (for example, if the user uploaded a photo of a dog, a selfie, a laptop screen, a piece of blank paper, a photocopy, a bank statement, or a utility bill), you MUST set "isValidDocument" to false and provide a clear, professional, direct Bengali rejection reason in "rejectionReason".
 3. Check if the document appears to be a physical original card/document, not a photo of a computer monitor, a printed paper, or a fake.
 4. Extract the Full Name and Document ID Number.

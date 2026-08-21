@@ -411,7 +411,7 @@ router.get('/google/callback', async (req, res) => {
       let realBalance = '0.00';
       let demoBalance = '10000.00';
       let kycStatus = 'unverified';
-      let countryName = 'Bangladesh';
+      let countryName = 'Global';
       let countryCodeVal = 'BD';
       let referredBy = null;
       let referralSubId = null;
@@ -422,7 +422,7 @@ router.get('/google/callback', async (req, res) => {
         realBalance = (fbData.realBalance !== undefined ? fbData.realBalance : (fbData.real_balance !== undefined ? fbData.real_balance : (fbData.balance !== undefined ? fbData.balance : 0))).toString();
         demoBalance = (fbData.demoBalance !== undefined ? fbData.demoBalance : (fbData.demo_balance !== undefined ? fbData.demo_balance : 10000)).toString();
         kycStatus = fbData.kycStatus || fbData.kyc_status || 'unverified';
-        countryName = fbData.country || 'Bangladesh';
+        countryName = fbData.country || 'Global';
         countryCodeVal = fbData.countryCode || fbData.country_code || 'BD';
         referredBy = fbData.referredBy || fbData.referred_by_uid || null;
       } else {

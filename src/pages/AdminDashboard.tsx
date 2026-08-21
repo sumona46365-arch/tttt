@@ -25,6 +25,7 @@ import { AssetLogo } from '../components/AssetLogo';
 import { MarketControlCard } from '../components/MarketControlCard';
 import { Logo } from '../components/Logo';
 import { AdminSnapshotView } from '../components/AdminSnapshotView';
+import { AdminTournaments } from '../components/AdminTournaments';
 
 
 type Role = 'superadmin' | 'admin' | 'moderator' | 'support' | 'user';
@@ -412,6 +413,24 @@ export default function AdminDashboard() {
             const apiUsers = await uRef.json();
             if (Array.isArray(apiUsers) && apiUsers.length > 0) {
                 setUsers(apiUsers);
+            }
+        }
+
+        // Fetch withdrawals from backend API
+        const wRef = await fetch('/api/admin/withdrawals', { headers });
+        if (wRef.ok) {
+            const apiWithdrawals = await wRef.json();
+            if (Array.isArray(apiWithdrawals)) {
+                setWithdrawals(apiWithdrawals);
+            }
+        }
+
+        // Fetch deposits from backend API
+        const dRef = await fetch('/api/admin/deposits', { headers });
+        if (dRef.ok) {
+            const apiDeposits = await dRef.json();
+            if (Array.isArray(apiDeposits)) {
+                setDepositRequests(apiDeposits);
             }
         }
 
@@ -1675,38 +1694,47 @@ export default function AdminDashboard() {
                         <div className="space-y-6">
                             <h2 className="text-2xl font-black">WITHDRAWAL REQUESTS</h2>
                             <div className="grid gap-4">
-                                {withdrawals.length > 0 ? withdrawals.map((w, i) => (
+                                {withdrawals.length > 0 ? withdrawals.map((w: any, i) => (
                                     <div key={`${w.id}-${i}`} className="bg-[#0a0a0f] border border-[#1a1a24] p-6 rounded-3xl flex flex-col lg:flex-row items-center justify-between gap-6">
                                         <div>
                                             <div className="flex items-center gap-3 mb-2">
-                                                <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${w.status === 'pending' ? 'bg-yellow-500/10 text-yellow-500' : (w.status === 'approved' || w.status === 'success') ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
+                                                <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${w.status === 'pending' ? 'bg-yellow-500/10 text-yellow-500' : (w.status === 'approved' || w.status === 'success' || w.status === 'completed') ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
                                                     {w.status}
                                                 </span>
-                                                <span className="text-xs text-gray-500">{w.timestamp?.toDate ? w.timestamp.toDate().toLocaleString() : new Date(w.timestamp).toLocaleString()}</span>
+                                                <span className="text-xs text-gray-500">{w.timestamp?.toDate ? w.timestamp.toDate().toLocaleString() : new Date(Number(w.timestamp || w.createdAt || 0)).toLocaleString()}</span>
                                             </div>
-                                            <h4 className="font-bold text-lg">{w.userEmail || w.userId}</h4>
-                                            <p className="text-sm text-gray-400">{w.method}: <span className="font-mono text-white">{w.walletNumber}</span></p>
-                                            {w.accountHolder && <p className="text-xs text-[#FFE24C] mt-1">Holder: {w.accountHolder}</p>}
+                                            <h4 className="font-bold text-lg">{w.userEmail || w.userId || 'Traders ID: ' + w.user_id}</h4>
+                                            <div className="space-y-1 mt-1">
+                                                <p className="text-sm text-gray-400">{w.method}: <span className="font-mono text-white">{w.walletNumber || w.details?.walletNumber || (typeof w.details === 'string' && JSON.parse(w.details).walletNumber)}</span></p>
+                                                {(w.accountHolder || (typeof w.details === 'string' && JSON.parse(w.details).accountHolder)) && (
+                                                    <p className="text-xs text-[#FFE24C] font-bold uppercase tracking-widest">Holder: {w.accountHolder || (typeof w.details === 'string' && JSON.parse(w.details).accountHolder)}</p>
+                                                )}
+                                                {w.documentUrl && (
+                                                    <a href={w.documentUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-[10px] text-yellow-500 font-black uppercase mt-2 hover:underline">
+                                                        <Eye size={12} /> View Document
+                                                    </a>
+                                                )}
+                                            </div>
                                         </div>
                                         <div className="flex items-center gap-8 w-full lg:w-auto">
                                             <div className="text-right">
-                                                <p className="text-[9px] font-bold text-gray-500 uppercase">Amount</p>
-                                                <p className="text-2xl font-black text-red-500">-{formatWithCurrency(w.amount, w.currency || 'BDT')}</p>
+                                                <p className="text-[9px] font-bold text-gray-500 uppercase tracking-[0.2em]">Liquid Amount</p>
+                                                <p className="text-2xl font-black text-red-500">-{formatWithCurrency(w.amount, w.currency || 'USD')}</p>
                                             </div>
                                             {w.status === 'pending' || w.status === 'approved' ? (
                                                 <div className="flex gap-2 text-center items-center justify-center">
-                                                    {w.status === 'pending' && <button disabled={processingWithdrawals.has(w.id)} onClick={() => handleWithdrawalStatus(w.id, 'approved', w.userId, w.amount, w.orderId)} className={`px-3 py-2 ${processingWithdrawals.has(w.id) ? 'opacity-50 cursor-not-allowed' : ''} bg-blue-500/10 text-blue-500 font-bold uppercase text-xs rounded-xl hover:bg-blue-500 hover:text-white transition-all`}>Approve</button>}
-                                                    <button disabled={processingWithdrawals.has(w.id)} onClick={() => handleWithdrawalStatus(w.id, 'success', w.userId, w.amount, w.orderId)} className={`px-3 py-2 ${processingWithdrawals.has(w.id) ? 'opacity-50 cursor-not-allowed' : ''} bg-green-500/10 text-green-500 font-bold uppercase text-xs rounded-xl hover:bg-green-500 hover:text-black transition-all`}>Success</button>
-                                                    <button disabled={processingWithdrawals.has(w.id)} onClick={() => handleWithdrawalStatus(w.id, 'rejected', w.userId, w.amount, w.orderId)} className={`px-3 py-2 ${processingWithdrawals.has(w.id) ? 'opacity-50 cursor-not-allowed' : ''} bg-red-500/10 text-red-500 font-bold uppercase text-xs rounded-xl hover:bg-red-500 hover:text-white transition-all`}>Reject</button>
+                                                    {w.status === 'pending' && <button disabled={processingWithdrawals.has(w.id)} onClick={() => handleWithdrawalStatus(w.id, 'approved', w.userId || w.user_id, w.amount, w.orderId)} className={`px-4 py-2.5 ${processingWithdrawals.has(w.id) ? 'opacity-50 cursor-not-allowed' : ''} bg-blue-500 text-white font-black uppercase text-[10px] tracking-widest rounded-xl hover:bg-blue-600 transition-all shadow-lg shadow-blue-500/20`}>Approve</button>}
+                                                    <button disabled={processingWithdrawals.has(w.id)} onClick={() => handleWithdrawalStatus(w.id, 'success', w.userId || w.user_id, w.amount, w.orderId)} className={`px-4 py-2.5 ${processingWithdrawals.has(w.id) ? 'opacity-50 cursor-not-allowed' : ''} bg-emerald-500 text-black font-black uppercase text-[10px] tracking-widest rounded-xl hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-500/20`}>Success</button>
+                                                    <button disabled={processingWithdrawals.has(w.id)} onClick={() => handleWithdrawalStatus(w.id, 'rejected', w.userId || w.user_id, w.amount, w.orderId)} className={`px-4 py-2.5 ${processingWithdrawals.has(w.id) ? 'opacity-50 cursor-not-allowed' : ''} bg-rose-500 text-white font-black uppercase text-[10px] tracking-widest rounded-xl hover:bg-rose-600 transition-all shadow-lg shadow-rose-500/20`}>Reject</button>
                                                 </div>
                                             ) : (
-                                                <span className={`px-3 py-1.5 rounded-xl text-xs font-bold uppercase ${w.status === 'success' || w.status === 'completed' ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
-                                                    {w.status === 'success' || w.status === 'completed' ? 'Completed' : 'Rejected'}
+                                                <span className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest ${w.status === 'success' || w.status === 'completed' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/10' : 'bg-rose-500/10 text-rose-400 border border-rose-500/10'}`}>
+                                                    {w.status === 'success' || w.status === 'completed' ? 'Disbursed' : 'Terminated'}
                                                 </span>
                                             )}
                                         </div>
                                     </div>
-                                )) : (<div className="text-gray-500 text-sm">No withdrawal requests found.</div>)}
+                                )) : (<div className="py-20 text-center text-gray-700 font-black uppercase tracking-[0.3em] text-xs">Zero Ledger Withdrawal Activity</div>)}
                             </div>
                         </div>
                    )}
@@ -2013,93 +2041,10 @@ export default function AdminDashboard() {
            )}
 
            {activeTab === 'tournaments' && (
-               <motion.div key="tournaments" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
-                   <div className="flex justify-between items-center">
-                       <h2 className="text-3xl font-black uppercase">Arena Events (Tournaments)</h2>
-                       <div className="flex items-center gap-2">
-                           <button 
-                             onClick={async () => {
-                                 if (!window.confirm(`Add default tournaments?`)) return;
-                                 const { collection, addDoc } = await import('../firebase.ts');
-                                 const defaults = [
-                                     { title: 'Galaxy', status: 'Active', endTime: '23d 02h 45m', description: 'Explore the Galaxy tournament with massive prizes.', participationFee: '5,376.00', prizePool: '5,378,018.00', imageUrl: 'https://images.unsplash.com/photo-1462331940025-496dfbfc7564?auto=format&fit=crop&q=80&w=600', entryFee: '5,376.00' },
-                                     { title: 'Market Makers', status: 'Active', endTime: '02d 02h 45m', description: 'Show your market making skills.', participationFee: '5,376.00', prizePool: '3,016,462.00', imageUrl: 'https://images.unsplash.com/photo-1611974714851-48206138d73e?auto=format&fit=crop&q=80&w=600', entryFee: '5,376.00' }
-                                 ];
-                                 try {
-                                     for (const item of defaults) {
-                                         await addDoc(collection(db, 'tournaments'), item);
-                                     }
-                                     if (typeof fetchStaticAdminData === 'function') await fetchStaticAdminData();
-                                     alert('Default tournaments seeded successfully!');
-                                 } catch (err: any) {
-                                     alert('Failed to seed: ' + err.message);
-                                 }
-                             }}
-                             className="bg-purple-500 text-white px-4 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-lg hover:bg-purple-400 transition-all text-sm"
-                            >
-                               Seed Defaults
-                           </button>
-                       <button 
-                         onClick={() => {
-                             setEditingItem({ title: '', description: '', content: '', prizePool: '', entryFee: '', status: 'Upcoming', imageUrl: '', endTime: '' });
-                             setModalType('tournaments');
-                             setShowModal(true);
-                         }}
-                         className="bg-yellow-500 text-black px-8 py-4 rounded-3xl font-bold flex items-center gap-3 text-sm shadow-lg hover:bg-yellow-400 transition-all"
-                        >
-                           <Plus size={20} /> Create New Event
-                       </button>
-                       </div>
-                   </div>
-                   
-                   {tournaments.length === 0 && (
-                       <div className="col-span-full py-20 text-center bg-[#0a0a0f] border border-dashed border-white/10 rounded-[40px] space-y-4 mb-6">
-                           <Activity className="mx-auto text-gray-700" size={48} />
-                           <div>
-                               <h3 className="text-xl font-bold text-white">No items found</h3>
-                               <p className="text-gray-500 text-sm max-w-xs mx-auto mt-2">There are currently no tournaments. Use the "Create New Event" or "Seed Defaults" button to create events.</p>
-                           </div>
-                       </div>
-                   )}
-                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                       {tournaments.map((t: any, i: number) => (
-                           <div key={`${t.id}-${i}`} className="bg-[#0a0a0f] border border-[#1a1a24] p-6 rounded-3xl space-y-4 hover:border-yellow-500/50 transition-all flex flex-col justify-between">
-                            <div>
-                               <div className="flex justify-between items-start mb-4">
-                                 <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${t.status === 'Upcoming' ? 'bg-blue-500/10 text-blue-500' : t.status === 'Live' ? 'bg-green-500/10 text-green-500' : 'bg-gray-500/10 text-gray-500'}`}>
-                                   {t.status}
-                                 </span>
-                                 <button onClick={() => handleDeleteItem('tournaments', t.id)} className="text-red-500 p-2 hover:bg-red-500/10 rounded-xl"><Trash2 size={16}/></button>
-                               </div>
-                               <h3 className="font-bold text-lg mb-1">{t.title}</h3>
-                               <p className="text-gray-500 text-sm mb-4 line-clamp-2">{t.description}</p>
-                               <div className="grid grid-cols-2 gap-2">
-                                  <div className="bg-[#15161d] p-3 rounded-xl border border-white/5">
-                                      <p className="text-[9px] text-gray-500 uppercase font-black mb-1">Prize</p>
-                                      <p className="text-sm font-black text-yellow-500">{t.prizePool}</p>
-                                  </div>
-                                  <div className="bg-[#15161d] p-3 rounded-xl border border-white/5">
-                                      <p className="text-[9px] text-gray-500 uppercase font-black mb-1">Fee</p>
-                                      <p className="text-sm font-black text-white">{t.entryFee}</p>
-                                  </div>
-                               </div>
-                            </div>
-                            <button 
-                                onClick={() => {
-                                    setEditingItem(t);
-                                    setModalType('tournaments');
-                                    setShowModal(true);
-                                }}
-                                className="w-full mt-4 bg-white/5 hover:bg-white/10 text-white py-3 rounded-xl font-bold text-xs uppercase"
-                            >
-                                Manage Event
-                            </button>
-                           </div>
-                       ))}
-                   </div>
+               <motion.div key="tournaments" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+                   <AdminTournaments />
                </motion.div>
            )}
-
             {activeTab === 'market' && (
                 <motion.div key="market" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
                     {/* PROFESSIONAL HEADER */}
@@ -2455,6 +2400,51 @@ export default function AdminDashboard() {
                                 >
                                     Save SMTP Settings
                                 </button>
+                            </div>
+                        </div>
+
+                        <div className="space-y-6 pt-4 border-t border-white/5">
+                            <h3 className="text-sm font-black uppercase tracking-widest text-gray-400">Database Engine</h3>
+                            <div className="space-y-4">
+                                <label className="text-[10px] font-black uppercase text-gray-500">PostgreSQL Connection URL (Direct Storage)</label>
+                                <div className="flex gap-3">
+                                    <input 
+                                        type="password" 
+                                        placeholder="postgres://user:pass@host:port/db" 
+                                        value={appConfig.dbUrl || ""} 
+                                        onChange={e => setAppConfig({...appConfig, dbUrl: e.target.value})}
+                                        className="flex-1 bg-[#15161d] border border-[#1a1a24] rounded-3xl px-6 py-4 focus:border-yellow-500 outline-none font-mono text-xs"
+                                    />
+                                    <button 
+                                        onClick={async () => {
+                                            if(!appConfig.dbUrl) return toast.error("Please enter a valid URL");
+                                            const load = toast.loading("Connecting to PostgreSQL...");
+                                            try {
+                                                const res = await fetch('/api/admin/config/db-url', {
+                                                    method: 'POST',
+                                                    headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({ dbUrl: appConfig.dbUrl })
+                                                });
+                                                const data = await res.json();
+                                                toast.dismiss(load);
+                                                if (data.success) {
+                                                    toast.success("✅ Database reconnected successfully!");
+                                                } else {
+                                                    toast.error(data.error || "Connection failed");
+                                                }
+                                            } catch (err: any) {
+                                                toast.dismiss(load);
+                                                toast.error(err.message);
+                                            }
+                                        }}
+                                        className="bg-yellow-500 text-black px-6 rounded-3xl font-black text-[10px] uppercase tracking-widest hover:bg-yellow-400 transition-all"
+                                    >
+                                        Connect
+                                    </button>
+                                </div>
+                                <p className="text-[9px] text-gray-500 mt-2 font-medium leading-relaxed italic">
+                                    * Connecting a direct PostgreSQL database ensures all data is saved permanently to your own infrastructure.
+                                </p>
                             </div>
                         </div>
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { Menu, ArrowRight, Award, Trophy, Landmark, TrendingUp, ShieldCheck, Star, Calculator, Calendar, Smartphone, MessageCircle, BookOpen, UserPlus, FileText, Activity, Zap, Globe, Shield, Headphones, PieChart, Check, Users, HelpCircle, ChevronDown } from 'lucide-react';
+import { Menu, ArrowRight, Award, Trophy, Landmark, TrendingUp, ShieldCheck, Star, Calculator, Calendar, Smartphone, MessageCircle, BookOpen, UserPlus, FileText, Activity, Zap, Globe, Shield, Headphones, PieChart, Check, Users, HelpCircle, ChevronDown, LayoutDashboard } from 'lucide-react';
 import { Logo } from '../components/Logo';
 import { AuthModal } from '../components/AuthModal';
 import NewsletterForm from '../components/NewsletterForm';
@@ -8,10 +8,13 @@ import SEO from '../components/SEO';
 import { motion, AnimatePresence } from 'motion/react';
 import { auth, db, onSnapshot, doc } from '../firebase';
 import { formatWithCurrency, convertToBase } from '../lib/currencies';
+import ReferralStatsCard from '../components/ReferralStatsCard';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function Homepage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { user: authUser } = useAuth();
   
   const [authModal, setAuthModal] = useState<{isOpen: boolean, view: 'login' | 'register'}>({
     isOpen: false,
@@ -104,8 +107,8 @@ export default function Homepage() {
   return (
     <div className="min-h-screen bg-[#1c1d22] text-white font-sans selection:bg-[#ffcf00]/30 overflow-x-hidden">
       <SEO 
-        title="BIVAAX | Professional Online Trading & Charting Platform"
-        description="Access global financial markets with BIVAAX. Experience professional online trading tools, real-time charting, and a secure trading ecosystem. Open an account today."
+        title="Bivaax Trade"
+        description="Access global financial markets with Bivaax Trade. Experience professional online trading tools, real-time charting, and a secure trading ecosystem. Open an account today."
         keywords="BIVAAX, online trading platform, binary options trading, trade global markets, advanced trading tools, financial market charts, secure trading account, trading platform for beginners"
         faqData={faqData}
       />
@@ -128,18 +131,30 @@ export default function Homepage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button 
-            onClick={() => navigate('/login')}
-            className="text-gray-300 hover:text-white font-bold text-sm px-3.5 py-2 rounded-lg transition-colors"
-          >
-            Log In
-          </button>
-          <button 
-            onClick={() => navigate('/register')}
-            className="bg-[#ffcf00] text-[#1c1d22] font-black text-sm px-4 py-2 rounded-lg hover:bg-[#e6bb00] transition-colors shadow-lg shadow-yellow-500/5 select-none"
-          >
-            Registration
-          </button>
+          {authUser ? (
+            <button 
+              onClick={() => navigate('/trade')}
+              className="bg-[#ffcf00] text-[#1c1d22] font-black text-sm px-4 py-2 rounded-lg hover:bg-[#e6bb00] transition-colors shadow-lg shadow-yellow-500/5 select-none flex items-center gap-2"
+            >
+              <LayoutDashboard size={16} />
+              Workspace
+            </button>
+          ) : (
+            <>
+              <button 
+                onClick={() => navigate('/login')}
+                className="text-gray-300 hover:text-white font-bold text-sm px-3.5 py-2 rounded-lg transition-colors"
+              >
+                Log In
+              </button>
+              <button 
+                onClick={() => navigate('/register')}
+                className="bg-[#ffcf00] text-[#1c1d22] font-black text-sm px-4 py-2 rounded-lg hover:bg-[#e6bb00] transition-colors shadow-lg shadow-yellow-500/5 select-none"
+              >
+                Registration
+              </button>
+            </>
+          )}
         </div>
       </header>
       
@@ -223,13 +238,30 @@ export default function Homepage() {
               transition={{ delay: 0.6, duration: 0.8 }}
               className="flex justify-center gap-4"
             >
-              <button 
-                onClick={() => navigate('/register')}
-                className="bg-[#ffcf00] hover:bg-[#e6bb00] text-[#1c1d22] font-black text-lg px-10 py-5 rounded-2xl transition-all shadow-xl shadow-yellow-500/20 active:scale-95"
-              >
-                Start Trading Now
-              </button>
+              {authUser ? (
+                <button 
+                  onClick={() => navigate('/trade')}
+                  className="bg-[#ffcf00] hover:bg-[#e6bb00] text-[#1c1d22] font-black text-lg px-10 py-5 rounded-2xl transition-all shadow-xl shadow-yellow-500/20 active:scale-95 flex items-center gap-2"
+                >
+                  <LayoutDashboard size={20} />
+                  Go to Trading Terminal
+                </button>
+              ) : (
+                <button 
+                  onClick={() => navigate('/register')}
+                  className="bg-[#ffcf00] hover:bg-[#e6bb00] text-[#1c1d22] font-black text-lg px-10 py-5 rounded-2xl transition-all shadow-xl shadow-yellow-500/20 active:scale-95"
+                >
+                  Start Trading Now
+                </button>
+              )}
             </motion.div>
+
+            {/* Referral Stats Card for Logged In Users */}
+            {authUser && (
+              <div className="mt-12 max-w-lg mx-auto">
+                <ReferralStatsCard />
+              </div>
+            )}
           </div>
           
           <motion.div 

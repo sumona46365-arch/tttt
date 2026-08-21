@@ -8,7 +8,7 @@ export interface Currency {
 export const currencies: Currency[] = [
   { code: 'USD', symbol: '$', rate: 1, name: 'US Dollar' },
   { code: 'USDT', symbol: '$', rate: 1, name: 'Tether' },
-  { code: 'BDT', symbol: '৳', rate: 120, name: 'Bangladeshi Taka' },
+  { code: 'BDT', symbol: '৳', rate: 120, name: 'Local Taka' },
   { code: 'EUR', symbol: '€', rate: 0.92, name: 'Euro' },
   { code: 'GBP', symbol: '£', rate: 0.78, name: 'British Pound' },
   { code: 'INR', symbol: '₹', rate: 83.5, name: 'Indian Rupee' },

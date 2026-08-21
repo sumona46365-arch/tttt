@@ -10,6 +10,7 @@ import { Toaster, toast } from 'react-hot-toast';
 
 
 import { SupportProvider, useSupport } from './contexts/SupportContext';
+import { AuthProvider } from './contexts/AuthContext';
 import { LiveSupport } from './components/LiveSupport';
 import { I18nProvider } from './context/I18nContext';
 import AppBoundary from './components/AppBoundary';
@@ -747,44 +748,7 @@ export default function App() {
   };
 
   if (loading) {
-    return (
-      <div className="min-h-[100dvh] bg-[#101115] flex flex-col items-center justify-center p-6 text-center">
-        <div className="relative mb-8">
-          <div className="w-12 h-12 border-4 border-[#FFE24C]/20 border-t-[#FFE24C] rounded-full animate-spin"></div>
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="w-2 h-2 bg-[#FFE24C] rounded-full animate-pulse"></div>
-          </div>
-        </div>
-        
-        <div className="max-w-md">
-          <h2 className="text-white font-black text-xl mb-2 tracking-tight">Initializing Bivaax</h2>
-          <p className="text-gray-400 text-sm leading-relaxed mb-6">
-            Establishing secure connection and verifying session...
-          </p>
-          
-          <div className="space-y-4">
-             <div className="bg-[#1c1d22] border border-white/5 rounded-2xl p-4 flex items-start gap-3 text-left">
-                <div className="w-5 h-5 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0 mt-0.5">
-                   <div className="w-1.5 h-1.5 bg-blue-400 rounded-full"></div>
-                </div>
-                <div>
-                   <p className="text-[11px] text-gray-300 font-bold mb-0.5 uppercase tracking-wider">Connection Notice</p>
-                   <p className="text-[11px] text-gray-500 leading-snug">
-                      If you see a <b>network-request-failed</b> error, please ensure you aren't behind a restrictive VPN or firewall blocking Google Firebase services.
-                   </p>
-                </div>
-             </div>
-             
-             <button 
-                onClick={() => window.location.reload()}
-                className="text-[#FFE24C] text-[11px] font-black uppercase tracking-[0.2em] hover:text-white transition-colors"
-             >
-                Force Reload Page
-             </button>
-          </div>
-        </div>
-      </div>
-    );
+    return <div className="min-h-screen bg-[#101115]" />;
   }
 
   // If 2FA is required and not passed, show the secure 2FA blocker screen
@@ -880,8 +844,9 @@ export default function App() {
                }} 
       />
       <I18nProvider>
-        <SupportProvider>
-          <SupportModalWrapper user={user} />
+        <AuthProvider>
+          <SupportProvider>
+            <SupportModalWrapper user={user} />
           <BrowserRouter>
             <AppBoundary>
             <Suspense fallback={<PageLoader />}>
@@ -939,7 +904,8 @@ export default function App() {
          </Suspense>
         </AppBoundary>
       </BrowserRouter>
-        </SupportProvider>
+          </SupportProvider>
+        </AuthProvider>
       </I18nProvider>
     </>
   );

@@ -153,7 +153,7 @@ import { COUNTRY_DIAL_CODES, findCountryByDialCode, findCountryByName, CountryDi
 
 
 const COUNTRIES = [
-  "Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Antigua and Barbuda", "Argentina", "Armenia", "Australia", "Austria", "Azerbaijan", "Bahamas", "Bahrain", "Bangladesh", "Barbados", "Belarus", "Belgium", "Belize", "Benin", "Bhutan", "Bolivia", "Bosnia and Herzegovina", "Botswana", "Brazil", "Brunei", "Bulgaria", "Burkina Faso", "Burundi", "Cabo Verde", "Cambodia", "Cameroon", "Canada", "Central African Republic", "Chad", "Chile", "China", "Colombia", "Comoros", "Congo", "Costa Rica", "Croatia", "Cuba", "Cyprus", "Czech Republic", "Denmark", "Djibouti", "Dominica", "Dominican Republic", "Ecuador", "Egypt", "El Salvador", "Equatorial Guinea", "Eritrea", "Estonia", "Eswatini", "Ethiopia", "Fiji", "Finland", "France", "Gabon", "Gambia", "Georgia", "Germany", "Ghana", "Greece", "Grenada", "Guatemala", "Guinea", "Guinea-Bissau", "Guyana", "Haiti", "Honduras", "Hungary", "Iceland", "India", "Indonesia", "Iran", "Iraq", "Ireland", "Israel", "Italy", "Jamaica", "Japan", "Jordan", "Kazakhstan", "Kenya", "Kiribati", "Kuwait", "Kyrgyzstan", "Laos", "Latvia", "Lebanon", "Lesotho", "Liberia", "Libya", "Liechtenstein", "Lithuania", "Luxembourg", "Madagascar", "Malawi", "Malaysia", "Maldives", "Mali", "Malta", "Marshall Islands", "Mauritania", "Mauritius", "Mexico", "Micronesia", "Moldova", "Monaco", "Mongolia", "Montenegro", "Morocco", "Mozambique", "Myanmar", "Namibia", "Nauru", "Nepal", "Netherlands", "New Zealand", "Nicaragua", "Niger", "Nigeria", "North Korea", "North Macedonia", "Norway", "Oman", "Pakistan", "Palau", "Palestine State", "Panama", "Papua New Guinea", "Paraguay", "Peru", "Philippines", "Poland", "Portugal", "Qatar", "Romania", "Russia", "Rwanda", "Saint Kitts and Nevis", "Saint Lucia", "Saint Vincent and the Grenadines", "Samoa", "San Marino", "Sao Tome and Principe", "Saudi Arabia", "Senegal", "Serbia", "Seychelles", "Sierra Leone", "Singapore", "Slovakia", "Slovenia", "Solomon Islands", "Somalia", "South Africa", "South Korea", "South Sudan", "Spain", "Sri Lanka", "Sudan", "Suriname", "Sweden", "Switzerland", "Syria", "Taiwan", "Tajikistan", "Tanzania", "Thailand", "Timor-Leste", "Togo", "Tonga", "Trinidad and Tobago", "Tunisia", "Turkey", "Turkmenistan", "Tuvalu", "Uganda", "Ukraine", "United Arab Emirates", "United Kingdom", "United States", "Uruguay", "Uzbekistan", "Vanuatu", "Vatican City", "Venezuela", "Vietnam", "Yemen", "Zambia", "Zimbabwe"
+  "Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Antigua and Barbuda", "Argentina", "Armenia", "Australia", "Austria", "Azerbaijan", "Bahamas", "Bahrain", "Barbados", "Belarus", "Belgium", "Belize", "Benin", "Bhutan", "Bolivia", "Bosnia and Herzegovina", "Botswana", "Brazil", "Brunei", "Bulgaria", "Burkina Faso", "Burundi", "Cabo Verde", "Cambodia", "Cameroon", "Canada", "Central African Republic", "Chad", "Chile", "China", "Colombia", "Comoros", "Congo", "Costa Rica", "Croatia", "Cuba", "Cyprus", "Czech Republic", "Denmark", "Djibouti", "Dominica", "Dominican Republic", "Ecuador", "Egypt", "El Salvador", "Equatorial Guinea", "Eritrea", "Estonia", "Eswatini", "Ethiopia", "Fiji", "Finland", "France", "Gabon", "Gambia", "Georgia", "Germany", "Ghana", "Greece", "Grenada", "Guatemala", "Guinea", "Guinea-Bissau", "Guyana", "Haiti", "Honduras", "Hungary", "Iceland", "India", "Indonesia", "Iran", "Iraq", "Ireland", "Israel", "Italy", "Jamaica", "Japan", "Jordan", "Kazakhstan", "Kenya", "Kiribati", "Kuwait", "Kyrgyzstan", "Laos", "Latvia", "Lebanon", "Lesotho", "Liberia", "Libya", "Liechtenstein", "Lithuania", "Luxembourg", "Madagascar", "Malawi", "Malaysia", "Maldives", "Mali", "Malta", "Marshall Islands", "Mauritania", "Mauritius", "Mexico", "Micronesia", "Moldova", "Monaco", "Mongolia", "Montenegro", "Morocco", "Mozambique", "Myanmar", "Namibia", "Nauru", "Nepal", "Netherlands", "New Zealand", "Nicaragua", "Niger", "Nigeria", "North Korea", "North Macedonia", "Norway", "Oman", "Pakistan", "Palau", "Palestine State", "Panama", "Papua New Guinea", "Paraguay", "Peru", "Philippines", "Poland", "Portugal", "Qatar", "Romania", "Russia", "Rwanda", "Saint Kitts and Nevis", "Saint Lucia", "Saint Vincent and the Grenadines", "Samoa", "San Marino", "Sao Tome and Principe", "Saudi Arabia", "Senegal", "Serbia", "Seychelles", "Sierra Leone", "Singapore", "Slovakia", "Slovenia", "Solomon Islands", "Somalia", "South Africa", "South Korea", "South Sudan", "Spain", "Sri Lanka", "Sudan", "Suriname", "Sweden", "Switzerland", "Syria", "Taiwan", "Tajikistan", "Tanzania", "Thailand", "Timor-Leste", "Togo", "Tonga", "Trinidad and Tobago", "Tunisia", "Turkey", "Turkmenistan", "Tuvalu", "Uganda", "Ukraine", "United Arab Emirates", "United Kingdom", "United States", "Uruguay", "Uzbekistan", "Vanuatu", "Vatican City", "Venezuela", "Vietnam", "Yemen", "Zambia", "Zimbabwe"
 ];
 
 const LANGUAGES = [
@@ -2328,7 +2328,7 @@ export default function TradeTerminal() {
             { name: '181824019', country: '🇨🇴', isVip: true, copiersCount: 5, maxCopiers: 50, gainPerWeek: '69%', copiedTrades: 84, commission: '5%', profitRate: 71, lossRate: 29, winRate: 78, totalProfit: 5400, strategy: 'Aggressive Small Account Grow', level: 'VIP', riskIndex: 5 },
             { name: 'ELENA_RU', country: '🇷🇺', isVip: true, copiersCount: 29, maxCopiers: 100, gainPerWeek: '84%', copiedTrades: 420, commission: '10%', profitRate: 81, lossRate: 19, winRate: 83, totalProfit: 95000, strategy: 'Gold & Crude Breakouts', level: 'VIP', riskIndex: 3 },
             { name: 'SANJAY FX', country: '🇮🇳', isVip: false, copiersCount: 11, maxCopiers: 100, gainPerWeek: '52%', copiedTrades: 140, commission: '5%', profitRate: 74, lossRate: 26, winRate: 80, totalProfit: 18000, strategy: 'Macro News Straddle Strategy', level: 'Standard', riskIndex: 2 },
-            { name: 'TRADEMINATOR', country: '🇧🇩', isVip: true, copiersCount: 42, maxCopiers: 150, gainPerWeek: '135%', copiedTrades: 620, commission: '10%', profitRate: 85, lossRate: 15, winRate: 89, totalProfit: 155000, strategy: 'Bangladesh Confluence Method', level: 'VIP', riskIndex: 2 },
+            { name: 'TRADEMINATOR', country: '🇬🇧', isVip: true, copiersCount: 42, maxCopiers: 150, gainPerWeek: '135%', copiedTrades: 620, commission: '10%', profitRate: 85, lossRate: 15, winRate: 89, totalProfit: 155000, strategy: 'Bivaax Confluence Method', level: 'VIP', riskIndex: 2 },
             { name: 'LUC TRADER', country: '🇫🇷', isVip: false, copiersCount: 8, maxCopiers: 80, gainPerWeek: '28%', copiedTrades: 92, commission: '7%', profitRate: 68, lossRate: 32, winRate: 75, totalProfit: 21000, strategy: 'Fib Retracement Swing Trading', level: 'Standard', riskIndex: 3 }
           ];
           for (const t of traders) {
@@ -2533,7 +2533,7 @@ const PROMOTED_ARTICLES = [
   const { t } = useTranslation((language || selectedLanguage?.code || 'en') as LanguageCode);
   const [showCountryModal, setShowCountryModal] = useState(false);
   const [countrySearch, setCountrySearch] = useState('');
-  const [selectedCountry, setSelectedCountry] = useState("Bangladesh");
+  const [selectedCountry, setSelectedCountry] = useState("United Kingdom");
   const [show2FAModal, setShow2FAModal] = useState(false);
   const [is2FAEnabled, setIs2FAEnabled] = useState(false);
   const [twoFAStep, setTwoFAStep] = useState(1);
@@ -5225,9 +5225,9 @@ const PROMOTED_ARTICLES = [
         .slice(0, 20);
 
     const getCountryCode = (countryName: string) => {
-        if (!countryName) return "bd";
+        if (!countryName) return "gb";
         const mapping: Record<string, string> = {
-            "Bangladesh": "bd", "India": "in", "Pakistan": "pk", "United States": "us", "United Kingdom": "gb", 
+            "India": "in", "Pakistan": "pk", "United States": "us", "United Kingdom": "gb", 
             "Canada": "ca", "Australia": "au", "Malaysia": "my", "Indonesia": "id", "Brazil": "br", "Mexico": "mx",
             "Colombia": "co", "Spain": "es", "South Africa": "za", "Argentina": "ar"
         };
@@ -5236,7 +5236,7 @@ const PROMOTED_ARTICLES = [
         const partial = Object.keys(mapping).find(k => k.toLowerCase().includes(countryName.toLowerCase()) || countryName.toLowerCase().includes(k.toLowerCase()));
         if (partial) return mapping[partial];
         
-        return "bd";
+        return "gb";
     };
 
     return sourceData.map((l: any, i: number) => {
@@ -5250,7 +5250,7 @@ const PROMOTED_ARTICLES = [
         id: l.user_id,
         name: l.display_name || l.nickname || 'Trader',
         profit: profitVal,
-        country: l.country || 'Bangladesh',
+        country: l.country || 'United Kingdom',
         flagUrl: `https://flagcdn.com/w40/${countryCode}.png`,
         isCurrentUser: currentUser && currentUser.uid === l.user_id,
         rank: i + 1,
@@ -15497,15 +15497,7 @@ const PROMOTED_ARTICLES = [
                     </div>
                     <p className="text-[22px] font-bold text-gray-400 mb-2">No promotions currently available</p>
                     <p className="text-gray-500 max-w-sm">
-                      Sorry, there are no active events at the moment. Please check back later or watch our{' '}
-                      <a 
-                        href="https://t.me/Bivaax_Official" 
-                        target="_blank" 
-                        rel="noopener noreferrer" 
-                        className="text-yellow-500 hover:underline inline-flex items-center gap-1 font-medium"
-                      >
-                        Telegram Channel
-                      </a>.
+                      Sorry, there are no active events at the moment. Please check back later or contact our support team.
                     </p>
                   </div>
                 ) : (
