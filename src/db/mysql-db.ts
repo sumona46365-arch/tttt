@@ -436,6 +436,7 @@ async function initPgTables(pool: pg.Pool) {
 
   await addPgColIfMissing('tickets', 'user_name', 'VARCHAR(255)');
   await addPgColIfMissing('audit_logs', 'action', 'VARCHAR(255)');
+  await addPgColIfMissing('audit_logs', 'type', 'VARCHAR(100)');
   await addPgColIfMissing('audit_logs', 'entity_type', 'VARCHAR(100)');
   await addPgColIfMissing('audit_logs', 'entity_id', 'VARCHAR(255)');
   await addPgColIfMissing('tickets', 'user_email', 'VARCHAR(255)');

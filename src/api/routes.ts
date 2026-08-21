@@ -2204,9 +2204,9 @@ router.post('/trade', async (req, res) => {
       const createdAt = Date.now();
 
       const insertRes = await run(
-        `INSERT INTO trades (user_id, market_id, amount, direction, entry_price, duration, expiry_time, is_demo, status, account_type, tournament_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [userId, pair, amount.toString(), direction, entryPrice.toString(), duration, expiryTime, isDemo ? 1 : 0, 'open', accountType || (isDemo ? 'demo' : 'real'), tournamentId || null, createdAt],
+        `INSERT INTO trades (user_id, market_id, amount, direction, entry_price, duration, expiry_time, is_demo, status, account_type, tournament_id, created_at, firebase_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [userId, pair, amount.toString(), direction, entryPrice.toString(), duration, expiryTime, isDemo ? 1 : 0, 'open', accountType || (isDemo ? 'demo' : 'real'), tournamentId || null, createdAt, trade?.id || null],
         conn
       );
       
@@ -2277,7 +2277,8 @@ router.post('/trade/settle-secure', async (req, res) => {
   if (!tradeId) return res.status(400).json({ error: 'tradeId is required' });
   
   try {
-    const result = await settleTrade(Number(tradeId), currentMarketPrice);
+    const idToSettle = isNaN(Number(tradeId)) ? tradeId : Number(tradeId);
+    const result = await settleTrade(idToSettle, currentMarketPrice);
     res.json({ success: true, trade: result });
   } catch (error: any) {
     logger.error(`Manual settlement failed for trade ${tradeId}: ${error.message}`);

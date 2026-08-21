@@ -1792,8 +1792,12 @@ export default function TradeTerminal() {
                 if (snap.empty) return;
                 const closed = snap.docs.map(d => ({ id: d.id, ...d.data() }));
                 setUserTrades(prev => {
-                  const combined = [...prev.filter(t => t.status === 'open'), ...closed];
-                  return combined.filter((v, i, a) => a.findIndex(t => t.id === v.id) === i).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 100);
+                  const combined = [...prev, ...closed];
+                  return combined.filter((v, i, a) => a.findIndex(t => t.id === v.id) === i).sort((a, b) => {
+                      const d1 = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : Number(a.createdAt || 0);
+                      const d2 = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : Number(b.createdAt || 0);
+                      return d2 - d1;
+                  }).slice(0, 100);
                 });
             }).catch(async (err) => {
                 // REST already called on mount, no need to retry here unless desired
@@ -8732,7 +8736,7 @@ const PROMOTED_ARTICLES = [
                   <div className="space-y-4">
                     {/* Tournaments (Large Card) */}
                     <button 
-                      onClick={() => toast.error("Tournaments are currently closed!")}
+                      onClick={() => setActiveTab("tournaments")}
                       className="w-full bg-[#2a2c31] hover:bg-[#32343a] rounded-2xl p-5 flex items-center justify-between transition-all border border-white/5 shadow-lg group h-[100px] relative overflow-hidden"
                     >
                       <div className="flex items-center gap-5">
@@ -8740,13 +8744,6 @@ const PROMOTED_ARTICLES = [
                           <Trophy size={28} className="text-white" />
                         </div>
                         <span className="text-[18px] font-black text-white tracking-tight">Tournaments</span>
-                      </div>
-                      <div className="bg-[#ffe24c]/10 p-2 rounded-xl border border-[#ffe24c]/20">
-                         <Lock size={20} className="text-[#ffe24c]" />
-                      </div>
-                      {/* Diagonal Overlay Strip */}
-                      <div className="absolute top-2 -right-12 bg-[#ffe24c] text-[#1f2026] text-[10px] font-black px-12 py-1 rotate-45 shadow-lg">
-                        LOCKED
                       </div>
                     </button>
 
@@ -9847,17 +9844,12 @@ const PROMOTED_ARTICLES = [
                     ))}
                   </div>
 
-                  {/* Market Title */}
-                  <div className="pt-24 pb-12">
-                     <h2 className="text-[36px] font-black text-white leading-none tracking-tighter uppercase whitespace-pre-wrap">Market</h2>
-                  </div>
-
                   {/* Promoted Articles */}
-                  <div>
-                     <h2 className="text-[42px] font-black text-white mb-12 uppercase tracking-tighter leading-none">Promoted articles</h2>
-                     <div className="flex flex-col gap-8">
+                  <div className="pt-12">
+                     <h2 className="text-[24px] font-black text-white mb-6 uppercase tracking-tighter leading-none">Promoted articles</h2>
+                     <div className="flex flex-col gap-4">
                         {PROMOTED_ARTICLES.map((article, idx) => (
-                          <button key={`help-promo-article-${idx}`} className="text-[20px] font-bold text-yellow-500/80 hover:text-yellow-500 text-left transition-colors whitespace-normal leading-relaxed hover:underline underline-offset-8">
+                          <button key={`help-promo-article-${idx}`} className="text-[16px] font-bold text-yellow-500/80 hover:text-yellow-500 text-left transition-colors whitespace-normal leading-relaxed hover:underline underline-offset-8">
                              {article}
                           </button>
                         ))}
@@ -9885,59 +9877,82 @@ const PROMOTED_ARTICLES = [
 
            {/* Main Content */}
            <div className="flex-1 overflow-y-auto px-4 py-6 custom-scrollbar bg-[#131417]">
-              <div className="space-y-6">
+              <div className="space-y-4">
                  {tournamentsData.map((tourney, tourneyIdx) => (
-                    <div key={`tourney-drawer-${tourney.id}-${tourneyIdx}`} className="bg-[#1f2026] rounded-2xl overflow-hidden shadow-lg border border-white/5 group flex flex-col">
-                       <div className="relative h-[160px] overflow-hidden">
+                    <div 
+                       key={`tourney-drawer-${tourney.id}-${tourneyIdx}`} 
+                       className="relative w-full h-[220px] rounded-xl overflow-hidden border border-white/5 shadow-lg bg-[#1c1d22] group"
+                    >
+                       {/* Background Image with Dark Overlays */}
+                       <div className="absolute inset-0">
                           <img 
                              src={tourney.imageUrl || 'https://images.unsplash.com/photo-1611974714851-48206138d73e?auto=format&fit=crop&q=80&w=600'} 
-                             className="w-full h-full object-cover grayscale-[0.2] group-hover:grayscale-0 group-hover:scale-105 transition-all duration-1000" 
+                             className="w-full h-full object-cover opacity-50 group-hover:opacity-75 group-hover:scale-105 transition-all duration-1000" 
                              alt={tourney.title} 
-                           loading="lazy" />
-                          <div className="absolute inset-0 bg-gradient-to-t from-[#1f2026] via-[#1f2026]/20 to-transparent"></div>
-                          <div className="absolute bottom-3 left-4">
-                             <h3 className="text-white font-black text-[18px] tracking-tight leading-tight">{tourney.title}</h3>
-                          </div>
-                          <div className="absolute top-3 right-3 bg-white/10 backdrop-blur-md text-white px-2 py-1 rounded-md text-[9px] font-black uppercase">
-                             End {tourney.endTime || '23d 02h'}
-                          </div>
+                             loading="lazy"
+                             referrerPolicy="no-referrer"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/70 to-transparent"></div>
                        </div>
-                       
-                       <div className="p-4 flex flex-col gap-4">
-                          <div className="grid grid-cols-2 gap-4">
-                             <div>
-                                <p className="text-[#7b8390] text-[9px] font-black uppercase tracking-widest mb-1">Fee</p>
-                                <span className="text-white font-black text-[15px]">{formatWithCurrency(Number(String(tourney.participationFee || '0').replace(/,/g, '')), userCurrency)}</span>
-                             </div>
-                             <div>
-                                <p className="text-[#7b8390] text-[9px] font-black uppercase tracking-widest mb-1">Prize</p>
-                                <span className="text-[#ffe24c] font-black text-[15px]">{formatWithCurrency(Number(String(tourney.prizePool || '0').replace(/,/g, '')), userCurrency)}</span>
+
+                       {/* Content Overlay */}
+                       <div className="absolute inset-0 p-5 flex flex-col justify-between z-10">
+                          {/* Top Left Metadata */}
+                          <div className="flex flex-col gap-2 items-start">
+                             <h3 className="text-white font-extrabold text-[20px] tracking-tight leading-tight group-hover:text-[#ffe24c] transition-colors">
+                                {tourney.title}
+                             </h3>
+                             <div className="inline-flex items-center gap-1.5 bg-black/60 border border-white/10 text-white text-[11px] font-bold px-3 py-1.5 rounded-[8px]">
+                                <span>Until start: {tourney.endTime || '23d 02h'}</span>
                              </div>
                           </div>
 
-                          <div className="pt-4 border-t border-white/5">
-                             {userRegistrations.includes(tourney.id) ? (
-                                <button
-                                    onClick={() => {
-                                        setActiveTournamentId(tourney.id);
-                                        setAccountType("tournament");
-                                        setActiveTab("trade");
-                                        toast.success(`Switched to "${tourney.title}" Tournament Trading!`);
-                                    }}
-                                    className="w-full bg-[#309cf4] hover:bg-[#40acf4] text-white font-black text-[12px] h-[44px] rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95"
-                                >
-                                    <Icons.Trophy size={14} />
-                                    TRADE NOW
-                                </button>
-                             ) : (
-                                <button
-                                    onClick={() => handleRegisterTournament(tourney)}
-                                    className="w-full bg-[#ffe24c] hover:bg-[#fff080] text-[#131417] font-black text-[12px] h-[44px] rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95"
-                                >
-                                    <Icons.Sparkles size={14} />
-                                    REGISTER FOR FREE
-                                </button>
-                             )}
+                          {/* Lock Icon Overlay for Locked/Unregistered tournaments */}
+                          {!userRegistrations.includes(tourney.id) && (
+                             <div className="absolute top-5 right-5 bg-black/40 text-white border border-white/10 rounded-full p-2.5 flex items-center justify-center">
+                                <Lock size={16} className="text-gray-300" />
+                             </div>
+                          )}
+
+                          {/* Bottom Section - Prize Fund and CTA */}
+                          <div className="flex justify-between items-end w-full gap-3">
+                             <div className="flex flex-col">
+                                <span className="text-[#7b8390] text-[10px] font-extrabold uppercase tracking-widest mb-1">
+                                   Prize fund
+                                </span>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                   <span className="text-[#ffe24c] font-extrabold text-[22px] leading-none tracking-tight">
+                                      {formatWithCurrency(Number(String(tourney.prizePool || '0').replace(/,/g, '')), userCurrency)}
+                                   </span>
+                                   <span className="inline-block bg-[#ffe24c]/10 text-[#ffe24c] border border-[#ffe24c]/30 text-[9px] font-black px-1.5 py-0.5 rounded leading-none">
+                                      LIVE ONLY
+                                   </span>
+                                </div>
+                             </div>
+
+                             <div>
+                                {userRegistrations.includes(tourney.id) ? (
+                                   <button
+                                      onClick={() => {
+                                         setActiveTournamentId(tourney.id);
+                                         setAccountType("tournament");
+                                         setActiveTab("trade");
+                                         toast.success(`Switched to "${tourney.title}" Tournament Trading!`);
+                                      }}
+                                      className="bg-[#ffe24c] hover:bg-[#fff080] active:scale-95 text-[#131417] font-black text-[13px] h-[38px] px-5 rounded-[8px] flex items-center justify-center gap-1.5 transition-all shadow-md shrink-0 whitespace-nowrap"
+                                   >
+                                      <Icons.Trophy size={14} />
+                                      Trade now
+                                   </button>
+                                ) : (
+                                   <button
+                                      onClick={() => handleRegisterTournament(tourney)}
+                                      className="bg-[#ffe24c] hover:bg-[#fff080] active:scale-95 text-[#131417] font-black text-[13px] h-[38px] px-5 rounded-[8px] flex items-center justify-center gap-1.5 transition-all shadow-md shrink-0 whitespace-nowrap"
+                                   >
+                                      Read more
+                                   </button>
+                                )}
+                             </div>
                           </div>
                        </div>
                     </div>
@@ -10130,7 +10145,22 @@ const PROMOTED_ARTICLES = [
                                        </div>
                                        <span className="text-[13px] text-gray-400 font-bold">
                                           {(() => {
-                                              const d = trade.createdAt?.toDate ? trade.createdAt.toDate() : new Date(trade.createdAt);
+                                              let d: Date;
+                                              try {
+                                                  if (trade.createdAt?.toDate) {
+                                                      d = trade.createdAt.toDate();
+                                                  } else if (trade.createdAt) {
+                                                      const ts = Number(trade.createdAt);
+                                                      d = ts < 9999999999 ? new Date(ts * 1000) : new Date(ts);
+                                                  } else {
+                                                      d = new Date();
+                                                  }
+                                                  if (isNaN(d.getTime())) {
+                                                      d = new Date();
+                                                  }
+                                              } catch (e) {
+                                                  d = new Date();
+                                              }
                                               return `${d.toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })} · ${d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`;
                                           })()}
                                        </span>

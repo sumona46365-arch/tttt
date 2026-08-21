@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { auth } from '../firebase';
 import { 
   Trophy, Plus, Edit2, Trash2, Lock, Unlock, 
   Calendar, DollarSign, Users, Image as ImageIcon,
@@ -39,7 +40,12 @@ export const AdminTournaments: React.FC = () => {
   const fetchTournaments = async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/tournaments?admin=true');
+      const token = auth.currentUser ? await auth.currentUser.getIdToken() : '';
+      const res = await fetch('/api/tournaments?admin=true', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
       const data = await res.json();
       if (data.success) {
         setTournaments(data.tournaments);
@@ -53,9 +59,13 @@ export const AdminTournaments: React.FC = () => {
 
   const handleToggleLock = async (id: string) => {
     try {
+      const token = auth.currentUser ? await auth.currentUser.getIdToken() : '';
       const res = await fetch(`/api/admin/tournaments/${id}/toggle-lock`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
       });
       const data = await res.json();
       if (data.success) {
@@ -70,7 +80,13 @@ export const AdminTournaments: React.FC = () => {
   const handleDelete = async (id: string) => {
     if (!window.confirm('Are you sure you want to delete this tournament? This will also remove all participants and prizes.')) return;
     try {
-      const res = await fetch(`/api/admin/tournaments/${id}`, { method: 'DELETE' });
+      const token = auth.currentUser ? await auth.currentUser.getIdToken() : '';
+      const res = await fetch(`/api/admin/tournaments/${id}`, { 
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
       const data = await res.json();
       if (data.success) {
         setTournaments(prev => prev.filter(t => t.id !== id));
@@ -93,9 +109,13 @@ export const AdminTournaments: React.FC = () => {
       const url = isNew ? '/api/admin/tournaments' : `/api/admin/tournaments/${selectedTournament.id}`;
       const method = isNew ? 'POST' : 'PUT';
 
+      const token = auth.currentUser ? await auth.currentUser.getIdToken() : '';
       const res = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify(selectedTournament)
       });
       const data = await res.json();

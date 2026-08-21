@@ -90,11 +90,18 @@ export async function settleExpiredTrades() {
   }
 }
 
-export async function settleTrade(tradeId: number, currentMarketPrice?: number) {
+export async function settleTrade(tradeId: number | string, currentMarketPrice?: number) {
   try {
     const result = await transaction(async (conn) => {
       // Lock the trade record
-      const trade = await get('SELECT * FROM trades WHERE id = ?', [tradeId], conn) as any;
+      let trade: any = null;
+      if (typeof tradeId === 'number' || !isNaN(Number(tradeId))) {
+        trade = await get('SELECT * FROM trades WHERE id = ?', [Number(tradeId)], conn) as any;
+      }
+      if (!trade && tradeId) {
+        trade = await get('SELECT * FROM trades WHERE firebase_id = ?', [tradeId.toString()], conn) as any;
+      }
+
       if (!trade || trade.status !== 'open') return null;
 
       const isDemo = !!trade.is_demo;
@@ -167,26 +174,26 @@ export async function settleTrade(tradeId: number, currentMarketPrice?: number) 
       // Update trade in SQL
       await run(
         'UPDATE trades SET status = ?, exit_price = ?, payout_amount = ?, settled_at = ? WHERE id = ?',
-        [newStatus, exitPrice.toString(), payoutAmount.toFixed(2), Math.floor(Date.now() / 1000), tradeId],
+        [newStatus, exitPrice.toString(), payoutAmount.toFixed(2), Math.floor(Date.now() / 1000), trade.id],
         conn
       );
 
       // Sync trade settlement to Firestore
       if (adminDb) {
         try {
-          logger.info(`Attempting to sync trade ${tradeId} settlement to Firestore. New status: ${newStatus}`);
-          await adminDb.collection('trades').doc(tradeId.toString()).update({
+          logger.info(`Attempting to sync trade ${trade.id} settlement to Firestore. New status: ${newStatus}`);
+          await adminDb.collection('trades').doc(trade.id.toString()).update({
             status: newStatus,
             exitPrice: parseFloat(exitPrice.toString()),
             payoutAmount: payoutAmount.toNumber(),
             settledAt: Math.floor(Date.now() / 1000)
           });
-          logger.info(`Successfully synced trade ${tradeId} settlement to Firestore.`);
+          logger.info(`Successfully synced trade ${trade.id} settlement to Firestore.`);
         } catch (fsErr: any) {
-          logger.error(`Failed to sync trade ${tradeId} settlement to Firestore: ${fsErr.message}`);
+          logger.error(`Failed to sync trade ${trade.id} settlement to Firestore: ${fsErr.message}`);
           // Fallback: Try to sync full trade object if update failed (document might not exist)
           try {
-            const fullTrade = await get('SELECT * FROM trades WHERE id = ?', [tradeId], conn) as any;
+            const fullTrade = await get('SELECT * FROM trades WHERE id = ?', [trade.id], conn) as any;
             if (fullTrade) {
               const mapped = {
                 id: fullTrade.id.toString(),
@@ -207,7 +214,7 @@ export async function settleTrade(tradeId: number, currentMarketPrice?: number) 
                 createdAt: fullTrade.created_at,
                 settledAt: Math.floor(Date.now() / 1000)
               };
-              await adminDb.collection('trades').doc(tradeId.toString()).set(mapped);
+              await adminDb.collection('trades').doc(trade.id.toString()).set(mapped);
             }
           } catch (e) {}
         }
@@ -262,7 +269,7 @@ export async function settleTrade(tradeId: number, currentMarketPrice?: number) 
                }
                
                if (!trade.is_demo && trade.account_type !== 'demo' && trade.account_type !== 'tournament') {
-                 await createAuditLog(trade.user_id, 'trade_payout', 'trade', tradeId.toString(), { payoutAmount: payoutAmount.toNumber(), newBalance });
+                 await createAuditLog(trade.user_id, 'trade_payout', 'trade', trade.id.toString(), { payoutAmount: payoutAmount.toNumber(), newBalance });
                }
            }
         }
@@ -273,7 +280,7 @@ export async function settleTrade(tradeId: number, currentMarketPrice?: number) 
         await updateLeaderboardStats(trade.user_id, newStatus as any, profit, tradeAmount.toNumber(), conn);
       }
 
-      const fullTrade = await get('SELECT * FROM trades WHERE id = ?', [tradeId], conn) as any;
+      const fullTrade = await get('SELECT * FROM trades WHERE id = ?', [trade.id], conn) as any;
 
       return { 
         id: tradeId, 
