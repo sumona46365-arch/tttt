@@ -208,5 +208,10 @@ service cloud.firestore {
       allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
       allow write: if isAdmin();
     }
+
+    // 12. Counters for sequential affiliate IDs
+    match /counters/{counterId} {
+      allow read, write: if isSignedIn();
+    }
   }
 }

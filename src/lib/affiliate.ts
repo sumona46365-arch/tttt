@@ -33,13 +33,23 @@ export async function getNextAffiliateId(): Promise<number> {
 export async function ensureUserAffiliateId(uid: string, userData?: any): Promise<string> {
   if (!uid) return '';
 
+  const storageKey = `bivaax_aff_code_${uid}`;
+
   // 1. Check passed user object first
   let existingCode = userData?.referralCode || userData?.referral_code || userData?.affiliateId || userData?.affiliate_id;
   if (existingCode) {
-    return String(existingCode);
+    const str = String(existingCode);
+    try { localStorage.setItem(storageKey, str); } catch (_) {}
+    return str;
   }
 
-  // 2. Check Firestore document
+  // 2. Check client localStorage cache
+  try {
+    const cached = localStorage.getItem(storageKey);
+    if (cached) return cached;
+  } catch (_) {}
+
+  // 3. Check Firestore document
   try {
     const userRef = doc(db, 'users', uid);
     const snap = await getDoc(userRef);
@@ -47,18 +57,56 @@ export async function ensureUserAffiliateId(uid: string, userData?: any): Promis
       const data = snap.data();
       existingCode = data.referralCode || data.referral_code || data.affiliateId || data.affiliate_id;
       if (existingCode) {
-        return String(existingCode);
+        const str = String(existingCode);
+        try { localStorage.setItem(storageKey, str); } catch (_) {}
+        return str;
       }
     }
   } catch (err) {
     console.warn("Failed to check Firestore for affiliateId:", err);
   }
 
-  // 3. Generate a brand new sequential numeric ID ONLY IF missing
-  const newNumericId = await getNextAffiliateId();
+  // 4. Check backend SQLite user endpoint
+  try {
+    const res = await fetch(`/api/users?uid=${encodeURIComponent(uid)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        const sqlUser = data[0];
+        existingCode = sqlUser.referral_code || sqlUser.referralCode || sqlUser.affiliate_id || sqlUser.affiliateId;
+        if (existingCode) {
+          const str = String(existingCode);
+          try { localStorage.setItem(storageKey, str); } catch (_) {}
+          return str;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to check SQLite backend for affiliateId:", err);
+  }
+
+  // 5. Try fetching sequential next ID from backend endpoint
+  let newNumericId = 100001;
+  try {
+    const res = await fetch('/api/affiliate/next-id', { method: 'POST' });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.nextId) {
+        newNumericId = parseInt(data.nextId);
+      }
+    } else {
+      newNumericId = await getNextAffiliateId();
+    }
+  } catch (_) {
+    newNumericId = await getNextAffiliateId();
+  }
+
   const strId = String(newNumericId);
 
-  // 4. Save permanently to Firestore
+  // Lock into localStorage immediately so this user will never get another generated ID
+  try { localStorage.setItem(storageKey, strId); } catch (_) {}
+
+  // 6. Save permanently to Firestore
   try {
     await setDoc(doc(db, 'users', uid), {
       affiliateId: newNumericId,
@@ -68,7 +116,7 @@ export async function ensureUserAffiliateId(uid: string, userData?: any): Promis
     console.error("Failed to save generated affiliateId to Firestore:", err);
   }
 
-  // 5. Sync to backend SQLite API
+  // 7. Sync to backend SQLite API
   try {
     await fetch(`/api/users/${uid}`, {
       method: 'PATCH',

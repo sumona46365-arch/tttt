@@ -63,14 +63,16 @@ export default function ProfilePage() {
   const [depositCountry, setDepositCountry] = useState('United Kingdom');
   const [platformLanguage, setPlatformLanguage] = useState('en');
   const [appConfig, setAppConfig] = useState<any>({});
-  const userRefCode = user?.referralCode || user?.affiliateId || user?.referral_code || user?.affiliate_id;
+  const userRefCode = user?.referralCode || user?.affiliateId || user?.referral_code || user?.affiliate_id || (user?.uid ? localStorage.getItem('bivaax_aff_code_' + user.uid) : null);
   const [activeRefCode, setActiveRefCode] = useState<string>(userRefCode ? String(userRefCode) : '');
 
   useEffect(() => {
-    const code = user?.referralCode || user?.affiliateId || user?.referral_code || user?.affiliate_id;
+    const cached = user?.uid ? localStorage.getItem('bivaax_aff_code_' + user.uid) : null;
+    const code = user?.referralCode || user?.affiliateId || user?.referral_code || user?.affiliate_id || cached;
     if (code) {
       setActiveRefCode(String(code));
-    } else if (user?.uid) {
+    }
+    if (user?.uid) {
       import('../lib/affiliate').then(({ ensureUserAffiliateId }) => {
         ensureUserAffiliateId(user.uid, user).then((c) => {
           if (c) setActiveRefCode(c);
@@ -1396,52 +1398,60 @@ export default function ProfilePage() {
                 </button>
 
                 {/* Referral Link copy dashbox */}
-                <div className="bg-[#f4f5f8]/40 border-2 border-dashed border-gray-200/80 rounded-2xl p-4 text-left flex items-center justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <span className="block text-xs font-bold text-gray-400 mb-0.5">{tr.yourReferralLink || "Your referral link"}</span>
-                    <span className="text-sm font-bold text-gray-900 font-mono tracking-tight truncate block select-all">
-                      {`${window.location.origin}/register?ref=${activeRefCode || user?.referralCode || user?.affiliateId || '100000'}`}
-                    </span>
-                  </div>
-                  <button 
-                    onClick={() => {
-                      const refLink = `${window.location.origin}/register?ref=${activeRefCode || user?.referralCode || user?.affiliateId || '100000'}`;
-                      navigator.clipboard.writeText(refLink);
-                      toast.success(tr.linkCopied || 'Referral link copied!');
-                    }}
-                    className="p-2.5 bg-white hover:bg-gray-50 text-gray-700 rounded-xl border border-gray-200 shadow-xs transition-all active:scale-95 shrink-0"
-                  >
-                    <svg className="w-5 h-5 stroke-[2.2]" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                    </svg>
-                  </button>
-                </div>
+                {(() => {
+                  const cachedCode = user?.uid ? localStorage.getItem('bivaax_aff_code_' + user.uid) : null;
+                  const displayRefCode = activeRefCode || user?.referralCode || user?.affiliateId || user?.referral_code || user?.affiliate_id || cachedCode || '100000';
+                  const fullRefLink = `${window.location.origin}/register?ref=${displayRefCode}`;
 
-                {/* Yellow "Share link" Button */}
-                <button 
-                  onClick={() => {
-                    const shareUrl = `${window.location.origin}/register?ref=${activeRefCode || user?.referralCode || user?.affiliateId || '100000'}`;
-                    if (navigator.share) {
-                      navigator.share({
-                        title: 'Bivaax Trading',
-                        text: 'Register today on Bivaax and claim special trade bonuses!',
-                        url: shareUrl
-                      }).catch(() => {});
-                    } else {
-                      navigator.clipboard.writeText(shareUrl);
-                      toast.success(tr.linkCopied || 'Ref link copied!');
-                    }
-                  }}
-                  className="w-full py-4 text-base font-black text-gray-900 bg-[#ffe24c] hover:bg-[#ffe24c]/95 active:scale-[0.995] rounded-2xl transition-all flex items-center justify-center gap-2"
-                >
-                  <svg className="w-5 h-5 stroke-[3.2] text-gray-900" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                    <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
-                    <polyline points="16 6 12 2 8 6" />
-                    <line x1="12" y1="2" x2="12" y2="15" />
-                  </svg>
-                  {tr.shareLink || "Share link"}
-                </button>
+                  return (
+                    <>
+                      <div className="bg-[#f4f5f8]/40 border-2 border-dashed border-gray-200/80 rounded-2xl p-4 text-left flex items-center justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <span className="block text-xs font-bold text-gray-400 mb-0.5">{tr.yourReferralLink || "Your referral link"}</span>
+                          <span className="text-sm font-bold text-gray-900 font-mono tracking-tight truncate block select-all">
+                            {fullRefLink}
+                          </span>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            navigator.clipboard.writeText(fullRefLink);
+                            toast.success(tr.linkCopied || 'Referral link copied!');
+                          }}
+                          className="p-2.5 bg-white hover:bg-gray-50 text-gray-700 rounded-xl border border-gray-200 shadow-xs transition-all active:scale-95 shrink-0"
+                        >
+                          <svg className="w-5 h-5 stroke-[2.2]" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                          </svg>
+                        </button>
+                      </div>
+
+                      {/* Yellow "Share link" Button */}
+                      <button 
+                        onClick={() => {
+                          if (navigator.share) {
+                            navigator.share({
+                              title: 'Bivaax Trading',
+                              text: 'Register today on Bivaax and claim special trade bonuses!',
+                              url: fullRefLink
+                            }).catch(() => {});
+                          } else {
+                            navigator.clipboard.writeText(fullRefLink);
+                            toast.success(tr.linkCopied || 'Referral link copied!');
+                          }
+                        }}
+                        className="w-full py-4 text-base font-black text-gray-900 bg-[#ffe24c] hover:bg-[#ffe24c]/95 active:scale-[0.995] rounded-2xl transition-all flex items-center justify-center gap-2"
+                      >
+                        <svg className="w-5 h-5 stroke-[3.2] text-gray-900" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                          <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+                          <polyline points="16 6 12 2 8 6" />
+                          <line x1="12" y1="2" x2="12" y2="15" />
+                        </svg>
+                        <span>{tr.shareLink || "Share link"}</span>
+                      </button>
+                    </>
+                  );
+                })()}
 
                 {/* Bottom link to Affiliated Program Page */}
                 <div className="text-center pt-2 pb-4">

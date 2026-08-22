@@ -51,7 +51,8 @@ import {
   AlertTriangle,
   ShieldAlert,
   Send,
-  Trash2
+  Trash2,
+  Lock
 } from 'lucide-react';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, where, getDocs, orderBy, limit, onSnapshot, doc, getDoc, updateDoc, increment, addDoc, deleteDoc } from '../firebase';
@@ -71,6 +72,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { Logo } from '../components/Logo';
 import SEO from '../components/SEO';
+import { useAuth } from '../contexts/AuthContext';
 
 
 const StatCard = ({ title, value, subtext, color = "blue", icon: Icon }: { title: string, value: string | number, subtext: string, color?: string, icon?: any }) => {
@@ -437,7 +439,18 @@ const menuItems = [
 
 export default function AffiliatePage() {
   const navigate = useNavigate();
-  const [currentUser, setCurrentUser] = useState(auth.currentUser);
+  const { user: authUser } = useAuth();
+  const [currentUser, setCurrentUser] = useState<any>(authUser || auth.currentUser);
+
+  useEffect(() => {
+    if (authUser) {
+      setCurrentUser((prev: any) => ({ ...prev, ...authUser }));
+    }
+    const unsub = auth.onAuthStateChanged((u) => {
+      if (u) setCurrentUser((prev: any) => ({ ...prev, ...u, uid: u.uid }));
+    });
+    return () => unsub();
+  }, [authUser]);
   const userCurrency = '$';
   const [activeTab, setActiveTab] = useState<'dashboard' | 'promo-perks' | 'statistics' | 'offers' | 'links' | 'promo' | 'postbacks' | 'payouts' | 'profile' | 'partner-bot' | 'support' | 'support-detail' | 'rules' | 'sub-affiliates'>('dashboard');
   const [subAffiliates, setSubAffiliates] = useState<any[]>([]);
@@ -611,7 +624,19 @@ export default function AffiliatePage() {
   };
 
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser?.uid) return;
+
+    // Set immediate affId from cache/context so link never flashes
+    const cachedCode = currentUser.referralCode || currentUser.referral_code || currentUser.affiliateId || currentUser.affiliate_id || localStorage.getItem('bivaax_aff_code_' + currentUser.uid);
+    if (cachedCode) {
+      setAffId(String(cachedCode));
+    } else {
+      import('../lib/affiliate').then(({ ensureUserAffiliateId }) => {
+        ensureUserAffiliateId(currentUser.uid, currentUser).then(code => {
+          if (code) setAffId(code);
+        });
+      });
+    }
 
     // Listen for current user balance
     const userUnsub = onSnapshot(doc(db, 'users', currentUser.uid), (snap) => {
@@ -621,10 +646,12 @@ export default function AffiliatePage() {
           setAffiliateBalance(userData.affiliateBalance || 0);
           setCustomAffShare(userData.customAffiliateShare || null);
           
-          const permCode = userData.referralCode || userData.referral_code || userData.affiliateId || userData.affiliate_id || currentUser?.referralCode || currentUser?.affiliateId;
+          const cachedLocal = localStorage.getItem('bivaax_aff_code_' + currentUser.uid);
+          const permCode = userData.referralCode || userData.referral_code || userData.affiliateId || userData.affiliate_id || currentUser?.referralCode || currentUser?.affiliateId || cachedLocal;
           if (permCode) {
              const strPerm = String(permCode);
              setAffId(strPerm);
+             try { localStorage.setItem('bivaax_aff_code_' + currentUser.uid, strPerm); } catch(_) {}
              if (!userData.referralCode || !userData.affiliateId) {
                 updateDoc(doc(db, 'users', currentUser.uid), { 
                   referralCode: strPerm, 

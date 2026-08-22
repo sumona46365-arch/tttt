@@ -1028,6 +1028,20 @@ const ActiveAISignals = ({ activeAsset, currentPrice, onExecute, onClose }: { ac
   );
 };
 
+interface Trade {
+  id: string;
+  firebaseId?: string;
+  firebase_id?: string;
+  asset: string;
+  type: string;
+  amount: number;
+  entryPrice?: number;
+  closePrice?: number;
+  status?: string;
+  payoutAmount?: number;
+  [key: string]: any;
+}
+
 interface Transaction {
   id: string;
   dateStr: string;
@@ -5377,7 +5391,7 @@ const PROMOTED_ARTICLES = [
     });
 
     const dedupedMap = new Map<string, any>();
-    filtered.forEach(t => {
+    filtered.forEach((t: any) => {
       const tId = String(t.id);
       const tFbId = t.firebaseId || t.firebase_id ? String(t.firebaseId || t.firebase_id) : '';
 
@@ -5413,7 +5427,7 @@ const PROMOTED_ARTICLES = [
     });
 
     const dedupedMap = new Map<string, any>();
-    filtered.forEach(t => {
+    filtered.forEach((t: any) => {
       const tId = String(t.id);
       const tFbId = t.firebaseId || t.firebase_id ? String(t.firebaseId || t.firebase_id) : '';
 
@@ -6450,8 +6464,8 @@ const PROMOTED_ARTICLES = [
           // Trigger result notification for local settlement
           const notifAmount = won ? returnAmt : trade.amount;
           addTradeNotification({
-              id: trade.id || trade.firebaseId || Math.random().toString(),
-              tradeId: trade.id || trade.firebaseId,
+              id: trade.id || (trade as any).firebaseId || Math.random().toString(),
+              tradeId: trade.id || (trade as any).firebaseId,
               status: tradeStatus,
               asset: trade.asset,
               amount: notifAmount
