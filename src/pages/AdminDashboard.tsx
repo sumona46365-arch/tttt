@@ -434,6 +434,15 @@ export default function AdminDashboard() {
             }
         }
 
+        // Fetch KYC requests from backend API
+        const kycRef = await fetch('/api/admin/kyc/requests', { headers });
+        if (kycRef.ok) {
+            const apiKyc = await kycRef.json();
+            if (Array.isArray(apiKyc)) {
+                setKycRequests(apiKyc);
+            }
+        }
+
         // Fetch admins from Firestore as secondary
         const adminsSnap = await getDocs(collection(db, 'admins'));
         setAdmins(adminsSnap.docs.map(d => ({id: d.id, ...d.data()})));
@@ -889,16 +898,44 @@ export default function AdminDashboard() {
   };
 
   const handleUpdateUserField = async (userId: string, field: string, value: any, label: string) => {
-    if (!isAdminPerm) return;
+    if (!isAdminPerm) {
+      toast.error("ACCESS DENIED: Insufficient clearance for admin operations.");
+      return;
+    }
     try {
-      await updateDoc(doc(db, 'users', userId), { [field]: value });
-      await logAdminAction('Profile Update', `Updated ${label} for user ${userId} to ${value}`);
-      if (selectedUserDetail && selectedUserDetail.id === userId) {
-        setSelectedUserDetail({ ...selectedUserDetail, [field]: value });
+      let token = '';
+      if (auth.currentUser) {
+        try { token = await auth.currentUser.getIdToken(); } catch (e) {}
       }
+      if (!token) token = localStorage.getItem('token') || '';
+
+      const res = await fetch(`/api/users/${userId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ [field]: value })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Failed to update ${label}`);
+      }
+
+      // Also update Firestore doc directly as backup
+      try {
+        await updateDoc(doc(db, 'users', userId), { [field]: value });
+      } catch (fe) {}
+
+      await logAdminAction('Profile Update', `Updated ${label} for user ${userId} to ${value}`);
+      if (selectedUserDetail && (selectedUserDetail.id === userId || selectedUserDetail.uid === userId)) {
+        setSelectedUserDetail((prev: any) => prev ? ({ ...prev, [field]: value }) : null);
+      }
+      setUsers((prev: any[]) => prev.map(u => (u.id === userId || u.uid === userId) ? { ...u, [field]: value } : u));
       toast.success(`${label} updated successfully`);
     } catch (e: any) {
-      toast.error(e.message);
+      toast.error(e.message || `Failed to update ${label}`);
     }
   };
 
@@ -1553,12 +1590,8 @@ export default function AdminDashboard() {
                                           onClick={async () => {
                                               const isVerified = u.kycStatus === 'verified' || u.kycStatus === 'approved';
                                               if(!confirm(`Are you sure you want to ${isVerified ? 'REVOKE identity verification' : 'MANUALLY VERIFY (without NID)'} for ${u.email}?`)) return;
-                                              try {
-                                                  const newStatus = isVerified ? 'unverified' : 'verified';
-                                                  await updateDoc(doc(db, 'users', u.id), { kycStatus: newStatus });
-                                                  await logAdminAction('Manual Verification Override', `Manually set kycStatus to ${newStatus} for user ${u.id} (${u.email})`);
-                                                  toast.success(`Identity status updated to ${newStatus} successfully`);
-                                              } catch(err: any) { toast.error(err.message); }
+                                              const newStatus = isVerified ? 'unverified' : 'verified';
+                                              await handleUpdateUserField(u.id || u.uid, 'kycStatus', newStatus, 'KYC Clearance');
                                           }}
                                           title={u.kycStatus === 'verified' || u.kycStatus === 'approved' ? "Revoke Verification" : "Manually Verify (No NID)"}
                                           className={`w-12 h-12 lg:w-10 lg:h-10 rounded-2xl lg:rounded-xl flex items-center justify-center transition-all active:scale-95 ${u.kycStatus === 'verified' || u.kycStatus === 'approved' ? 'bg-green-500/20 text-green-500 border border-green-500/30' : 'bg-white/5 text-gray-500 hover:text-white border border-white/5'}`}
@@ -1574,11 +1607,7 @@ export default function AdminDashboard() {
                                         <button 
                                           onClick={async () => {
                                               if(!confirm(`Are you sure you want to ${u.isBlocked ? 'restore access' : 'block access'} for ${u.email}?`)) return;
-                                              try {
-                                                  await updateDoc(doc(db, 'users', u.id), { isBlocked: !u.isBlocked });
-                                                  await logAdminAction(u.isBlocked ? 'Restored Access' : 'Revoked Access', `${u.isBlocked ? 'Restored' : 'Revoked'} node access for ${u.email}`);
-                                                  toast.success(`User ${u.isBlocked ? 'unblocked' : 'blocked'} successfully`);
-                                              } catch(err: any) { toast.error(err.message); }
+                                              await handleUpdateUserField(u.id || u.uid, 'isBlocked', !u.isBlocked, 'Account Lockdown');
                                           }}
                                           className={`w-12 h-12 lg:w-10 lg:h-10 rounded-2xl lg:rounded-xl flex items-center justify-center transition-all active:scale-95 ${u.isBlocked ? 'bg-red-500 text-white shadow-lg shadow-red-500/20' : 'bg-white/5 text-gray-500 hover:text-white border border-white/5'}`}
                                         >
@@ -4554,13 +4583,8 @@ export default function AdminDashboard() {
                                                          onClick={async () => {
                                                              const isVerified = selectedUserDetail.kycStatus === 'verified' || selectedUserDetail.kycStatus === 'approved';
                                                              if(!confirm(`Are you sure you want to ${isVerified ? 'REVOKE' : 'MANUALLY VERIFY'} the identity of ${selectedUserDetail.email}?`)) return;
-                                                             try {
-                                                                 const newStatus = isVerified ? 'unverified' : 'verified';
-                                                                 await updateDoc(doc(db, 'users', selectedUserDetail.id), { kycStatus: newStatus });
-                                                                 setSelectedUserDetail({...selectedUserDetail, kycStatus: newStatus});
-                                                                 await logAdminAction('Manual Verification Override', `Manually set kycStatus to ${newStatus} for user ${selectedUserDetail.id} (${selectedUserDetail.email})`);
-                                                                 toast.success(`Identity status updated to ${newStatus} successfully`);
-                                                             } catch(e: any) { toast.error(e.message); }
+                                                             const newStatus = isVerified ? 'unverified' : 'verified';
+                                                             await handleUpdateUserField(selectedUserDetail.id || selectedUserDetail.uid, 'kycStatus', newStatus, 'KYC Clearance');
                                                          }}
                                                          className={`w-full py-3 px-6 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
                                                              (selectedUserDetail.kycStatus === 'verified' || selectedUserDetail.kycStatus === 'approved')
@@ -4582,12 +4606,7 @@ export default function AdminDashboard() {
                                                 <button 
                                                     onClick={async () => {
                                                         if(!confirm(`DANGER: Are you sure you want to ${selectedUserDetail.isBlocked ? 'RE-ACTIVATE' : 'TERMINATE'} access for ${selectedUserDetail.email}?`)) return;
-                                                        try {
-                                                            await updateDoc(doc(db, 'users', selectedUserDetail.id), { isBlocked: !selectedUserDetail.isBlocked });
-                                                            setSelectedUserDetail({...selectedUserDetail, isBlocked: !selectedUserDetail.isBlocked});
-                                                            await logAdminAction('Account Lockdown', `Toggled block status for ${selectedUserDetail.email}`);
-                                                            toast.success(`Access ${selectedUserDetail.isBlocked ? 'Restored' : 'Revoked'} successfully`);
-                                                        } catch(e: any) { toast.error(e.message); }
+                                                        await handleUpdateUserField(selectedUserDetail.id || selectedUserDetail.uid, 'isBlocked', !selectedUserDetail.isBlocked, 'Account Lockdown');
                                                     }}
                                                     className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${selectedUserDetail.isBlocked ? 'bg-green-500 text-black shadow-lg shadow-green-500/20' : 'bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500 hover:text-white'}`}
                                                 >
@@ -5055,17 +5074,12 @@ export default function AdminDashboard() {
 
                                             <button
                                                 onClick={async () => {
-                                                    const isVerified = selectedUserDetail.kycStatus === 'verified';
+                                                    const isVerified = selectedUserDetail.kycStatus === 'verified' || selectedUserDetail.kycStatus === 'approved';
                                                     if(!confirm(`Proceed with manual override for ${selectedUserDetail.email}? Status will be set to: ${isVerified ? 'UNVERIFIED' : 'VERIFIED'}`)) return;
-                                                    try {
-                                                        const newStatus = isVerified ? 'unverified' : 'verified';
-                                                        await updateDoc(doc(db, 'users', selectedUserDetail.id), { kycStatus: newStatus });
-                                                        setSelectedUserDetail({ ...selectedUserDetail, kycStatus: newStatus });
-                                                        await logAdminAction('Manual Identity Override', `Override: ${selectedUserDetail.id} set to ${newStatus}`);
-                                                        toast.success(`Identifier status updated to ${newStatus}`);
-                                                    } catch(err: any) { toast.error(err.message); }
+                                                    const newStatus = isVerified ? 'unverified' : 'verified';
+                                                    await handleUpdateUserField(selectedUserDetail.id || selectedUserDetail.uid, 'kycStatus', newStatus, 'KYC Clearance');
                                                 }}
-                                                className={`w-full py-5 rounded-2xl font-black text-[11px] uppercase tracking-[0.2em] transition-all active:scale-95 flex items-center justify-center gap-3 ${selectedUserDetail.kycStatus === 'verified' ? 'bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500 hover:text-white' : 'bg-green-500 text-black hover:bg-green-400 shadow-lg shadow-green-500/20'}`}
+                                                className={`w-full py-5 rounded-2xl font-black text-[11px] uppercase tracking-[0.2em] transition-all active:scale-95 flex items-center justify-center gap-3 ${(selectedUserDetail.kycStatus === 'verified' || selectedUserDetail.kycStatus === 'approved') ? 'bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500 hover:text-white' : 'bg-green-500 text-black hover:bg-green-400 shadow-lg shadow-green-500/20'}`}
                                             >
                                                 {selectedUserDetail.kycStatus === 'verified' ? <ShieldOff size={18} /> : <UserCheck size={18} />}
                                                 {selectedUserDetail.kycStatus === 'verified' ? 'REVOKE CLEARANCE' : 'GRANT MANUAL CLEARANCE'}

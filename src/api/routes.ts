@@ -4255,33 +4255,137 @@ router.get('/user/kyc-status', async (req, res) => {
   }
 });
 
-// 4. Update KYC request status (Admin-only operation)
+// 4. Fetch all KYC requests (Admin-only operation)
+router.get('/admin/kyc/requests', requireAuth, async (req: AuthRequest, res) => {
+  if (!req.user?.isAdmin) {
+    return res.status(403).json({ error: 'Unauthorized admin operations' });
+  }
+
+  try {
+    // 1. Fetch from SQL kyc_requests
+    const sqlRequests = await query(`
+      SELECT 
+        k.id, 
+        k.user_id as userId, 
+        k.status, 
+        k.full_name as fullName, 
+        k.document_type as idType, 
+        k.document_number as idNumber, 
+        k.front_image as idFrontUrl, 
+        k.back_image as idBackUrl, 
+        k.selfie_image as selfieUrl, 
+        k.rejection_reason as rejectionReason, 
+        k.created_at as submittedAt, 
+        u.email as userEmail
+      FROM kyc_requests k 
+      LEFT JOIN users u ON k.user_id = u.uid 
+      ORDER BY k.created_at DESC 
+      LIMIT 200
+    `) as any[];
+
+    // 2. Fetch from Firestore kycRequests
+    let firestoreRequests: any[] = [];
+    try {
+      if (adminDb) {
+        const snap = await adminDb.collection('kycRequests').get();
+        firestoreRequests = snap.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+      }
+    } catch (fsErr: any) {
+      logger.warn(`Failed to fetch kycRequests from Firestore: ${fsErr.message}`);
+    }
+
+    // 3. Merge & Deduplicate
+    const mergedMap = new Map<string, any>();
+
+    for (const item of firestoreRequests) {
+      const key = String(item.id || item.userId || Math.random());
+      mergedMap.set(key, {
+        id: String(item.id),
+        userId: item.userId || '',
+        userEmail: item.userEmail || item.email || '',
+        fullName: item.fullName || item.userName || '---',
+        idType: item.idType || item.documentType || 'NID',
+        idNumber: item.idNumber || item.documentNumber || '---',
+        idFrontUrl: item.idFrontUrl || item.frontImage || '',
+        idBackUrl: item.idBackUrl || item.backImage || '',
+        selfieUrl: item.selfieUrl || item.selfieImage || '',
+        status: item.status || 'pending',
+        submittedAt: item.submittedAt || (item.createdAt?.toMillis ? item.createdAt.toMillis() : Date.now()),
+        rejectionReason: item.rejectionReason || ''
+      });
+    }
+
+    for (const item of sqlRequests) {
+      const key = String(item.id);
+      if (!mergedMap.has(key)) {
+        mergedMap.set(key, {
+          id: String(item.id),
+          userId: item.userId || '',
+          userEmail: item.userEmail || '',
+          fullName: item.fullName || '---',
+          idType: item.idType || 'NID',
+          idNumber: item.idNumber || '---',
+          idFrontUrl: item.idFrontUrl || '',
+          idBackUrl: item.idBackUrl || '',
+          selfieUrl: item.selfieUrl || '',
+          status: item.status || 'pending',
+          submittedAt: item.submittedAt || Date.now(),
+          rejectionReason: item.rejectionReason || ''
+        });
+      }
+    }
+
+    const resultList = Array.from(mergedMap.values());
+    resultList.sort((a, b) => Number(b.submittedAt || 0) - Number(a.submittedAt || 0));
+
+    res.json(resultList);
+  } catch (err: any) {
+    logger.error(`Error fetching admin kyc requests: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 5. Update KYC request status (Admin-only operation)
 router.post('/admin/kyc/update', requireAuth, async (req: AuthRequest, res) => {
   if (!req.user?.isAdmin) {
     return res.status(403).json({ error: 'Unauthorized admin operations' });
   }
 
   const { id, userId, status, rejectionReason } = req.body;
-  if (!id || !userId || !status) {
+  if (!userId || !status) {
     return res.status(400).json({ error: 'Missing required parameters' });
   }
 
   try {
-    // 1. Update Firestore
-    await adminDb.collection('kycRequests').doc(id).update({
-      status,
-      rejectionReason: rejectionReason || '',
-      updatedAt: new Date()
-    });
+    // 1. Update Firestore if possible
+    if (id) {
+      try {
+        await adminDb.collection('kycRequests').doc(String(id)).update({
+          status,
+          rejectionReason: rejectionReason || '',
+          updatedAt: new Date()
+        });
+      } catch (e: any) {
+        logger.warn(`Could not update doc ${id} in Firestore kycRequests: ${e.message}`);
+      }
+    }
 
     // 2. Update users table (kyc_status)
-    const kyc_status = status === 'approved' ? 'verified' : 'unverified';
+    const kyc_status = status === 'approved' ? 'verified' : (status === 'rejected' ? 'unverified' : status);
     await run('UPDATE users SET kyc_status = ? WHERE uid = ?', [kyc_status, userId]);
+
+    // Also update Firestore user doc
+    try {
+      await adminDb.collection('users').doc(userId).update({ kycStatus: kyc_status });
+    } catch (e: any) {}
 
     // 3. Update SQL kyc_requests table
     await run(
-      'UPDATE kyc_requests SET status = ?, rejection_reason = ?, updated_at = ? WHERE user_id = ? AND status = \'pending\'',
-      [status, rejectionReason || '', Date.now(), userId]
+      'UPDATE kyc_requests SET status = ?, rejection_reason = ?, updated_at = ? WHERE user_id = ? AND (status = \'pending\' OR id = ?)',
+      [status, rejectionReason || '', Date.now(), userId, id || 0]
     );
 
     // 4. Emit live socket event and sync to Firestore
