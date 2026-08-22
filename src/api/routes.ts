@@ -693,6 +693,14 @@ router.get('/user/details', async (req, res) => {
   }
 });
 
+export function parseCleanNumber(val: any): number {
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  if (!val) return 0;
+  const cleaned = String(val).replace(/,/g, '').replace(/[^0-9.-]/g, '');
+  const num = parseFloat(cleaned);
+  return isNaN(num) ? 0 : num;
+}
+
 export async function getUserTransactionsFromFirestore(userId: string): Promise<any[]> {
   if (!adminDb) {
     throw new Error('Firestore is not initialized');
@@ -709,12 +717,15 @@ export async function getUserTransactionsFromFirestore(userId: string): Promise<
   depositsSnap.forEach((doc) => {
     const data = doc.data();
     const ts = data.timestamp || data.createdAt || Date.now();
+    const amt = parseCleanNumber(data.amount || data.creditedAmount || data.baseAmount);
+    if (amt <= 0) return;
+
     list.push({
       id: doc.id,
       userId: userId,
       user_id: userId,
       type: 'Deposit',
-      amount: Number(data.amount || 0),
+      amount: amt,
       currency: data.currency || 'BDT',
       status: (data.status === 'success' || data.status === 'approved' || data.status === 'completed') ? 'success' : (data.status || 'pending'),
       method: data.method || 'direct',
@@ -729,12 +740,15 @@ export async function getUserTransactionsFromFirestore(userId: string): Promise<
   withdrawalsSnap.forEach((doc) => {
     const data = doc.data();
     const ts = data.timestamp || data.createdAt || data.created_at || Date.now();
+    const amt = parseCleanNumber(data.amount);
+    if (amt <= 0) return;
+
     list.push({
       id: doc.id,
       userId: userId,
       user_id: userId,
       type: 'Withdrawal',
-      amount: Number(data.amount || 0),
+      amount: amt,
       currency: data.currency || 'BDT',
       status: (data.status === 'success' || data.status === 'approved' || data.status === 'completed') ? 'success' : (data.status || 'pending'),
       method: data.method || 'direct',
@@ -755,6 +769,9 @@ export async function getUserTransactionsFromFirestore(userId: string): Promise<
     const ts = data.timestamp || data.createdAt || rootData.timestamp || rootData.createdAt || Date.now();
     const orderId = data.orderId || '';
     const txHash = data.trxId || data.txHash || data.tx_hash || '';
+    const amt = parseCleanNumber(data.amount);
+
+    if (amt <= 0) return;
     
     if (orderId && list.some(item => item.details?.orderId === orderId)) {
       return;
@@ -768,7 +785,7 @@ export async function getUserTransactionsFromFirestore(userId: string): Promise<
       userId: userId,
       user_id: userId,
       type: (data.type || 'Deposit').toLowerCase() === 'deposit' ? 'Deposit' : 'Withdrawal',
-      amount: Number(data.amount || 0),
+      amount: amt,
       currency: data.currency || 'BDT',
       status: (data.status === 'success' || data.status === 'approved' || data.status === 'completed') ? 'success' : (data.status || 'pending'),
       method: data.method || 'direct',
@@ -2827,12 +2844,19 @@ router.post('/admin/deposits/update', requireAuth, async (req: AuthRequest, res)
 
     // Determine the exact deposit amount requested by user
     let rawDepositAmount = 0;
-    if (depositData?.amount !== undefined && !isNaN(Number(depositData.amount)) && Number(depositData.amount) > 0) {
-      rawDepositAmount = Number(depositData.amount);
-    } else if (amount !== undefined && !isNaN(Number(amount)) && Number(amount) > 0) {
-      rawDepositAmount = Number(amount);
-    } else if (finalAmountInBase !== undefined && !isNaN(Number(finalAmountInBase)) && Number(finalAmountInBase) > 0) {
-      rawDepositAmount = Number(finalAmountInBase);
+    const candidates = [
+      depositData?.amount,
+      depositData?.baseAmount,
+      depositData?.creditedAmount,
+      amount,
+      finalAmountInBase
+    ];
+    for (const cand of candidates) {
+      const parsed = parseCleanNumber(cand);
+      if (parsed > 0) {
+        rawDepositAmount = parsed;
+        break;
+      }
     }
 
     logger.info(`Processing deposit update for user ${userId}, status: ${status}, rawAmount: ${rawDepositAmount}, isSuccessOrApproved: ${isSuccessOrApproved}`);

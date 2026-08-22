@@ -354,7 +354,12 @@ export default function ProfilePage() {
           });
           if (res.ok) {
             const data = await res.json().catch(() => []);
-            setTransactions(Array.isArray(data) ? data : []);
+            const cleanTxs = (Array.isArray(data) ? data : []).filter((tx: any) => {
+              const rawAmt = tx.amount;
+              const num = rawAmt ? parseFloat(String(rawAmt).replace(/,/g, '').replace(/[^0-9.-]/g, '')) : 0;
+              return !isNaN(num) && num > 0;
+            });
+            setTransactions(cleanTxs);
           }
         } catch (err) {
           console.error("Failed to fetch transactions:", err);

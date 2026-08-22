@@ -1766,24 +1766,44 @@ export default function TradeTerminal() {
 
         // Optional: Keep Firestore for real-time legacy sync if needed, but don't let it overwrite REST
         const unsubOpenTrades = onSnapshot(query(collection(db, 'trades'), where('userId', '==', user.uid), where('status', '==', 'open')), (snapshot) => {
+            if (snapshot.empty) return;
             const open = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
             setActiveTrades(prev => {
-                // If snapshot is empty, we only clear trades that have a Firestore ID (longer than local temp ID usually)
-                // Actually, just clear anything that isn't optimistic (added in last 5 seconds)
                 const now = Date.now();
-                const optimistic = prev.filter(p => (now - (p.createdAt || 0) < 5000) && !open.some(o => o.id === p.id));
+                const mergedMap = new Map<string, any>();
                 
-                const updated = open.map((t: any) => {
-                    const existing = prev.find(p => p.id === t.id);
-                    const rawExp = t.expirationTime || (t.expiryTime ? t.expiryTime * 1000 : null);
-                    const parsedExp = typeof rawExp === 'number' ? rawExp : (rawExp && typeof rawExp.toDate === 'function' ? rawExp.toDate().getTime() : Date.now());
-                    const computedTime = Math.floor((parsedExp - Date.now()) / 1000);
-                    if (existing) return { ...existing, ...t, timeLeft: Math.max(0, computedTime) };
-                    return { ...t, timeLeft: Math.max(0, computedTime), createdAt: t.createdAt || now };
+                // Keep unexpired local active trades
+                prev.forEach(p => {
+                    const expMs = typeof p.expirationTime === 'number' ? p.expirationTime : (p.expiryTime ? p.expiryTime * 1000 : now + (p.timeLeft || 0) * 1000);
+                    if (expMs > now) {
+                        mergedMap.set(String(p.id), p);
+                    }
+                });
+
+                open.forEach((t: any) => {
+                    const rawExp = t.expirationTime || (t.expiryTime ? t.expiryTime * 1000 : (t.expiry_time ? t.expiry_time * 1000 : null));
+                    const expMs = typeof rawExp === 'number' ? (rawExp < 100000000000 ? rawExp * 1000 : rawExp) : (rawExp && typeof rawExp.toDate === 'function' ? rawExp.toDate().getTime() : now);
+                    const computedTime = Math.max(0, Math.floor((expMs - now) / 1000));
+                    if (computedTime > 0) {
+                        const existing = prev.find(p => String(p.id) === String(t.id));
+                        mergedMap.set(String(t.id), {
+                            ...existing,
+                            ...t,
+                            type: t.type || t.direction || 'up',
+                            direction: t.direction || t.type || 'up',
+                            asset: t.asset || t.marketId || t.market_id,
+                            accountType: t.accountType || t.account_type || (t.isDemo || t.is_demo ? 'demo' : 'real'),
+                            timeLeft: computedTime,
+                            expirationTime: expMs,
+                            createdAt: t.createdAt || existing?.createdAt || now
+                        });
+                    }
                 });
                 
-                return [...updated, ...optimistic].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                return Array.from(mergedMap.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
             });
+        }, (err) => {
+            console.warn("Firestore unsubOpenTrades sync issue:", err);
         });
         unsubs.push(unsubOpenTrades);
             
@@ -1871,14 +1891,41 @@ export default function TradeTerminal() {
                 const closed = trades.filter((t: any) => t.status !== 'open');
                 
                 setActiveTrades(prev => {
-                    const serverOpen = open.map((t: any) => {
-                        const exp = t.expiryTime ? (t.expiryTime * 1000) : (t.expirationTime || Date.now());
-                        return { ...t, timeLeft: Math.max(0, Math.floor((exp - Date.now()) / 1000)) };
-                    });
+                    const now = Date.now();
+                    const mergedMap = new Map<string, any>();
                     
-                    // Keep trades that are already local but not in server response (e.g. still pending on client)
-                    const localStillOpen = prev.filter(p => !serverOpen.find(s => s.id === p.id));
-                    return [...serverOpen, ...localStillOpen];
+                    // Keep unexpired local trades
+                    prev.forEach(p => {
+                        const expMs = typeof p.expirationTime === 'number' ? p.expirationTime : (p.expiryTime ? p.expiryTime * 1000 : now + (p.timeLeft || 0) * 1000);
+                        if (expMs > now) {
+                            mergedMap.set(String(p.id), p);
+                        }
+                    });
+
+                    // Add / update with server open trades
+                    open.forEach((t: any) => {
+                        const rawExp = t.expirationTime || (t.expiryTime ? t.expiryTime * 1000 : (t.expiry_time ? t.expiry_time * 1000 : null));
+                        const expMs = typeof rawExp === 'number' ? (rawExp < 100000000000 ? rawExp * 1000 : rawExp) : now;
+                        const timeLeftSec = Math.max(0, Math.floor((expMs - now) / 1000));
+                        if (timeLeftSec > 0) {
+                            const existing = prev.find(p => String(p.id) === String(t.id));
+                            mergedMap.set(String(t.id), {
+                                ...existing,
+                                ...t,
+                                id: String(t.id),
+                                type: t.type || t.direction || 'up',
+                                direction: t.direction || t.type || 'up',
+                                asset: t.asset || t.marketId || t.market_id,
+                                accountType: t.accountType || t.account_type || (t.isDemo || t.is_demo ? 'demo' : 'real'),
+                                isDemo: t.isDemo !== undefined ? t.isDemo : (t.accountType === 'demo' || t.is_demo),
+                                timeLeft: timeLeftSec,
+                                expirationTime: expMs,
+                                createdAt: t.createdAt || t.created_at || existing?.createdAt || now
+                            });
+                        }
+                    });
+
+                    return Array.from(mergedMap.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
                 });
                 setUserTrades(closed);
                 try {
@@ -4250,24 +4297,31 @@ const PROMOTED_ARTICLES = [
     // Listen to Deposits in real-time
     const qDeps = query(collection(db, "deposits"), where("userId", "==", currentUser.uid), limit(50));
     const unsubDeps = onSnapshot(qDeps, (snapshot) => {
-        const deps = snapshot.docs.map(doc => {
+        const deps = snapshot.docs
+          .map(doc => {
             const data = doc.data();
             const date = (data.timestamp && typeof data.timestamp.toDate === 'function') ? data.timestamp.toDate() : new Date(data.timestamp || Date.now());
             let statusDisplay = "Pending";
-            if (data.status === "success") statusDisplay = "Completed";
+            if (data.status === "success" || data.status === "approved" || data.status === "completed") statusDisplay = "Completed";
             else if (data.status === "rejected") statusDisplay = "Rejected";
+
+            const rawAmt = data.amount || data.creditedAmount || data.baseAmount;
+            const cleanedAmt = rawAmt ? parseFloat(String(rawAmt).replace(/,/g, '').replace(/[^0-9.-]/g, '')) : 0;
+            const amt = isNaN(cleanedAmt) ? 0 : cleanedAmt;
 
             return {
                 id: doc.id,
                 dateStr: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone }),
                 timeStr: date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone }),
                 type: "Deposit",
-                method: data.method || "Unknown",
-                amount: parseFloat(data.amount) || 0,
+                method: data.method || "Selected Method",
+                amount: amt,
                 status: statusDisplay,
                 timestamp: date.getTime()
             };
-        });
+        })
+        .filter(d => d.amount > 0);
+
         setUserTransactions(prev => {
             const filtered = prev.filter(t => t.type !== "Deposit");
             return [...filtered, ...deps].sort((a, b) => b.timestamp - a.timestamp);
@@ -4277,24 +4331,31 @@ const PROMOTED_ARTICLES = [
     // Listen to Withdrawals in real-time
     const qWiths = query(collection(db, "withdrawals"), where("userId", "==", currentUser.uid), limit(50));
     const unsubWiths = onSnapshot(qWiths, (snapshot) => {
-        const withs = snapshot.docs.map(doc => {
+        const withs = snapshot.docs
+          .map(doc => {
             const data = doc.data();
             const date = (data.timestamp && typeof data.timestamp.toDate === 'function') ? data.timestamp.toDate() : new Date(data.timestamp || Date.now());
             let statusDisplay = "Pending";
-            if (data.status === "success") statusDisplay = "Completed";
+            if (data.status === "success" || data.status === "approved" || data.status === "completed") statusDisplay = "Completed";
             else if (data.status === "rejected") statusDisplay = "Rejected";
+
+            const rawAmt = data.amount;
+            const cleanedAmt = rawAmt ? parseFloat(String(rawAmt).replace(/,/g, '').replace(/[^0-9.-]/g, '')) : 0;
+            const amt = isNaN(cleanedAmt) ? 0 : cleanedAmt;
 
             return {
                 id: doc.id,
                 dateStr: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone }),
                 timeStr: date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone }),
                 type: "Withdrawal",
-                method: data.method || "Unknown",
-                amount: parseFloat(data.amount) || 0,
+                method: data.method || "Selected Method",
+                amount: amt,
                 status: statusDisplay,
                 timestamp: date.getTime()
             };
-        });
+        })
+        .filter(w => w.amount > 0);
+
         setUserTransactions(prev => {
             const filtered = prev.filter(t => t.type !== "Withdrawal");
             return [...filtered, ...withs].sort((a, b) => b.timestamp - a.timestamp);
@@ -4525,6 +4586,11 @@ const PROMOTED_ARTICLES = [
     exitPrice?: number;
     closedAt?: number;
     accountType?: 'real' | 'demo' | 'tournament';
+    account_type?: string;
+    isDemo?: boolean;
+    is_demo?: boolean;
+    expiryTime?: number;
+    expiry_time?: number;
     createdAt: number;
   };
 
@@ -4685,7 +4751,7 @@ const PROMOTED_ARTICLES = [
           if (currentInterpolatedPriceRef.current === 0) {
               currentInterpolatedPriceRef.current = targetPriceRef.current;
           } else {
-              currentInterpolatedPriceRef.current += (targetPriceRef.current - currentInterpolatedPriceRef.current) * 0.18;
+              currentInterpolatedPriceRef.current += (targetPriceRef.current - currentInterpolatedPriceRef.current) * 0.32;
           }
           newInterp = currentInterpolatedPriceRef.current;
       }
@@ -4922,13 +4988,19 @@ const PROMOTED_ARTICLES = [
       const cached = localStorage.getItem('bivaax_active_trades_cache');
       if (cached) {
         const parsed = JSON.parse(cached) as Trade[];
+        const now = Date.now();
         return parsed.map((t: any) => {
-          const exp = t.expirationTime || (t.expiryTime ? t.expiryTime * 1000 : Date.now());
+          const rawExp = t.expirationTime || (t.expiryTime ? t.expiryTime * 1000 : (t.expiry_time ? t.expiry_time * 1000 : now + (t.timeLeft || 0) * 1000));
+          const expMs = typeof rawExp === 'number' ? (rawExp < 100000000000 ? rawExp * 1000 : rawExp) : now;
+          const timeLeftSec = Math.max(0, Math.floor((expMs - now) / 1000));
           return {
             ...t,
-            timeLeft: Math.max(0, Math.floor((exp - Date.now()) / 1000))
+            id: String(t.id),
+            accountType: t.accountType || t.account_type || (t.isDemo || t.is_demo ? 'demo' : 'real'),
+            expirationTime: expMs,
+            timeLeft: timeLeftSec
           };
-        }).filter(t => t.timeLeft > 0);
+        }).filter(t => t.timeLeft > 0 && t.status !== 'won' && t.status !== 'lost' && t.status !== 'draw');
       }
       return [];
     } catch (e) {
@@ -5167,13 +5239,18 @@ const PROMOTED_ARTICLES = [
   }, [demoBalance, accountType, minConvertedAmount, userCurrency, auth.currentUser?.uid]);
   
   const visibleActiveTrades = React.useMemo(() => activeTrades.filter(t => {
-    const isOwner = (t.accountType || 'real') === accountType;
-    const isExpired = t.timeLeft <= 0 || (t.expirationTime && Date.now() >= t.expirationTime);
+    const tradeAccType = t.accountType || t.account_type || (t.isDemo || t.is_demo ? 'demo' : 'real');
+    const isOwner = tradeAccType === accountType;
+    const expTime = t.expirationTime || (t.expiryTime ? t.expiryTime * 1000 : (t.expiry_time ? t.expiry_time * 1000 : null));
+    const isExpired = t.timeLeft <= 0 && (!expTime || Date.now() >= expTime);
     const isSettled = (t.status && t.status !== 'open') || (processedTradesRef.current && processedTradesRef.current.has(t.id));
     return isOwner && !isExpired && !isSettled;
   }), [activeTrades, accountType]);
   
-  const visibleUserTrades = React.useMemo(() => userTrades.filter(t => (t.accountType || 'real') === accountType), [userTrades, accountType]);
+  const visibleUserTrades = React.useMemo(() => userTrades.filter(t => {
+    const tradeAccType = t.accountType || t.account_type || (t.isDemo || t.is_demo ? 'demo' : 'real');
+    return tradeAccType === accountType;
+  }), [userTrades, accountType]);
 
   // Calculation of user's today's profit:
   const userTodayProfit = React.useMemo(() => {

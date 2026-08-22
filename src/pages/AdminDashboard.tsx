@@ -1618,11 +1618,16 @@ export default function AdminDashboard() {
                         <div className="space-y-6">
                             <h2 className="text-2xl font-black">DEPOSIT REQUESTS</h2>
                             <div className="grid gap-4">
-                                {depositRequests.length > 0 ? depositRequests.map((d, i) => (
+                                {depositRequests.length > 0 ? depositRequests.map((d, i) => {
+                                    const stLower = String(d.status || '').toLowerCase();
+                                    const isApprovedOrCompleted = ['success', 'approved', 'completed', 'credited'].includes(stLower);
+                                    const isPending = stLower === 'pending';
+
+                                    return (
                                     <div key={`${d.id}-${i}`} className="bg-[#0a0a0f] border border-[#1a1a24] p-6 rounded-3xl flex flex-col lg:flex-row items-center justify-between gap-6">
                                         <div>
                                             <div className="flex items-center gap-3 mb-2">
-                                                <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${d.status === 'pending' ? 'bg-yellow-500/10 text-yellow-500' : d.status === 'success' ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
+                                                <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${isPending ? 'bg-yellow-500/10 text-yellow-500' : isApprovedOrCompleted ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
                                                     {d.status}
                                                 </span>
                                                 <span className="text-xs text-gray-500">
@@ -1662,7 +1667,7 @@ export default function AdminDashboard() {
                                                     </p>
                                                 )}
                                             </div>
-                                            {d.status === 'pending' ? (
+                                            {isPending ? (
                                                 <div className="flex gap-2 text-center items-center justify-center">
                                                     <button 
                                                         disabled={processingDeposits.has(d.id)} 
@@ -1682,17 +1687,18 @@ export default function AdminDashboard() {
                                             ) : (
                                                 <div className="flex items-center gap-1.5">
                                                     <span className={`px-3 py-1.5 rounded-xl font-bold uppercase text-xs ${
-                                                        d.status === 'success' || d.status === 'approved' 
+                                                        isApprovedOrCompleted 
                                                             ? 'bg-green-500/20 text-green-400 border border-green-500/30' 
                                                             : 'bg-red-500/20 text-red-400 border border-red-500/30'
                                                     }`}>
-                                                        {d.status === 'success' || d.status === 'approved' ? '✓ Credited' : '✕ Rejected'}
+                                                        {isApprovedOrCompleted ? '✓ Credited' : '✕ Rejected'}
                                                     </span>
                                                 </div>
                                             )}
                                         </div>
                                     </div>
-                                )) : (<div className="text-gray-500 text-sm">No deposit requests found.</div>)}
+                                );
+                                }) : (<div className="text-gray-500 text-sm">No deposit requests found.</div>)}
                             </div>
                         </div>
                    )}

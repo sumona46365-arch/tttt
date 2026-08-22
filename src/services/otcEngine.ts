@@ -60,15 +60,15 @@ export function updatePair(pair: string, type: 'real' | 'demo', now: number) {
   }
 
   // Determine market-specific volatility multipliers (Forex is stable, Cryptos/OTC are erratic/high payout)
-  let volMult = 1.3;
+  let volMult = 2.2;
   if (pair.includes('(OTC)')) {
-    volMult = 1.85; // Rich OTC movements
+    volMult = 3.2; // Rich, dynamic OTC movements
   } else if (pair.includes('Crypto IDX') || pair.includes('IDX')) {
-    volMult = 2.1;  // Highly volatile index
+    volMult = 3.6;  // Highly volatile index
   } else if (pair.includes('/USD') && !pair.includes('EUR/') && !pair.includes('GBP/') && !pair.includes('AUD/')) {
-    volMult = 1.65; // Volatile cryptos
+    volMult = 2.8; // Active cryptos
   } else {
-    volMult = 1.15; // Standard, smooth Forex ranges
+    volMult = 2.0; // Dynamic Forex ranges
   }
 
   // Base random price change - perfectly balanced centered around 0.5 (noise)
@@ -77,21 +77,21 @@ export function updatePair(pair: string, type: 'real' | 'demo', now: number) {
   // Set direction based on active trend state
   let trendBias = 0;
   if (state.currentTrend === 'up') {
-    trendBias = state.trendIntensity * 0.35;
+    trendBias = state.trendIntensity * 0.45;
   } else if (state.currentTrend === 'down') {
-    trendBias = -state.trendIntensity * 0.35;
+    trendBias = -state.trendIntensity * 0.45;
   } else {
-    trendBias = (Math.random() - 0.5) * 0.08; // neutral drift
+    trendBias = (Math.random() - 0.5) * 0.12; // neutral drift
   }
 
   // Calculate smoothed momentum for fluid, professional candlestick movement
-  state.momentum = (state.momentum * 0.94) + (trendBias * 0.06);
+  state.momentum = (state.momentum * 0.92) + (trendBias * 0.08);
 
-  // Combine lower noise and higher momentum for steady, non-jittery progression
+  // Combine noise and momentum for active, lively candlestick progression
   const rawVolatility = markets[pair]?.volatility || 0.0002;
   // Convert absolute volatility from config into a relative fractional volatility
   const baseVolatility = rawVolatility / currentPrice;
-  const tickChangePercent = (randNoise * 0.35 + state.momentum * 0.65) * baseVolatility * volMult;
+  const tickChangePercent = (randNoise * 0.45 + state.momentum * 0.70) * baseVolatility * volMult;
   
   let change = currentPrice * tickChangePercent;
 
