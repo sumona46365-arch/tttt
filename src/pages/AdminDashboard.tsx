@@ -421,7 +421,14 @@ export default function AdminDashboard() {
         if (wRef.ok) {
             const apiWithdrawals = await wRef.json();
             if (Array.isArray(apiWithdrawals)) {
-                setWithdrawals(apiWithdrawals);
+                setWithdrawals(prev => {
+                    const merged = [...prev];
+                    const existingIds = new Set(prev.map(p => String(p.id)));
+                    for (const d of apiWithdrawals) {
+                        if (!existingIds.has(String(d.id))) merged.push(d);
+                    }
+                    return merged;
+                });
             }
         }
 
@@ -430,7 +437,14 @@ export default function AdminDashboard() {
         if (dRef.ok) {
             const apiDeposits = await dRef.json();
             if (Array.isArray(apiDeposits)) {
-                setDepositRequests(apiDeposits);
+                setDepositRequests(prev => {
+                    const merged = [...prev];
+                    const existingIds = new Set(prev.map(p => String(p.id)));
+                    for (const d of apiDeposits) {
+                        if (!existingIds.has(String(d.id))) merged.push(d);
+                    }
+                    return merged;
+                });
             }
         }
 
@@ -639,7 +653,11 @@ export default function AdminDashboard() {
                     };
                     return getMillis(b) - getMillis(a);
                 });
-                setDepositRequests(reqs);
+                setDepositRequests(prev => {
+                    const existingMap = new Map(prev.map(p => [String(p.id), p]));
+                    reqs.forEach(r => existingMap.set(String(r.id), r));
+                    return Array.from(existingMap.values());
+                });
             }));
             
             unsubs.push(onSnapshot(collection(db, 'withdrawals'), (snap) => {
@@ -663,7 +681,11 @@ export default function AdminDashboard() {
                     };
                     return getMillis(b) - getMillis(a);
                 });
-                setWithdrawals(reqs);
+                setWithdrawals(prev => {
+                    const existingMap = new Map(prev.map(p => [String(p.id), p]));
+                    reqs.forEach(r => existingMap.set(String(r.id), r));
+                    return Array.from(existingMap.values());
+                });
             }));
 
             unsubs.push(onSnapshot(collection(db, 'kycRequests'), (snap) => {
@@ -1669,6 +1691,7 @@ export default function AdminDashboard() {
                                                 </span>
                                             </div>
                                             <h4 className="font-bold text-lg">{d.userEmail || d.userId || d.user_id || d.uid || 'Unknown User'}</h4>
+                                            {d.userEmail && <p className="text-xs text-blue-300 font-medium">{d.userEmail}</p>}
                                             <p className="text-sm text-gray-400">{d.method}: <span className="font-mono text-white">{d.walletNumber}</span></p>
                                             {d.trxId && <p className="text-xs text-blue-400 mt-1">TrxID: <span className="font-mono">{d.trxId}</span></p>}
                                             {d.promoBonus > 0 && (
@@ -1753,6 +1776,7 @@ export default function AdminDashboard() {
                                                 </span>
                                             </div>
                                             <h4 className="font-bold text-lg">{w.userEmail || w.userId || 'Traders ID: ' + w.user_id}</h4>
+                                            {w.userEmail && <p className="text-xs text-blue-300 font-medium">{w.userEmail}</p>}
                                             <div className="space-y-1 mt-1">
                                                 <p className="text-sm text-gray-400">{w.method}: <span className="font-mono text-white">{w.walletNumber || w.details?.walletNumber || (typeof w.details === 'string' && JSON.parse(w.details).walletNumber)}</span></p>
                                                 {(w.accountHolder || (typeof w.details === 'string' && JSON.parse(w.details).accountHolder)) && (
