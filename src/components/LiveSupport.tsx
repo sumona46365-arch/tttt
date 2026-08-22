@@ -261,7 +261,7 @@ export const LiveSupport: React.FC<LiveSupportProps> = ({ onClose, userId }) => 
         userEmail: currentUserEmail,
         subject: subject,
         category: newCategory,
-        status: 'open',
+        status: 'Open',
         lastMessage: inputMessage.trim() || 'Attached files',
         createdAt: now,
         updatedAt: now
@@ -331,7 +331,7 @@ export const LiveSupport: React.FC<LiveSupportProps> = ({ onClose, userId }) => 
       await updateDoc(doc(db, 'tickets', activeTicket.id), {
         lastMessage: textToSend || (attachmentsToSend.length > 0 ? 'Sent an attachment' : ''),
         updatedAt: now,
-        status: 'open'
+        status: 'Open'
       });
     } catch (error) {
       console.error("Error sending message:", error);

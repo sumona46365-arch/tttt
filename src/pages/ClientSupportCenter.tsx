@@ -173,7 +173,7 @@ export default function ClientSupportCenter() {
       await updateDoc(doc(db, 'tickets', activeTicket.id), {
         lastMessage: text || (files.length > 0 ? 'Sent an attachment' : ''),
         updatedAt: now,
-        status: 'open'
+        status: 'Open'
       });
     } catch (err) {
       toast.error('Failed to send message');
@@ -199,7 +199,7 @@ export default function ClientSupportCenter() {
         userEmail: currentUser?.email || '',
         subject: newSubject.trim() || `${newCategory} Inquiry`,
         category: newCategory,
-        status: 'open',
+        status: 'Open',
         lastMessage: chatMessage.trim() || 'Attached files',
         createdAt: now,
         updatedAt: now

@@ -92,7 +92,7 @@ export default function EnterpriseSupportCenter() {
   // Real-time Tickets Listener
   useEffect(() => {
     setIsLoading(true);
-    const q = query(collection(db, 'tickets'), orderBy('updated_at', 'desc'), limit(100));
+    const q = query(collection(db, 'tickets'), orderBy('updatedAt', 'desc'), limit(100));
     const unsubscribe = onSnapshot(q, (snapshot: any) => {
       const ticketsData: TicketItem[] = [];
       snapshot.forEach((doc: any) => {
@@ -185,7 +185,7 @@ export default function EnterpriseSupportCenter() {
 
     // Trigger AI Suggestion
     const getAiSuggestion = async () => {
-      if (selectedTicket.status === 'Resolved') return;
+      if (selectedTicke(t.status === 'Resolved' || t.status === 'resolved')) return;
       setIsAiLoading(true);
       try {
         const lastMsg = messages[messages.length - 1];
@@ -249,7 +249,7 @@ export default function EnterpriseSupportCenter() {
       await updateDoc(doc(db, 'tickets', selectedTicket.id), {
         lastMessage: replyText,
         updatedAt: Date.now(),
-        status: selectedTicket.status === 'Open' ? 'Pending' : selectedTicket.status
+        status: (selectedTicket.status === 'Open' || selectedTicket.status === 'open') ? 'Pending' : selectedTicket.status
       });
 
       setReplyText('');
@@ -322,11 +322,11 @@ export default function EnterpriseSupportCenter() {
   };
 
   const stats = {
-    totalOpen: tickets.filter(t => t.status === 'Open').length,
-    activeChats: tickets.filter(t => t.status === 'Open' || t.status === 'Pending').length,
-    resolved: tickets.filter(t => t.status === 'Resolved').length,
-    escalated: tickets.filter(t => t.status === 'Escalated').length,
-    resolutionRate: tickets.length > 0 ? Math.round((tickets.filter(t => t.status === 'Resolved').length / tickets.length) * 100) : 0,
+    totalOpen: tickets.filter(t => (t.status === 'Open' || t.status === 'open')).length,
+    activeChats: tickets.filter(t => (t.status === 'Open' || t.status === 'open') || (t.status === 'Pending' || t.status === 'pending')).length,
+    resolved: tickets.filter(t => (t.status === 'Resolved' || t.status === 'resolved')).length,
+    escalated: tickets.filter(t => (t.status === 'Escalated' || t.status === 'escalated')).length,
+    resolutionRate: tickets.length > 0 ? Math.round((tickets.filter(t => (t.status === 'Resolved' || t.status === 'resolved')).length / tickets.length) * 100) : 0,
     avgResponseTime: "1m 24s" // Mock for now, would need message timestamp diffs
   };
 
@@ -336,13 +336,13 @@ export default function EnterpriseSupportCenter() {
                           t.userUid.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           (t.userEmail?.toLowerCase() || '').includes(searchQuery.toLowerCase());
     
-    if (activeTab === 'open-tickets' && t.status !== 'Open') return false;
-    if (activeTab === 'pending-tickets' && t.status !== 'Pending') return false;
-    if (activeTab === 'resolved-tickets' && t.status !== 'Resolved') return false;
-    if (activeTab === 'escalated-tickets' && t.status !== 'Escalated') return false;
+    if (activeTab === 'open-tickets' && (t.status !== 'Open' && t.status !== 'open')) return false;
+    if (activeTab === 'pending-tickets' && (t.status !== 'Pending' && t.status !== 'pending')) return false;
+    if (activeTab === 'resolved-tickets' && (t.status !== 'Resolved' && t.status !== 'resolved')) return false;
+    if (activeTab === 'escalated-tickets' && (t.status !== 'Escalated' && t.status !== 'escalated')) return false;
     if (activeTab === 'assigned-me' && t.assignedAgentId !== auth.currentUser?.uid) return false;
 
-    if (statusFilter !== 'All' && t.status !== statusFilter) return false;
+    if (statusFilter !== 'All' && (t.status?.toLowerCase() !== statusFilter?.toLowerCase())) return false;
     if (departmentFilter !== 'All' && t.department !== departmentFilter) return false;
 
     return matchesSearch;
@@ -398,7 +398,7 @@ export default function EnterpriseSupportCenter() {
           >
             <div className="flex items-center gap-3"><Ticket size={18} /> Open Tickets</div>
             <span className="px-2 py-0.5 bg-amber-500/20 text-amber-400 text-xs rounded-full font-bold">
-              {tickets.filter(t => t.status === 'Open').length}
+              {tickets.filter(t => (t.status === 'Open' || t.status === 'open')).length}
             </span>
           </button>
 
@@ -422,7 +422,7 @@ export default function EnterpriseSupportCenter() {
           >
             <div className="flex items-center gap-3"><ShieldAlert size={18} /> Escalated</div>
             <span className="px-2 py-0.5 bg-red-500/20 text-red-400 text-xs rounded-full font-bold">
-              {tickets.filter(t => t.status === 'Escalated').length}
+              {tickets.filter(t => (t.status === 'Escalated' || t.status === 'escalated')).length}
             </span>
           </button>
 
@@ -616,9 +616,9 @@ export default function EnterpriseSupportCenter() {
                           </td>
                           <td className="py-4 px-4">
                             <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                              t.status === 'Open' ? 'bg-emerald-500/20 text-emerald-400' :
-                              t.status === 'Escalated' ? 'bg-red-500/20 text-red-400' : 
-                              t.status === 'Pending' ? 'bg-amber-500/20 text-amber-400' :
+                              (t.status === 'Open' || t.status === 'open') ? 'bg-emerald-500/20 text-emerald-400' :
+                              (t.status === 'Escalated' || t.status === 'escalated') ? 'bg-red-500/20 text-red-400' : 
+                              (t.status === 'Pending' || t.status === 'pending') ? 'bg-amber-500/20 text-amber-400' :
                               'bg-gray-700 text-gray-300'
                             }`}>{t.status}</span>
                           </td>
@@ -668,7 +668,7 @@ export default function EnterpriseSupportCenter() {
                       <p className="text-xs text-gray-300 truncate">{t.lastMessage || 'No messages'}</p>
                       <div className="flex gap-2 mt-2">
                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${t.priority === 'Urgent' ? 'bg-red-500/20 text-red-400' : 'bg-gray-800 text-gray-400'}`}>{t.priority}</span>
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${t.status === 'Open' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-blue-500/20 text-blue-400'}`}>{t.status}</span>
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${(t.status === 'Open' || t.status === 'open') ? 'bg-emerald-500/20 text-emerald-400' : 'bg-blue-500/20 text-blue-400'}`}>{t.status}</span>
                       </div>
                     </div>
                   ))}

@@ -906,7 +906,7 @@ export default function AffiliatePage() {
       await updateDoc(doc(db, 'tickets', ticketId), {
         lastMessage: aiReply,
         updatedAt: Date.now(),
-        ...(needsEscalation ? { aiDisabled: true, status: 'pending' } : {})
+        ...(needsEscalation ? { aiDisabled: true, status: 'Pending' } : {})
       });
     } catch (e) {
       console.error("AI reply failed:", e);
@@ -926,7 +926,7 @@ export default function AffiliatePage() {
         userEmail: currentUser.email,
         userName: currentUser.displayName || currentUser.email?.split('@')[0] || "Partner",
         subject: subject,
-        status: 'open',
+        status: 'Open',
         priority: 'medium',
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -1077,7 +1077,7 @@ export default function AffiliatePage() {
         currency: '$',
         gateway: payoutGateway,
         details: detailsStr,
-        status: 'pending',
+        status: 'Pending',
         createdAt: new Date(),
         processedAt: null,
         rejectReason: null

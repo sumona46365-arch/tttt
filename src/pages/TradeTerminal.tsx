@@ -4573,7 +4573,7 @@ const PROMOTED_ARTICLES = [
         userEmail: currentUser.email,
         userName: currentUser.displayName || currentUser.email?.split('@')[0] || "User",
         subject: subject,
-        status: 'open',
+        status: 'Open',
         priority: 'medium',
         createdAt: Date.now(),
         updatedAt: Date.now()
@@ -7461,7 +7461,7 @@ const PROMOTED_ARTICLES = [
     setUserTrades(prev => {
       const exists = prev.find(t => String(t.id) === String(newTrade.id) || String(t.id) === String(newTradeId));
       if (exists) return prev;
-      const combined = [{ ...newTrade, status: 'open' }, ...prev];
+      const combined = [{ ...newTrade, status: 'Open' }, ...prev];
       combined.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       return combined.slice(0, 100);
     });
