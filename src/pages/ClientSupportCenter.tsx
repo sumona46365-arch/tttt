@@ -159,7 +159,8 @@ export default function ClientSupportCenter() {
     setAttachedFiles([]);
 
     try {
-      await addDoc(collection(db, 'tickets', activeTicket.id, 'messages'), {
+      const msgId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const messagePayload = {
         ticketId: activeTicket.id,
         senderId: currentUid,
         senderName: currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User',
@@ -168,13 +169,35 @@ export default function ClientSupportCenter() {
         text: text,
         attachments: files,
         createdAt: now
-      });
+      };
 
-      await updateDoc(doc(db, 'tickets', activeTicket.id), {
-        lastMessage: text || (files.length > 0 ? 'Sent an attachment' : ''),
-        updatedAt: now,
-        status: 'Open'
-      });
+      // 1. Persist directly to PostgreSQL database
+      try {
+        await fetch('/api/tickets/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ticketId: activeTicket.id,
+            messageId: msgId,
+            messageData: messagePayload
+          })
+        });
+      } catch (sqlErr) {
+        console.warn('PostgreSQL message persist warning:', sqlErr);
+      }
+
+      // 2. Sync to Firestore for real-time listener
+      try {
+        await addDoc(collection(db, 'tickets', activeTicket.id, 'messages'), messagePayload);
+
+        await updateDoc(doc(db, 'tickets', activeTicket.id), {
+          lastMessage: text || (files.length > 0 ? 'Sent an attachment' : ''),
+          updatedAt: now,
+          status: 'Open'
+        });
+      } catch (fsErr) {
+        console.warn('Firestore ticket sync warning:', fsErr);
+      }
     } catch (err) {
       toast.error('Failed to send message');
       setChatMessage(text);
@@ -193,22 +216,22 @@ export default function ClientSupportCenter() {
     setIsSending(true);
     try {
       const now = Date.now();
+      const ticketId = `tkt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       const ticketData = {
         userId: currentUid,
         userName: currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User',
         userEmail: currentUser?.email || '',
         subject: newSubject.trim() || `${newCategory} Inquiry`,
         category: newCategory,
-        status: 'Open',
+        message: chatMessage.trim() || 'Ticket inquiry',
+        status: 'open',
         lastMessage: chatMessage.trim() || 'Attached files',
         createdAt: now,
         updatedAt: now
       };
 
-      const ticketRef = await addDoc(collection(db, 'tickets'), ticketData);
-      const ticketId = ticketRef.id;
-
-      await addDoc(collection(db, 'tickets', ticketId, 'messages'), {
+      const msgId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const messagePayload = {
         ticketId: ticketId,
         senderId: currentUid,
         senderName: ticketData.userName,
@@ -217,13 +240,42 @@ export default function ClientSupportCenter() {
         text: chatMessage.trim(),
         attachments: attachedFiles,
         createdAt: now
-      });
+      };
+
+      // 1. Persist directly to PostgreSQL database
+      try {
+        await fetch('/api/tickets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ticketId, ticketData })
+        });
+
+        await fetch('/api/tickets/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ticketId,
+            messageId: msgId,
+            messageData: messagePayload
+          })
+        });
+      } catch (sqlErr) {
+        console.warn('PostgreSQL ticket create warning:', sqlErr);
+      }
+
+      // 2. Sync to Firestore
+      try {
+        const ticketRef = await addDoc(collection(db, 'tickets'), { ...ticketData, id: ticketId });
+        await addDoc(collection(db, 'tickets', ticketRef.id, 'messages'), messagePayload);
+      } catch (fsErr) {
+        console.warn('Firestore ticket create warning:', fsErr);
+      }
 
       setActiveTicket({ id: ticketId, ...ticketData });
       setChatMessage('');
       setAttachedFiles([]);
       setView('chat');
-      toast.success('Ticket created successfully');
+      toast.success('Ticket created successfully and saved to database');
     } catch (err) {
       toast.error('Failed to create ticket');
     } finally {

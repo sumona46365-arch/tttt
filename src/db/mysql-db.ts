@@ -127,6 +127,12 @@ function convertSqlForPg(sql: string): string {
 
 async function initPgTables(pool: pg.Pool) {
   const ddlStatements = [
+    `CREATE TABLE IF NOT EXISTS app_settings (
+      key VARCHAR(255) PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at BIGINT,
+      created_at BIGINT
+    );`,
     `CREATE TABLE IF NOT EXISTS market_settings (
       pair VARCHAR(100) PRIMARY KEY,
       hidden INT DEFAULT 0,
@@ -460,7 +466,9 @@ async function initPgTables(pool: pg.Pool) {
   await addPgColIfMissing('users', 'smart_mode_strategy', "VARCHAR(100) DEFAULT 'auto_25_percent'");
   await addPgColIfMissing('users', 'manipulation_mode', "VARCHAR(100) DEFAULT 'neutral'");
   await addPgColIfMissing('users', 'nickname', 'VARCHAR(255)');
+  await addPgColIfMissing('users', 'password', 'TEXT');
   await addPgColIfMissing('users', 'password_hash', 'TEXT');
+  await addPgColIfMissing('users', 'total_deposits', 'NUMERIC DEFAULT 0.00');
   await addPgColIfMissing('users', 'country_code', 'VARCHAR(20)');
   await addPgColIfMissing('users', 'is_email_verified', 'INT DEFAULT 0');
   await addPgColIfMissing('users', 'is_nid_verified', 'INT DEFAULT 0');
@@ -486,6 +494,12 @@ async function initPgTables(pool: pg.Pool) {
 
 function initSqliteTables(db: Database.Database) {
   db.exec(`
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at INTEGER,
+    created_at INTEGER
+  );
   CREATE TABLE IF NOT EXISTS market_settings (
     pair TEXT PRIMARY KEY,
     hidden INTEGER DEFAULT 0,
@@ -494,6 +508,7 @@ function initSqliteTables(db: Database.Database) {
   `);
 
   try { db.exec("ALTER TABLE market_settings ADD COLUMN payout INTEGER DEFAULT NULL"); } catch (e) {}
+  try { db.exec("ALTER TABLE users ADD COLUMN password TEXT;"); } catch (e) {}
 
   db.exec(`
   CREATE TABLE IF NOT EXISTS users (

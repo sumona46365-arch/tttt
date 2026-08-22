@@ -1,14 +1,18 @@
 import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
 import { get, query } from "../db/mysql-db.ts";
 import { adminDb } from "./firebase-admin.ts";
+import { getAppSetting } from "../services/settingsService.ts";
 
 let cachedClient: { apiKey: string; client: GoogleGenAI } | null = null;
 
 async function getGeminiClient(): Promise<GoogleGenAI> {
-  let apiKey = "AQ.Ab8RN6KFiSO65DCEo_A8KrqfdZqPtZhR-3BziLaOuhxnK0uMwg"; // Secure, tested permanent default fallback
+  let apiKey = process.env.GEMINI_API_KEY || "AQ.Ab8RN6KFiSO65DCEo_A8KrqfdZqPtZhR-3BziLaOuhxnK0uMwg"; // Secure, tested permanent default fallback
   
   try {
-    if (adminDb) {
+    const pgKey = await getAppSetting<string>('geminiApiKey');
+    if (pgKey && pgKey.trim()) {
+      apiKey = pgKey.trim();
+    } else if (adminDb) {
       const doc = await adminDb.collection('app_config').doc('settings').get();
       if (doc.exists) {
         const data = doc.data();
@@ -21,7 +25,7 @@ async function getGeminiClient(): Promise<GoogleGenAI> {
       }
     }
   } catch (error) {
-    console.error("Error reading geminiApiKey from Firestore:", error);
+    console.error("Error reading geminiApiKey:", error);
   }
 
   if (cachedClient && cachedClient.apiKey === apiKey) {

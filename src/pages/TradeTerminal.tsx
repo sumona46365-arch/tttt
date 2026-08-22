@@ -1979,17 +1979,21 @@ export default function TradeTerminal() {
                         const rawExp = t.expirationTime || (t.expiryTime ? t.expiryTime * 1000 : (t.expiry_time ? t.expiry_time * 1000 : null));
                         const expMs = typeof rawExp === 'number' ? (rawExp < 100000000000 ? rawExp * 1000 : rawExp) : now;
                         const timeLeftSec = Math.max(0, Math.floor((expMs - now) / 1000));
+                        const rawEntry = t.entryTime || t.createdAt || t.created_at || now;
+                        const entryMs = typeof rawEntry === 'number' ? (rawEntry < 10000000000 ? rawEntry * 1000 : rawEntry) : new Date(rawEntry).getTime();
                         return {
                             ...t,
                             id: String(t.id),
                             type: t.type || t.direction || 'up',
                             direction: t.direction || t.type || 'up',
                             asset: t.asset || t.marketId || t.market_id,
+                            entryPrice: Number(t.entryPrice || t.entry_price || 0),
                             accountType: t.accountType || t.account_type || (t.isDemo || t.is_demo ? 'demo' : 'real'),
                             isDemo: t.isDemo !== undefined ? t.isDemo : (t.accountType === 'demo' || t.is_demo),
                             timeLeft: timeLeftSec,
                             expirationTime: expMs,
-                            createdAt: t.createdAt || t.created_at || now
+                            entryTime: entryMs / 1000,
+                            createdAt: entryMs
                         };
                     }).filter((t: any) => t.timeLeft > 0);
 
@@ -5113,12 +5117,17 @@ const PROMOTED_ARTICLES = [
           const rawExp = t.expirationTime || (t.expiryTime ? t.expiryTime * 1000 : (t.expiry_time ? t.expiry_time * 1000 : now + (t.timeLeft || 0) * 1000));
           const expMs = typeof rawExp === 'number' ? (rawExp < 100000000000 ? rawExp * 1000 : rawExp) : now;
           const timeLeftSec = Math.max(0, Math.floor((expMs - now) / 1000));
+          const rawEntry = t.entryTime || t.createdAt || t.created_at || now;
+          const entryMs = typeof rawEntry === 'number' ? (rawEntry < 10000000000 ? rawEntry * 1000 : rawEntry) : new Date(rawEntry).getTime();
           return {
             ...t,
             id: String(t.id),
+            entryPrice: Number(t.entryPrice || t.entry_price || 0),
             accountType: t.accountType || t.account_type || (t.isDemo || t.is_demo ? 'demo' : 'real'),
             expirationTime: expMs,
-            timeLeft: timeLeftSec
+            timeLeft: timeLeftSec,
+            entryTime: entryMs / 1000,
+            createdAt: entryMs
           };
         }).filter(t => t.timeLeft > 0 && t.status !== 'won' && t.status !== 'lost' && t.status !== 'draw');
 

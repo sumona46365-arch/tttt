@@ -18,6 +18,8 @@ import {
 } from '../lib/sync-service.ts';
 import { sendEmail } from '../lib/email.ts';
 import { generateChatResponse } from '../lib/gemini.ts';
+import { getAllAppSettings, saveAppSettings, getAppSetting, setAppSetting } from '../services/settingsService.ts';
+import { uploadImage } from '../lib/storage-service.ts';
 
 import { handleSupportQuery } from './support-agent.ts';
 import { body, validationResult } from 'express-validator';
@@ -2436,6 +2438,56 @@ router.get('/user/profile', requireAuth, async (req: AuthRequest, res) => {
   res.json(mapUserForFrontend(user));
 });
 
+router.post('/user/profile/update', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user!.uid;
+    const { photoURL, displayName, nickname, phone, country, countryCode, firstName, lastName, gender, dob } = req.body;
+    
+    let processedPhotoUrl = photoURL;
+    if (photoURL && typeof photoURL === 'string' && photoURL.startsWith('data:image/')) {
+      try {
+        const uploadRes = await uploadImage(photoURL, 'bivaax_profiles', `profile_${uid}`);
+        processedPhotoUrl = uploadRes.url;
+      } catch (err: any) {
+        logger.warn(`Photo upload optimization failed: ${err.message}`);
+      }
+    }
+
+    const updates: string[] = [];
+    const params: any[] = [];
+
+    if (processedPhotoUrl !== undefined) { updates.push('photo_url = ?'); params.push(processedPhotoUrl); }
+    if (displayName !== undefined) { updates.push('display_name = ?'); params.push(displayName); }
+    if (nickname !== undefined) { updates.push('nickname = ?'); params.push(nickname); }
+    if (phone !== undefined) { updates.push('phone = ?'); params.push(phone); }
+    if (country !== undefined) { updates.push('country = ?'); params.push(country); }
+    if (countryCode !== undefined) { updates.push('country_code = ?'); params.push(countryCode); }
+    if (firstName !== undefined) { updates.push('first_name = ?'); params.push(firstName); }
+    if (lastName !== undefined) { updates.push('last_name = ?'); params.push(lastName); }
+    if (gender !== undefined) { updates.push('gender = ?'); params.push(gender); }
+    if (dob !== undefined) { updates.push('dob = ?'); params.push(dob); }
+
+    if (updates.length > 0) {
+      updates.push('updated_at = ?');
+      params.push(Date.now());
+      params.push(uid);
+      await run(`UPDATE users SET ${updates.join(', ')} WHERE uid = ?`, params);
+    }
+
+    const updatedUser = await get('SELECT * FROM users WHERE uid = ?', [uid]);
+    const mapped = mapUserForFrontend(updatedUser);
+    
+    // Sync to Firestore & Socket
+    getIO().to(`user_${uid}`).emit('user_profile_update', mapped);
+    syncUserToFirestore(uid, mapped);
+
+    res.json({ success: true, user: mapped });
+  } catch (err: any) {
+    logger.error('Error updating user profile:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/wallet/balance', requireAuth, async (req: AuthRequest, res) => {
   const user = await get('SELECT * FROM users WHERE uid = ?', [req.user!.uid]) as any;
   res.json(mapUserForFrontend(user));
@@ -3808,12 +3860,27 @@ router.get('/app_config/settings', async (req, res) => {
       }
     }
 
-    const docSnap = await adminDb.collection('app_config').doc('settings').get();
-    const data = docSnap.exists ? docSnap.data() : {};
+    let pgSettings: Record<string, any> = {};
+    try {
+      pgSettings = await getAllAppSettings();
+    } catch (e: any) {
+      logger.warn(`Could not read settings from PostgreSQL: ${e.message}`);
+    }
+
+    let fsData = {};
+    if (adminDb) {
+      try {
+        const docSnap = await adminDb.collection('app_config').doc('settings').get();
+        if (docSnap.exists) {
+          fsData = docSnap.data() || {};
+        }
+      } catch (e) {}
+    }
     
-    const responseData = {
+    const responseData: Record<string, any> = {
       ...defaultSettings,
-      ...data
+      ...fsData,
+      ...pgSettings
     };
 
     if (!isAdmin) {
@@ -3824,8 +3891,13 @@ router.get('/app_config/settings', async (req, res) => {
       delete responseData.smtpPass;
       delete responseData.smtpFromEmail;
       delete responseData.smtpFromName;
+      delete responseData.resendApiKey;
+      delete responseData.mailgunApiKey;
+      delete responseData.sendgridApiKey;
       delete responseData.fmpApiKey;
       delete responseData.geminiApiKey;
+      delete responseData.cloudinaryApiSecret;
+      delete responseData.s3SecretAccessKey;
     }
 
     res.json(responseData);
@@ -3841,11 +3913,34 @@ router.patch('/app_config/settings', requireAuth, async (req: AuthRequest, res) 
       return res.status(403).json({ error: 'Forbidden: Admin access required' });
     }
 
-    await adminDb.collection('app_config').doc('settings').set(req.body, { merge: true });
+    // 1. Save directly to PostgreSQL app_settings table
+    await saveAppSettings(req.body, true);
+
     res.json({ success: true });
   } catch (err: any) {
-    logger.error('Error saving app_config settings:', err);
+    logger.error('Error saving app_config settings to PostgreSQL:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Upload endpoint for KYC documents, NID images, and Profile photos
+router.post('/upload', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const { image, folder, publicIdPrefix } = req.body;
+    if (!image) {
+      return res.status(400).json({ error: 'Image data is required for upload' });
+    }
+
+    const result = await uploadImage(
+      image, 
+      folder || 'bivaax_uploads', 
+      publicIdPrefix || `user_${req.user?.uid || 'guest'}`
+    );
+
+    res.json({ success: true, url: result.url, provider: result.provider });
+  } catch (err: any) {
+    logger.error('Error uploading file:', err);
+    res.status(500).json({ error: err.message || 'Upload failed' });
   }
 });
 

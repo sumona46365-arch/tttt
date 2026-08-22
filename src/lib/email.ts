@@ -1,6 +1,7 @@
 import nodemailer from 'nodemailer';
 import { Resend } from 'resend';
 import { adminDb } from './firebase-admin.ts';
+import { getAllAppSettings } from '../services/settingsService.ts';
 import logger from './logger.ts';
 
 // In-memory deduplication cache to prevent sending the exact same email multiple times
@@ -46,8 +47,17 @@ export async function sendEmail(to: string, subject: string, html: string, text?
     if (overrideConfig) {
       dbConfig = overrideConfig;
     } else {
-      const settingsDoc = await adminDb.collection('app_config').doc('settings').get();
-      dbConfig = settingsDoc.data() || {};
+      try {
+        dbConfig = await getAllAppSettings();
+      } catch {
+        dbConfig = {};
+      }
+      if (Object.keys(dbConfig).length === 0 && adminDb) {
+        try {
+          const settingsDoc = await adminDb.collection('app_config').doc('settings').get();
+          dbConfig = settingsDoc.data() || {};
+        } catch {}
+      }
     }
 
     const smtpFromEmail = dbConfig.smtpFromEmail || process.env.SMTP_FROM_EMAIL || "bivaaxtrader@gmail.com";

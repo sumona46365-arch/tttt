@@ -177,9 +177,28 @@ export default function ProfilePage() {
       const base64String = reader.result as string;
       try {
         if (user?.uid) {
-          await updateDoc(doc(db, 'users', user.uid), {
-            photoURL: base64String
-          });
+          const token = localStorage.getItem('bivax_token') || localStorage.getItem('token');
+          // Persist directly to PostgreSQL database
+          try {
+            await fetch('/api/user/profile/update', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+              },
+              body: JSON.stringify({ photoURL: base64String })
+            });
+          } catch (e) {
+            console.warn('Backend profile update failed:', e);
+          }
+
+          // Sync to Firestore
+          try {
+            await updateDoc(doc(db, 'users', user.uid), {
+              photoURL: base64String
+            });
+          } catch (e) {}
+
           setUser((prev: any) => prev ? ({ ...prev, photoURL: base64String }) : null);
           toast.success('Profile picture updated successfully!');
         }

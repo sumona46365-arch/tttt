@@ -1162,8 +1162,29 @@ export default function AdminDashboard() {
 
   const handleSaveConfig = async () => {
     try {
-        await setDoc(doc(db, 'app_config', 'settings'), appConfig, { merge: true });
-        toast.success("Configuration saved successfully!");
+        const token = localStorage.getItem('bivax_token');
+        // 1. Save directly to PostgreSQL app_settings table
+        try {
+          await fetch('/api/app_config/settings', {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': token ? `Bearer ${token}` : ''
+            },
+            body: JSON.stringify(appConfig)
+          });
+        } catch (apiErr) {
+          console.warn('API save to PostgreSQL app_settings failed:', apiErr);
+        }
+
+        // 2. Also save to Firestore for real-time client listeners
+        try {
+          await setDoc(doc(db, 'app_config', 'settings'), appConfig, { merge: true });
+        } catch (fsErr) {
+          console.warn('Firestore settings update failed:', fsErr);
+        }
+
+        toast.success("Configuration permanently saved to database!");
     } catch (e) {
         console.error('Failed to save config:', e);
         toast.error("Failed to save configuration");

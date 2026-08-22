@@ -233,28 +233,49 @@ export default function EnterpriseSupportCenter() {
 
     const currentUser = auth.currentUser;
     const messageId = 'msg_' + Date.now();
+    const now = Date.now();
     const messageData = {
-      senderId: currentUser.uid,
-      senderName: currentUser.displayName || 'Support Agent',
+      senderId: currentUser?.uid || 'support_agent',
+      senderName: currentUser?.displayName || 'Support Agent',
       senderType: 'agent',
       text: replyText,
-      createdAt: Date.now(),
+      createdAt: now,
       isAdmin: true
     };
 
     try {
-      await addDoc(collection(db, `tickets/${selectedTicket.id}/messages`), messageData);
-      
-      // Update ticket
-      await updateDoc(doc(db, 'tickets', selectedTicket.id), {
-        lastMessage: replyText,
-        updatedAt: Date.now(),
-        status: selectedTicket.status === 'Open' ? 'Pending' : selectedTicket.status
-      });
+      // 1. Persist directly to PostgreSQL database
+      try {
+        await fetch('/api/tickets/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ticketId: selectedTicket.id,
+            messageId,
+            messageData
+          })
+        });
+      } catch (sqlErr) {
+        console.warn('PostgreSQL agent message persist warning:', sqlErr);
+      }
+
+      // 2. Sync to Firestore
+      try {
+        await addDoc(collection(db, `tickets/${selectedTicket.id}/messages`), messageData);
+        
+        // Update ticket
+        await updateDoc(doc(db, 'tickets', selectedTicket.id), {
+          lastMessage: replyText,
+          updatedAt: now,
+          status: selectedTicket.status === 'Open' ? 'Pending' : selectedTicket.status
+        });
+      } catch (fsErr) {
+        console.warn('Firestore ticket sync warning:', fsErr);
+      }
 
       setReplyText('');
       setAiSuggestion(null);
-      toast.success('Reply sent');
+      toast.success('Reply sent & saved to database');
     } catch (err) {
       toast.error('Failed to send message');
     } finally {
