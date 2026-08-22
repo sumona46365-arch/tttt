@@ -1046,16 +1046,18 @@ interface Transaction {
   id: string;
   dateStr: string;
   timeStr: string;
-  endTimeStr: string;
+  endTimeStr?: string;
   type: string;
   method: string;
-  methodIcon: string;
+  methodIcon?: string;
   amount: number;
-  status: 'Completed' | 'Pending' | 'Rejected';
+  status: 'Completed' | 'Pending' | 'Rejected' | string;
   errorMsg?: string;
   successMsg?: string;
   bonusAmount?: number;
   timestamp?: number;
+  orderId?: string;
+  trxId?: string;
 }
 
 const MOCK_TRANSACTIONS: Transaction[] = [
@@ -4414,6 +4416,59 @@ const PROMOTED_ARTICLES = [
   useEffect(() => {
     if (!currentUser?.uid) return;
 
+    // Fetch permanent history directly from PostgreSQL backend
+    const fetchDbTransactions = async () => {
+      try {
+        const token = (await auth.currentUser?.getIdToken().catch(() => null)) || localStorage.getItem('token');
+        const res = await fetch('/api/wallet/transactions', {
+          headers: {
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          }
+        });
+        if (res.ok) {
+          const data = await res.json().catch(() => []);
+          if (Array.isArray(data) && data.length > 0) {
+            const mappedDb = data.map((t: any) => {
+              const date = new Date(t.timestamp || t.created_at || Date.now());
+              const sLower = String(t.status || 'pending').toLowerCase();
+              let statusDisplay = "Pending";
+              if (['success', 'approved', 'completed', 'credited'].includes(sLower)) statusDisplay = "Completed";
+              else if (['rejected', 'declined', 'cancelled', 'canceled'].includes(sLower)) statusDisplay = "Rejected";
+
+              return {
+                id: String(t.id || ''),
+                orderId: t.orderId || t.details?.orderId || '',
+                trxId: t.trxId || t.tx_hash || '',
+                dateStr: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone }),
+                timeStr: date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone }),
+                type: (t.type || 'Deposit').toLowerCase() === 'deposit' ? 'Deposit' : 'Withdrawal',
+                method: t.method || (t.type === 'deposit' ? 'Deposit' : 'Withdrawal'),
+                amount: Number(t.amount) || 0,
+                status: statusDisplay,
+                timestamp: date.getTime()
+              };
+            }).filter(tx => tx.amount > 0);
+
+            setUserTransactions(prev => {
+              const combined = [...prev];
+              const seen = new Set(combined.map(c => c.orderId ? `order_${c.orderId}` : (c.trxId && !c.trxId.includes('Pending') ? `trx_${c.trxId}` : `id_${c.id}`)));
+              for (const m of mappedDb) {
+                const k = m.orderId ? `order_${m.orderId}` : (m.trxId && !m.trxId.includes('Pending') ? `trx_${m.trxId}` : `id_${m.id}`);
+                if (!seen.has(k)) {
+                  seen.add(k);
+                  combined.push(m);
+                }
+              }
+              return combined.sort((a, b) => b.timestamp - a.timestamp);
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to fetch database transactions:", err);
+      }
+    };
+    fetchDbTransactions();
+
     // Listen to Deposits in real-time
     const qDeps = query(collection(db, "deposits"), where("userId", "==", currentUser.uid), limit(50));
     const unsubDeps = onSnapshot(qDeps, (snapshot) => {
@@ -4522,7 +4577,7 @@ const PROMOTED_ARTICLES = [
         unsubDeps();
         unsubWiths();
     };
-  }, [currentUser?.uid]);
+  }, [currentUser?.uid, cashierTab]);
 
   useEffect(() => {
     if (!currentUser?.uid || !selectedTournament?.id) return;

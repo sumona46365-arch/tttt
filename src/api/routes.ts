@@ -806,45 +806,111 @@ export async function getUserTransactionsFromFirestore(userId: string): Promise<
 }
 
 export async function getUserTransactions(userId: string): Promise<any[]> {
-  if (adminDb) {
-    try {
-      return await getUserTransactionsFromFirestore(userId);
-    } catch (fsErr: any) {
-      logger.error(`[getUserTransactions] Firestore failed: ${fsErr.message}. Falling back to SQLite.`);
+  try {
+    // 1. Fetch from PostgreSQL / Relational Database (Primary Source of Truth)
+    const rows = await query(
+      `SELECT * FROM transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT 200`,
+      [userId]
+    ) as any[];
+
+    const sqlTxs = (rows || []).map((r) => {
+      const typeLower = (r.type || 'deposit').toLowerCase();
+      const isDeposit = typeLower === 'deposit';
+      let detailsParsed: any = {};
+      try {
+        detailsParsed = typeof r.details === 'string' ? JSON.parse(r.details) : r.details || {};
+      } catch (e) {}
+
+      const ts = Number(r.created_at) || Date.now();
+      const sLower = String(r.status || 'pending').toLowerCase();
+      let statusDisplay = "pending";
+      if (['success', 'approved', 'completed', 'credited'].includes(sLower)) statusDisplay = "completed";
+      else if (['rejected', 'declined', 'cancelled', 'canceled'].includes(sLower)) statusDisplay = "rejected";
+
+      return {
+        id: r.id?.toString() || '',
+        userId: r.user_id,
+        user_id: r.user_id,
+        type: isDeposit ? 'Deposit' : 'Withdrawal',
+        amount: Number(r.amount || 0),
+        currency: r.currency || 'BDT',
+        status: statusDisplay,
+        method: r.method || (isDeposit ? 'Deposit' : 'Withdrawal'),
+        trxId: r.tx_hash || detailsParsed?.trxId || detailsParsed?.txHash || '',
+        tx_hash: r.tx_hash || '',
+        orderId: r.order_id || detailsParsed?.orderId || '',
+        timestamp: ts,
+        created_at: ts,
+        details: detailsParsed
+      };
+    });
+
+    // 2. Also check Firestore to ensure no pending client records are missing
+    let fsTxs: any[] = [];
+    if (adminDb) {
+      try {
+        fsTxs = await getUserTransactionsFromFirestore(userId);
+      } catch (fsErr: any) {
+        logger.warn(`[getUserTransactions] Optional Firestore sync fetch: ${fsErr.message}`);
+      }
     }
+
+    // 3. Merge and deduplicate by orderId, trxId, or database ID
+    const mergedMap = new Map<string, any>();
+
+    // Start with SQL transactions
+    for (const tx of sqlTxs) {
+      const key = tx.orderId ? `order_${tx.orderId}` : (tx.trxId ? `trx_${tx.trxId}` : `sql_${tx.id}`);
+      mergedMap.set(key, tx);
+    }
+
+    // Merge in any Firestore transactions and persist them to PostgreSQL if missing
+    for (const tx of fsTxs) {
+      const key = tx.orderId ? `order_${tx.orderId}` : (tx.trxId ? `trx_${tx.trxId}` : `fs_${tx.id}`);
+      if (!mergedMap.has(key)) {
+        mergedMap.set(key, tx);
+        // Persist missing Firestore transaction permanently into PostgreSQL transactions table
+        try {
+          const typeStr = (tx.type || 'deposit').toLowerCase();
+          const amountStr = (tx.amount || 0).toString();
+          const sLower = String(tx.status || 'pending').toLowerCase();
+          const statusStr = (['success', 'approved', 'completed', 'credited'].includes(sLower)) ? 'completed' : (['rejected', 'declined', 'cancelled', 'canceled'].includes(sLower) ? 'rejected' : 'pending');
+          const methodStr = tx.method || (typeStr === 'deposit' ? 'direct' : 'withdrawal');
+          const currencyStr = tx.currency || 'BDT';
+          const txHashStr = tx.trxId || tx.tx_hash || '';
+          const orderIdStr = tx.orderId || '';
+          const createdAtNum = Number(tx.timestamp || tx.created_at) || Date.now();
+          const detailsStr = JSON.stringify(tx.details || { orderId: orderIdStr });
+
+          await run(
+            `INSERT INTO transactions (user_id, type, amount, status, method, tx_hash, currency, details, order_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [userId, typeStr, amountStr, statusStr, methodStr, txHashStr, currencyStr, detailsStr, orderIdStr || null, createdAtNum]
+          );
+        } catch (insertErr) {
+          // ignore duplicate insert errors
+        }
+      } else {
+        // If SQL has pending status but Firestore recorded approval/rejection, update SQL status
+        const existing = mergedMap.get(key);
+        if (existing && existing.status === 'pending' && (tx.status === 'completed' || tx.status === 'success' || tx.status === 'approved' || tx.status === 'rejected')) {
+          const updatedStatus = tx.status === 'rejected' ? 'rejected' : 'completed';
+          existing.status = updatedStatus;
+          try {
+            if (existing.id && !isNaN(Number(existing.id))) {
+              await run(`UPDATE transactions SET status = ?, updated_at = ? WHERE id = ?`, [updatedStatus, Date.now(), Number(existing.id)]);
+            }
+          } catch (updErr) {}
+        }
+      }
+    }
+
+    const finalList = Array.from(mergedMap.values()).sort((a, b) => (b.timestamp || b.created_at) - (a.timestamp || a.created_at));
+    return finalList;
+  } catch (err: any) {
+    logger.error(`[getUserTransactions] Error fetching transactions: ${err.message}`);
+    return [];
   }
-
-  const rows = await query(
-    `SELECT * FROM transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT 100`,
-    [userId]
-  ) as any[];
-
-  return rows.map((r) => {
-    const typeLower = (r.type || 'deposit').toLowerCase();
-    const isDeposit = typeLower === 'deposit';
-    let detailsParsed = {};
-    try {
-      detailsParsed = typeof r.details === 'string' ? JSON.parse(r.details) : r.details || {};
-    } catch (e) {}
-
-    const ts = r.created_at || Date.now();
-
-    return {
-      id: r.id?.toString() || '',
-      userId: r.user_id,
-      user_id: r.user_id,
-      type: isDeposit ? 'Deposit' : 'Withdrawal',
-      amount: Number(r.amount || 0),
-      currency: r.currency || 'BDT',
-      status: (r.status === 'success' || r.status === 'approved' || r.status === 'completed') ? 'success' : (r.status || 'pending'),
-      method: r.method || 'direct',
-      trxId: r.tx_hash || '',
-      tx_hash: r.tx_hash || '',
-      timestamp: ts,
-      created_at: ts,
-      details: detailsParsed
-    };
-  });
 }
 
 export async function syncGlobalTransactionsFromFirestore() {
@@ -4546,23 +4612,24 @@ router.post('/activities', async (req, res) => {
 });
 
 // --- Legacy/Alias Routes for Compatibility ---
-router.post('/deposit', async (req, res) => {
-  // Redirect to wallet/deposit logic or just re-implement
-  res.status(200).json({ success: true, message: 'Deposit endpoint reached. Please use /api/wallet/deposit' });
+router.post('/deposits', (req, res, next) => {
+  req.url = '/wallet/deposit';
+  (router as any)(req, res, next);
 });
 
-router.post('/withdraw', async (req, res) => {
-  res.status(200).json({ success: true, message: 'Withdraw endpoint reached. Please use /api/wallet/withdraw' });
+router.post('/deposit', (req, res, next) => {
+  req.url = '/wallet/deposit';
+  (router as any)(req, res, next);
 });
 
-router.get('/transactions', requireAuth, async (req: AuthRequest, res) => {
-  try {
-    const history = await getUserTransactions(req.user!.uid);
-    res.json(history.slice(0, 50));
-  } catch (err: any) {
-    logger.error(`Failed to fetch transactions for user ${req.user!.uid}: ${err.message}`);
-    res.status(500).json({ error: 'Failed to fetch transactions' });
-  }
+router.post('/withdrawals', (req, res, next) => {
+  req.url = '/wallet/withdraw';
+  (router as any)(req, res, next);
+});
+
+router.post('/withdraw', (req, res, next) => {
+  req.url = '/wallet/withdraw';
+  (router as any)(req, res, next);
 });
 
 router.post('/trade/prune-demo', async (req, res) => {
