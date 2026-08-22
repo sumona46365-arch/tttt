@@ -45,6 +45,48 @@ const INITIAL_PERMISSIONS: Record<PermissionKey, boolean> = {
   canManageSupport: false
 };
 
+// Helper to deduplicate requests between SQL and Firestore records
+const deduplicateRequests = (items: any[]) => {
+  const map = new Map<string, any>();
+  for (const item of items) {
+    if (!item) continue;
+    let detailsObj: any = {};
+    if (typeof item.details === 'string') {
+      try { detailsObj = JSON.parse(item.details); } catch(e) {}
+    } else if (typeof item.details === 'object' && item.details) {
+      detailsObj = item.details;
+    }
+
+    const orderId = item.orderId || detailsObj.orderId || item.order_id;
+    const firestoreId = item.firestoreId || detailsObj.firestoreId || (typeof item.id === 'string' && item.id.length > 8 ? item.id : null);
+    const trxId = item.trxId || item.tx_hash || item.txHash;
+    
+    let key = '';
+    if (orderId) key = `ord_${orderId}`;
+    else if (firestoreId) key = `fs_${firestoreId}`;
+    else if (trxId && !String(trxId).includes('Pending') && !String(trxId).includes('Direct-Deposit')) key = `trx_${trxId}`;
+    else key = `id_${item.id}`;
+
+    if (!map.has(key)) {
+      map.set(key, { ...item, orderId: orderId || item.orderId, firestoreId: firestoreId || item.id });
+    } else {
+      const existing = map.get(key);
+      const isNewPending = String(item.status || '').toLowerCase() === 'pending';
+      const preferredStatus = !isNewPending ? item.status : existing.status;
+      map.set(key, {
+        ...existing,
+        ...item,
+        status: preferredStatus,
+        id: firestoreId || existing.id || item.id,
+        orderId: orderId || existing.orderId,
+        userEmail: item.userEmail || existing.userEmail || item.email || existing.email,
+        walletNumber: item.walletNumber || existing.walletNumber || detailsObj.walletNumber
+      });
+    }
+  }
+  return Array.from(map.values());
+};
+
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<AdminTab>('market');
@@ -421,14 +463,7 @@ export default function AdminDashboard() {
         if (wRef.ok) {
             const apiWithdrawals = await wRef.json();
             if (Array.isArray(apiWithdrawals)) {
-                setWithdrawals(prev => {
-                    const merged = [...prev];
-                    const existingIds = new Set(prev.map(p => String(p.id)));
-                    for (const d of apiWithdrawals) {
-                        if (!existingIds.has(String(d.id))) merged.push(d);
-                    }
-                    return merged;
-                });
+                setWithdrawals(prev => deduplicateRequests([...prev, ...apiWithdrawals]));
             }
         }
 
@@ -437,14 +472,7 @@ export default function AdminDashboard() {
         if (dRef.ok) {
             const apiDeposits = await dRef.json();
             if (Array.isArray(apiDeposits)) {
-                setDepositRequests(prev => {
-                    const merged = [...prev];
-                    const existingIds = new Set(prev.map(p => String(p.id)));
-                    for (const d of apiDeposits) {
-                        if (!existingIds.has(String(d.id))) merged.push(d);
-                    }
-                    return merged;
-                });
+                setDepositRequests(prev => deduplicateRequests([...prev, ...apiDeposits]));
             }
         }
 
@@ -653,11 +681,7 @@ export default function AdminDashboard() {
                     };
                     return getMillis(b) - getMillis(a);
                 });
-                setDepositRequests(prev => {
-                    const existingMap = new Map(prev.map(p => [String(p.id), p]));
-                    reqs.forEach(r => existingMap.set(String(r.id), r));
-                    return Array.from(existingMap.values());
-                });
+                setDepositRequests(prev => deduplicateRequests([...reqs, ...prev]));
             }));
             
             unsubs.push(onSnapshot(collection(db, 'withdrawals'), (snap) => {
@@ -681,11 +705,7 @@ export default function AdminDashboard() {
                     };
                     return getMillis(b) - getMillis(a);
                 });
-                setWithdrawals(prev => {
-                    const existingMap = new Map(prev.map(p => [String(p.id), p]));
-                    reqs.forEach(r => existingMap.set(String(r.id), r));
-                    return Array.from(existingMap.values());
-                });
+                setWithdrawals(prev => deduplicateRequests([...reqs, ...prev]));
             }));
 
             unsubs.push(onSnapshot(collection(db, 'kycRequests'), (snap) => {
@@ -1050,6 +1070,15 @@ export default function AdminDashboard() {
       if (processingDeposits.has(id)) return;
       
       setProcessingDeposits(prev => new Set(prev).add(id));
+      const targetStatus = (status === 'success' || status === 'approved') ? 'approved' : 'rejected';
+
+      // Instant optimistic UI update to prevent duplicate clicks and flickers
+      setDepositRequests(prev => prev.map(d => {
+          if (d.id === id || (orderId && (d.orderId === orderId || d.order_id === orderId))) {
+              return { ...d, status: targetStatus };
+          }
+          return d;
+      }));
       
       try {
           // Call server database update with exact requested amount
@@ -1068,19 +1097,24 @@ export default function AdminDashboard() {
               throw new Error(resData.error || `Failed with HTTP status ${response.status}`);
           }
           
-          // Update local status in Firestore
-          await updateDoc(doc(db, 'deposits', id), { 
-              status: (status === 'success' || status === 'approved') ? 'success' : status,
-              processedAt: Date.now()
-          });
-          
-          const txQuery = orderId 
-              ? query(collection(db, `users/${userId}/transactions`), where('orderId', '==', orderId))
-              : query(collection(db, `users/${userId}/transactions`), where('amount', '==', amount), where('type', '==', 'Deposit'), limit(1));
-          const txSnap = await getDocs(txQuery);
-          if (!txSnap.empty) {
-              const txStatus = (status === 'success' || status === 'approved') ? 'Completed' : status === 'rejected' ? 'Rejected' : status;
-              await updateDoc(doc(db, `users/${userId}/transactions`, txSnap.docs[0].id), { status: txStatus });
+          // Safe client-side Firestore update
+          try {
+              if (typeof id === 'string' && id.length > 5) {
+                  await updateDoc(doc(db, 'deposits', id), { 
+                      status: targetStatus,
+                      processedAt: Date.now()
+                  });
+              }
+              const txQuery = orderId 
+                  ? query(collection(db, `users/${userId}/transactions`), where('orderId', '==', orderId))
+                  : query(collection(db, `users/${userId}/transactions`), where('amount', '==', amount), where('type', '==', 'Deposit'), limit(1));
+              const txSnap = await getDocs(txQuery);
+              if (!txSnap.empty) {
+                  const txStatus = targetStatus === 'approved' ? 'Completed' : 'Rejected';
+                  await updateDoc(doc(db, `users/${userId}/transactions`, txSnap.docs[0].id), { status: txStatus });
+              }
+          } catch (fsErr) {
+              console.warn("Client Firestore sync note:", fsErr);
           }
           
           await logAdminAction('Processed Deposit', `Marked deposit ${id} as ${status} (Amount: ${amount} ${currency || 'BDT'})`);

@@ -4417,24 +4417,32 @@ const PROMOTED_ARTICLES = [
     // Listen to Deposits in real-time
     const qDeps = query(collection(db, "deposits"), where("userId", "==", currentUser.uid), limit(50));
     const unsubDeps = onSnapshot(qDeps, (snapshot) => {
-        const deps = snapshot.docs
+        const rawDeps = snapshot.docs
           .map(doc => {
             const data = doc.data();
             const date = (data.timestamp && typeof data.timestamp.toDate === 'function') ? data.timestamp.toDate() : new Date(data.timestamp || Date.now());
+            const sLower = String(data.status || '').toLowerCase().trim();
             let statusDisplay = "Pending";
-            if (data.status === "success" || data.status === "approved" || data.status === "completed") statusDisplay = "Completed";
-            else if (data.status === "rejected") statusDisplay = "Rejected";
+            if (['success', 'approved', 'completed', 'credited'].includes(sLower)) statusDisplay = "Completed";
+            else if (['rejected', 'declined', 'cancelled', 'canceled'].includes(sLower)) statusDisplay = "Rejected";
 
             const rawAmt = data.amount || data.creditedAmount || data.baseAmount;
             const cleanedAmt = rawAmt ? parseFloat(String(rawAmt).replace(/,/g, '').replace(/[^0-9.-]/g, '')) : 0;
             const amt = isNaN(cleanedAmt) ? 0 : cleanedAmt;
+            
+            let methodLabel = data.method;
+            if (!methodLabel || methodLabel === 'Selected Method') {
+                methodLabel = data.category || (data.walletNumber ? 'Crypto / E-Wallet' : 'Deposit');
+            }
 
             return {
                 id: doc.id,
+                orderId: data.orderId || '',
+                trxId: data.trxId || '',
                 dateStr: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone }),
                 timeStr: date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone }),
                 type: "Deposit",
-                method: data.method || "Selected Method",
+                method: methodLabel,
                 amount: amt,
                 status: statusDisplay,
                 timestamp: date.getTime()
@@ -4442,33 +4450,51 @@ const PROMOTED_ARTICLES = [
         })
         .filter(d => d.amount > 0);
 
+        // Deduplicate deposits by orderId or trxId
+        const dedupedDeps: any[] = [];
+        const seenKeys = new Set<string>();
+        for (const dep of rawDeps) {
+            const key = dep.orderId ? `order_${dep.orderId}` : (dep.trxId && !dep.trxId.includes('Pending') ? `trx_${dep.trxId}` : `id_${dep.id}`);
+            if (!seenKeys.has(key)) {
+                seenKeys.add(key);
+                dedupedDeps.push(dep);
+            }
+        }
+
         setUserTransactions(prev => {
             const filtered = prev.filter(t => t.type !== "Deposit");
-            return [...filtered, ...deps].sort((a, b) => b.timestamp - a.timestamp);
+            return [...filtered, ...dedupedDeps].sort((a, b) => b.timestamp - a.timestamp);
         });
     }, (e) => console.warn("Failed to listen to deposits:", e.message));
 
     // Listen to Withdrawals in real-time
     const qWiths = query(collection(db, "withdrawals"), where("userId", "==", currentUser.uid), limit(50));
     const unsubWiths = onSnapshot(qWiths, (snapshot) => {
-        const withs = snapshot.docs
+        const rawWiths = snapshot.docs
           .map(doc => {
             const data = doc.data();
             const date = (data.timestamp && typeof data.timestamp.toDate === 'function') ? data.timestamp.toDate() : new Date(data.timestamp || Date.now());
+            const sLower = String(data.status || '').toLowerCase().trim();
             let statusDisplay = "Pending";
-            if (data.status === "success" || data.status === "approved" || data.status === "completed") statusDisplay = "Completed";
-            else if (data.status === "rejected") statusDisplay = "Rejected";
+            if (['success', 'approved', 'completed', 'credited'].includes(sLower)) statusDisplay = "Completed";
+            else if (['rejected', 'declined', 'cancelled', 'canceled'].includes(sLower)) statusDisplay = "Rejected";
 
             const rawAmt = data.amount;
             const cleanedAmt = rawAmt ? parseFloat(String(rawAmt).replace(/,/g, '').replace(/[^0-9.-]/g, '')) : 0;
             const amt = isNaN(cleanedAmt) ? 0 : cleanedAmt;
 
+            let methodLabel = data.method;
+            if (!methodLabel || methodLabel === 'Selected Method') {
+                methodLabel = data.category || 'Withdrawal';
+            }
+
             return {
                 id: doc.id,
+                orderId: data.orderId || '',
                 dateStr: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone }),
                 timeStr: date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone }),
                 type: "Withdrawal",
-                method: data.method || "Selected Method",
+                method: methodLabel,
                 amount: amt,
                 status: statusDisplay,
                 timestamp: date.getTime()
@@ -4476,9 +4502,19 @@ const PROMOTED_ARTICLES = [
         })
         .filter(w => w.amount > 0);
 
+        const dedupedWiths: any[] = [];
+        const seenKeys = new Set<string>();
+        for (const withItem of rawWiths) {
+            const key = withItem.orderId ? `order_${withItem.orderId}` : `id_${withItem.id}`;
+            if (!seenKeys.has(key)) {
+                seenKeys.add(key);
+                dedupedWiths.push(withItem);
+            }
+        }
+
         setUserTransactions(prev => {
             const filtered = prev.filter(t => t.type !== "Withdrawal");
-            return [...filtered, ...withs].sort((a, b) => b.timestamp - a.timestamp);
+            return [...filtered, ...dedupedWiths].sort((a, b) => b.timestamp - a.timestamp);
         });
     }, (e) => console.warn("Failed to listen to withdrawals:", e.message));
 
@@ -13817,79 +13853,34 @@ const PROMOTED_ARTICLES = [
                                   
                                   if (auth?.currentUser) {
                                     try {
-                                      const { collection, addDoc, serverTimestamp } = await import('../firebase.ts');
+                                      const { collection, addDoc } = await import('../firebase.ts');
                                       const currentAmount = convertToBase(Number(depositAmount), userCurrency);
+                                      const effectiveMethodName = selectedMethod?.name || (userCurrency === 'BDT' ? 'Manual bKash/Nagad' : 'Direct Deposit');
                                       
-                                      const depositPayload = {
-                                        userId: auth.currentUser.uid,
-                                        userEmail: auth.currentUser.email,
-                                        amount: currentAmount,
-                                        currency: userCurrency,
-                                        method: selectedMethod?.name,
-                                        walletNumber: selectedMethod?.walletAddress || '01347249505',
-                                        trxId: paymentTrxId,
-                                        status: 'pending',
-                                        timestamp: Date.now(),
-                                        orderId,
-                                        promoCode: appliedPromo,
-                                        promoBonus: promoBonus
-                                      };
                                       await addDoc(collection(db, 'deposits'), {
                                         userId: auth.currentUser.uid,
-                                        userEmail: auth.currentUser.email,
+                                        userEmail: auth.currentUser.email || '',
                                         amount: Number(currentAmount),
                                         currency: userCurrency,
-                                        method: selectedMethod?.name,
+                                        method: effectiveMethodName,
                                         walletNumber: selectedMethod?.walletAddress || '01347249505',
-                                        trxId: paymentTrxId,
+                                        trxId: paymentTrxId || 'Direct-Deposit',
                                         status: 'pending',
                                         timestamp: Date.now(),
                                         orderId,
-                                        promoCode: appliedPromo,
-                                        promoBonus: promoBonus
+                                        promoCode: appliedPromo || '',
+                                        promoBonus: promoBonus || 0
                                       });
-                                      
-                                      toast.success(`Deposit request for ${userCurrency}${depositAmount} submitted successfully!`);
-                                      setShowDeposit(false);
-                                      setDepositStep("methods");
-                                      return;
-                                      await addDoc(collection(db, 'deposits'), {
-                                        userId: auth.currentUser.uid,
-                                        userEmail: auth.currentUser.email,
-                                        amount: currentAmount,
-                                        currency: userCurrency,
-                                        method: selectedMethod?.name,
-                                        walletNumber: selectedMethod?.walletAddress || '01347249505',
-                                        trxId: paymentTrxId,
-                                        status: 'pending',
-                                        timestamp: Date.now(),
-                                        orderId
-                                      });
-                                      
-                                      const isCrypto = (selectedMethod?.category === "Crypto" || selectedMethod?.category === "Binance Pay" || (selectedMethod?.name || "").toLowerCase().includes("binance"));
-                                      const txData = {
-                                       type: 'Deposit',
-                                       amount: convertToBase(Number(depositAmount), selectedMethod?.currency || (isCrypto ? 'USD' : userCurrency)),
-                                       method: selectedMethod?.name || 'Selected Method',
-                                       currency: selectedMethod?.currency || (isCrypto ? 'USDT' : userCurrency),
-                                       status: 'pending',
-                                       timestamp: Date.now(),
-                                       orderId
-                                     };
-                                     await fetch('/api/transactions', {
-                                       method: 'POST',
-                                       headers: { 'Content-Type': 'application/json' },
-                                       body: JSON.stringify({ userId: auth.currentUser.uid, transactionData: txData })
-                                     });
-                                     return; // Skip old client-side addDoc
-                                     await addDoc(collection(db, `users/${auth.currentUser.uid}/transactions`), {
+
+                                      await addDoc(collection(db, `users/${auth.currentUser.uid}/transactions`), {
                                         type: 'Deposit',
-                                        amount: currentAmount,
-                                        method: selectedMethod?.name || 'Selected Method',
+                                        amount: Number(currentAmount),
+                                        method: effectiveMethodName,
                                         currency: userCurrency,
-                                        status: 'pending',
-                                        timestamp: Date.now(),
-                                        orderId
+                                        status: 'Pending',
+                                        trxId: paymentTrxId || 'Direct-Deposit',
+                                        orderId,
+                                        timestamp: Date.now()
                                       });
                                       
                                       toast.success(`Deposit request for ${userCurrency}${depositAmount} submitted successfully!`);
@@ -14099,29 +14090,7 @@ const PROMOTED_ARTICLES = [
                                 url = `/deposit/usdt-trc20?amount=${depositAmount}&currency=USDT (TRC-20)&amountBdt=${bdtFormatted}&orderId=${orderId}&methodId=${selectedMethod?.id}`;
                               }
                               
-                              // Save pending tx first
-                              if (auth.currentUser) {
-                                (async () => {
-                                  try {
-                                    const txData = {
-                                      type: 'Deposit',
-                                      amount: convertToBase(Number(depositAmount), selectedMethod?.currency || (isCrypto ? 'USD' : userCurrency)),
-                                      method: selectedMethod?.name || 'Selected Method',
-                                      currency: selectedMethod?.currency || (isCrypto ? 'USDT' : userCurrency),
-                                      status: 'pending',
-                                      timestamp: Date.now(),
-                                      orderId
-                                    };
-                                    await fetch('/api/transactions', {
-                                      method: 'POST',
-                                      headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({ userId: auth.currentUser.uid, transactionData: txData })
-                                    });
-                                  } catch (err) {
-                                    console.error("Failed to save pending deposit", err);
-                                  }
-                                })();
-                              }
+                              // Redirect cleanly to destination payment page without phantom duplicates
 
                               setIsPaymentPageLoading(true);
                               setTimeout(() => {
