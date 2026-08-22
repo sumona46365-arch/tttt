@@ -204,6 +204,8 @@ function mapTrade(t: any) {
   return {
     ...t,
     id: t.id,
+    firebaseId: t.firebase_id || t.firebaseId || null,
+    firebase_id: t.firebase_id || t.firebaseId || null,
     userId: t.user_id,
     user_id: t.user_id,
     marketId: t.market_id,
@@ -2217,7 +2219,7 @@ router.post('/trade', async (req, res) => {
       // 3. Insert trade
       const entryPrice = trade?.entryPrice || 0;
       const duration = trade?.timeLeft || 60;
-      const expiryTime = Math.floor((Date.now() + duration * 1000) / 1000);
+      const expiryTime = trade?.expirationTime ? Math.floor(trade.expirationTime / 1000) : Math.floor((Date.now() + duration * 1000) / 1000);
       const createdAt = Date.now();
 
       const insertRes = await run(
@@ -2234,6 +2236,8 @@ router.post('/trade', async (req, res) => {
         try {
           const mappedTrade = {
             id: tradeId.toString(),
+            firebaseId: trade?.id || null,
+            firebase_id: trade?.id || null,
             userId,
             marketId: pair,
             asset: pair,

@@ -1424,6 +1424,38 @@ export default function TradeTerminal() {
     }
   });
   const [tradeNotifications, setTradeNotifications] = useState<any[]>([]);
+
+  const addTradeNotification = useCallback((tradeNotif: { id: string | number; tradeId?: string | number; status: string; asset: string; amount: number }) => {
+    setTradeNotifications(prev => {
+      const now = Date.now();
+      const notifId = String(tradeNotif.id || tradeNotif.tradeId || Math.random());
+      const tId = tradeNotif.tradeId ? String(tradeNotif.tradeId) : notifId;
+      
+      const exists = prev.some(n => {
+        if (String(n.id) === notifId || String(n.id) === tId || (n.tradeId && String(n.tradeId) === tId)) return true;
+        const sameAsset = n.asset === tradeNotif.asset;
+        const sameAmt = Math.abs(Number(n.amount) - Number(tradeNotif.amount)) < 0.01;
+        const sameStatus = n.status === tradeNotif.status;
+        const recent = Math.abs(now - (n.timestamp || 0)) < 4000;
+        return sameAsset && sameAmt && sameStatus && recent;
+      });
+
+      if (exists) return prev;
+
+      const newNotif = {
+        id: notifId,
+        tradeId: tId,
+        status: tradeNotif.status,
+        asset: tradeNotif.asset,
+        amount: tradeNotif.amount,
+        timestamp: now
+      };
+
+      const fresh = prev.filter(n => now - (n.timestamp || 0) < 2500);
+      return [newNotif, ...fresh].slice(0, 3);
+    });
+  }, []);
+
   const [selectedTrade, setSelectedTrade] = useState<any>(null);
   const [userTickets, setUserTickets] = useState<any[]>([]);
   const [selectedTicket, setSelectedTicket] = useState<any>(null);
@@ -1476,14 +1508,14 @@ export default function TradeTerminal() {
     const timer = setInterval(() => {
         setTradeNotifications(prev => {
           const now = Date.now();
-          const next = prev.filter(n => now - n.timestamp < 5000);
+          const next = prev.filter(n => now - (n.timestamp || 0) < 2500);
           if (next.length === prev.length) {
             const allSame = next.every((n, i) => n.id === prev[i].id);
             if (allSame) return prev;
           }
           return next;
         });
-      }, 2000);
+      }, 300);
       return () => clearInterval(timer);
   }, []);
 
@@ -1770,33 +1802,69 @@ export default function TradeTerminal() {
             const open = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
             setActiveTrades(prev => {
                 const now = Date.now();
-                const mergedMap = new Map<string, any>();
                 
-                // Keep unexpired local active trades
-                prev.forEach(p => {
-                    const expMs = typeof p.expirationTime === 'number' ? p.expirationTime : (p.expiryTime ? p.expiryTime * 1000 : now + (p.timeLeft || 0) * 1000);
-                    if (expMs > now) {
-                        mergedMap.set(String(p.id), p);
-                    }
-                });
-
-                open.forEach((t: any) => {
+                const serverOpenTrades = open.map((t: any) => {
                     const rawExp = t.expirationTime || (t.expiryTime ? t.expiryTime * 1000 : (t.expiry_time ? t.expiry_time * 1000 : null));
                     const expMs = typeof rawExp === 'number' ? (rawExp < 100000000000 ? rawExp * 1000 : rawExp) : (rawExp && typeof rawExp.toDate === 'function' ? rawExp.toDate().getTime() : now);
                     const computedTime = Math.max(0, Math.floor((expMs - now) / 1000));
-                    if (computedTime > 0) {
-                        const existing = prev.find(p => String(p.id) === String(t.id));
-                        mergedMap.set(String(t.id), {
-                            ...existing,
-                            ...t,
-                            type: t.type || t.direction || 'up',
-                            direction: t.direction || t.type || 'up',
-                            asset: t.asset || t.marketId || t.market_id,
-                            accountType: t.accountType || t.account_type || (t.isDemo || t.is_demo ? 'demo' : 'real'),
-                            timeLeft: computedTime,
-                            expirationTime: expMs,
-                            createdAt: t.createdAt || existing?.createdAt || now
-                        });
+                    return {
+                        ...t,
+                        id: String(t.id),
+                        type: t.type || t.direction || 'up',
+                        direction: t.direction || t.type || 'up',
+                        asset: t.asset || t.marketId || t.market_id,
+                        accountType: t.accountType || t.account_type || (t.isDemo || t.is_demo ? 'demo' : 'real'),
+                        timeLeft: computedTime,
+                        expirationTime: expMs,
+                        createdAt: t.createdAt || now
+                    };
+                }).filter(t => t.timeLeft > 0);
+
+                const mergedMap = new Map<string, any>();
+                const matchedServerIds = new Set<string>();
+
+                serverOpenTrades.forEach(t => mergedMap.set(String(t.id), t));
+
+                prev.forEach((p: any) => {
+                    const pExp = typeof p.expirationTime === 'number' ? p.expirationTime : now + (p.timeLeft || 0) * 1000;
+                    if (pExp <= now) return; // expired
+
+                    const pId = String(p.id);
+                    const pFbId = p.firebaseId || p.firebase_id ? String(p.firebaseId || p.firebase_id) : '';
+
+                    // Direct match by ID or firebaseId
+                    const directMatch = serverOpenTrades.find((s: any) => {
+                        const sId = String(s.id);
+                        const sFbId = s.firebaseId || s.firebase_id ? String(s.firebaseId || s.firebase_id) : '';
+                        return sId === pId || (sFbId && sFbId === pId) || (pFbId && sId === pFbId) || (sFbId && pFbId && sFbId === pFbId);
+                    });
+
+                    if (directMatch) {
+                        matchedServerIds.add(String(directMatch.id));
+                        return;
+                    }
+
+                    // Fuzzy match against un-matched server trades
+                    const fuzzyMatch = serverOpenTrades.find((s: any) => {
+                        const sId = String(s.id);
+                        if (matchedServerIds.has(sId)) return false;
+                        const matchAsset = s.asset === p.asset;
+                        const matchType = (s.type || s.direction) === (p.type || p.direction);
+                        const matchAcc = (s.accountType || 'real') === (p.accountType || 'real');
+                        const matchAmt = Math.abs(Number(s.amount) - Number(p.amount)) < 0.01;
+                        const matchExp = Math.abs((s.expirationTime || 0) - (p.expirationTime || 0)) < 15000;
+                        const matchCreated = p.createdAt && s.createdAt ? Math.abs(Number(s.createdAt) - Number(p.createdAt)) < 15000 : true;
+                        return matchAsset && matchType && matchAcc && matchAmt && (matchExp || matchCreated);
+                    });
+
+                    if (fuzzyMatch) {
+                        matchedServerIds.add(String(fuzzyMatch.id));
+                        return;
+                    }
+
+                    const isVeryRecent = p.createdAt && (now - p.createdAt < 8000);
+                    if (isVeryRecent) {
+                        mergedMap.set(pId, p);
                     }
                 });
                 
@@ -1892,36 +1960,70 @@ export default function TradeTerminal() {
                 
                 setActiveTrades(prev => {
                     const now = Date.now();
-                    const mergedMap = new Map<string, any>();
                     
-                    // Keep unexpired local trades
-                    prev.forEach(p => {
-                        const expMs = typeof p.expirationTime === 'number' ? p.expirationTime : (p.expiryTime ? p.expiryTime * 1000 : now + (p.timeLeft || 0) * 1000);
-                        if (expMs > now) {
-                            mergedMap.set(String(p.id), p);
-                        }
-                    });
-
-                    // Add / update with server open trades
-                    open.forEach((t: any) => {
+                    const serverOpenTrades = open.map((t: any) => {
                         const rawExp = t.expirationTime || (t.expiryTime ? t.expiryTime * 1000 : (t.expiry_time ? t.expiry_time * 1000 : null));
                         const expMs = typeof rawExp === 'number' ? (rawExp < 100000000000 ? rawExp * 1000 : rawExp) : now;
                         const timeLeftSec = Math.max(0, Math.floor((expMs - now) / 1000));
-                        if (timeLeftSec > 0) {
-                            const existing = prev.find(p => String(p.id) === String(t.id));
-                            mergedMap.set(String(t.id), {
-                                ...existing,
-                                ...t,
-                                id: String(t.id),
-                                type: t.type || t.direction || 'up',
-                                direction: t.direction || t.type || 'up',
-                                asset: t.asset || t.marketId || t.market_id,
-                                accountType: t.accountType || t.account_type || (t.isDemo || t.is_demo ? 'demo' : 'real'),
-                                isDemo: t.isDemo !== undefined ? t.isDemo : (t.accountType === 'demo' || t.is_demo),
-                                timeLeft: timeLeftSec,
-                                expirationTime: expMs,
-                                createdAt: t.createdAt || t.created_at || existing?.createdAt || now
-                            });
+                        return {
+                            ...t,
+                            id: String(t.id),
+                            type: t.type || t.direction || 'up',
+                            direction: t.direction || t.type || 'up',
+                            asset: t.asset || t.marketId || t.market_id,
+                            accountType: t.accountType || t.account_type || (t.isDemo || t.is_demo ? 'demo' : 'real'),
+                            isDemo: t.isDemo !== undefined ? t.isDemo : (t.accountType === 'demo' || t.is_demo),
+                            timeLeft: timeLeftSec,
+                            expirationTime: expMs,
+                            createdAt: t.createdAt || t.created_at || now
+                        };
+                    }).filter((t: any) => t.timeLeft > 0);
+
+                    const mergedMap = new Map<string, any>();
+                    const matchedServerIds = new Set<string>();
+
+                    serverOpenTrades.forEach((t: any) => mergedMap.set(String(t.id), t));
+
+                    prev.forEach((p: any) => {
+                        const pExp = typeof p.expirationTime === 'number' ? p.expirationTime : now + (p.timeLeft || 0) * 1000;
+                        if (pExp <= now) return; // expired
+
+                        const pId = String(p.id);
+                        const pFbId = p.firebaseId || p.firebase_id ? String(p.firebaseId || p.firebase_id) : '';
+
+                        // Direct match by ID or firebaseId
+                        const directMatch = serverOpenTrades.find((s: any) => {
+                            const sId = String(s.id);
+                            const sFbId = s.firebaseId || s.firebase_id ? String(s.firebaseId || s.firebase_id) : '';
+                            return sId === pId || (sFbId && sFbId === pId) || (pFbId && sId === pFbId) || (sFbId && pFbId && sFbId === pFbId);
+                        });
+
+                        if (directMatch) {
+                            matchedServerIds.add(String(directMatch.id));
+                            return;
+                        }
+
+                        // Fuzzy match against un-matched server trades
+                        const fuzzyMatch = serverOpenTrades.find((s: any) => {
+                            const sId = String(s.id);
+                            if (matchedServerIds.has(sId)) return false;
+                            const matchAsset = s.asset === p.asset;
+                            const matchType = (s.type || s.direction) === (p.type || p.direction);
+                            const matchAcc = (s.accountType || 'real') === (p.accountType || 'real');
+                            const matchAmt = Math.abs(Number(s.amount) - Number(p.amount)) < 0.01;
+                            const matchExp = Math.abs((s.expirationTime || 0) - (p.expirationTime || 0)) < 15000;
+                            const matchCreated = p.createdAt && s.createdAt ? Math.abs(Number(s.createdAt) - Number(p.createdAt)) < 15000 : true;
+                            return matchAsset && matchType && matchAcc && matchAmt && (matchExp || matchCreated);
+                        });
+
+                        if (fuzzyMatch) {
+                            matchedServerIds.add(String(fuzzyMatch.id));
+                            return;
+                        }
+
+                        const isVeryRecent = p.createdAt && (now - p.createdAt < 8000);
+                        if (isVeryRecent) {
+                            mergedMap.set(pId, p);
                         }
                     });
 
@@ -4989,7 +5091,7 @@ const PROMOTED_ARTICLES = [
       if (cached) {
         const parsed = JSON.parse(cached) as Trade[];
         const now = Date.now();
-        return parsed.map((t: any) => {
+        const mapped = parsed.map((t: any) => {
           const rawExp = t.expirationTime || (t.expiryTime ? t.expiryTime * 1000 : (t.expiry_time ? t.expiry_time * 1000 : now + (t.timeLeft || 0) * 1000));
           const expMs = typeof rawExp === 'number' ? (rawExp < 100000000000 ? rawExp * 1000 : rawExp) : now;
           const timeLeftSec = Math.max(0, Math.floor((expMs - now) / 1000));
@@ -5001,6 +5103,28 @@ const PROMOTED_ARTICLES = [
             timeLeft: timeLeftSec
           };
         }).filter(t => t.timeLeft > 0 && t.status !== 'won' && t.status !== 'lost' && t.status !== 'draw');
+
+        // Deduplicate trades by ID, firebaseId or by matching attributes
+        const deduped: any[] = [];
+        mapped.forEach(t => {
+          const tId = String(t.id);
+          const tFbId = t.firebaseId || t.firebase_id ? String(t.firebaseId || t.firebase_id) : '';
+          const exists = deduped.some(d => {
+            const dId = String(d.id);
+            const dFbId = d.firebaseId || d.firebase_id ? String(d.firebaseId || d.firebase_id) : '';
+            if (dId === tId || (tFbId && dId === tFbId) || (dFbId && tId === dFbId) || (dFbId && tFbId && dFbId === tFbId)) return true;
+            const matchAsset = d.asset === t.asset;
+            const matchType = (d.type || d.direction) === (t.type || t.direction);
+            const matchAcc = (d.accountType || 'real') === (t.accountType || 'real');
+            const matchAmt = Math.abs(Number(d.amount) - Number(t.amount)) < 0.01;
+            const matchExp = Math.abs((d.expirationTime || 0) - (t.expirationTime || 0)) < 15000;
+            return matchAsset && matchType && matchAcc && matchAmt && matchExp;
+          });
+          if (!exists) {
+            deduped.push(t);
+          }
+        });
+        return deduped;
       }
       return [];
     } catch (e) {
@@ -5238,19 +5362,103 @@ const PROMOTED_ARTICLES = [
     }
   }, [demoBalance, accountType, minConvertedAmount, userCurrency, auth.currentUser?.uid]);
   
-  const visibleActiveTrades = React.useMemo(() => activeTrades.filter(t => {
-    const tradeAccType = t.accountType || t.account_type || (t.isDemo || t.is_demo ? 'demo' : 'real');
-    const isOwner = tradeAccType === accountType;
-    const expTime = t.expirationTime || (t.expiryTime ? t.expiryTime * 1000 : (t.expiry_time ? t.expiry_time * 1000 : null));
-    const isExpired = t.timeLeft <= 0 && (!expTime || Date.now() >= expTime);
-    const isSettled = (t.status && t.status !== 'open') || (processedTradesRef.current && processedTradesRef.current.has(t.id));
-    return isOwner && !isExpired && !isSettled;
-  }), [activeTrades, accountType]);
+  const visibleActiveTrades = React.useMemo(() => {
+    const filtered = activeTrades.filter(t => {
+      const tradeAccType = t.accountType || t.account_type || (t.isDemo || t.is_demo ? 'demo' : 'real');
+      const isOwner = tradeAccType === accountType;
+      const expTime = t.expirationTime || (t.expiryTime ? t.expiryTime * 1000 : (t.expiry_time ? t.expiry_time * 1000 : null));
+      const isExpired = t.timeLeft <= 0 && (!expTime || Date.now() >= expTime);
+      const isSettled = (t.status && t.status !== 'open') || (processedTradesRef.current && processedTradesRef.current.has(t.id));
+      return isOwner && !isExpired && !isSettled;
+    });
+
+    const dedupedMap = new Map<string, any>();
+    filtered.forEach(t => {
+      const tId = String(t.id);
+      const tFbId = t.firebaseId || t.firebase_id ? String(t.firebaseId || t.firebase_id) : '';
+
+      let duplicateKey: string | null = null;
+      for (const [key, existing] of dedupedMap.entries()) {
+        const eId = String(existing.id);
+        const eFbId = existing.firebaseId || existing.firebase_id ? String(existing.firebaseId || existing.firebase_id) : '';
+
+        if (eId === tId || (tFbId && eId === tFbId) || (eFbId && tId === eFbId) || (eFbId && tFbId && eFbId === tFbId)) {
+          duplicateKey = key;
+          break;
+        }
+
+        const sameAsset = existing.asset === t.asset;
+        const sameDir = (existing.type || existing.direction) === (t.type || t.direction);
+        const sameAcc = (existing.accountType || 'real') === (t.accountType || 'real');
+        const sameAmt = Math.abs(Number(existing.amount) - Number(t.amount)) < 0.01;
+        const expDiff = Math.abs((existing.expirationTime || 0) - (t.expirationTime || 0));
+        const createdDiff = Math.abs((existing.createdAt || 0) - (t.createdAt || 0));
+
+        if (sameAsset && sameDir && sameAcc && sameAmt && (expDiff < 20000 || createdDiff < 20000)) {
+          duplicateKey = key;
+          break;
+        }
+      }
+
+      if (duplicateKey) {
+        const existing = dedupedMap.get(duplicateKey);
+        if (tId.length < existing.id.length || (!isNaN(Number(tId)) && isNaN(Number(existing.id)))) {
+          dedupedMap.delete(duplicateKey);
+          dedupedMap.set(tId, t);
+        }
+      } else {
+        dedupedMap.set(tId, t);
+      }
+    });
+
+    return Array.from(dedupedMap.values());
+  }, [activeTrades, accountType]);
   
-  const visibleUserTrades = React.useMemo(() => userTrades.filter(t => {
-    const tradeAccType = t.accountType || t.account_type || (t.isDemo || t.is_demo ? 'demo' : 'real');
-    return tradeAccType === accountType;
-  }), [userTrades, accountType]);
+  const visibleUserTrades = React.useMemo(() => {
+    const filtered = userTrades.filter(t => {
+      const tradeAccType = t.accountType || t.account_type || (t.isDemo || t.is_demo ? 'demo' : 'real');
+      return tradeAccType === accountType;
+    });
+
+    const dedupedMap = new Map<string, any>();
+    filtered.forEach(t => {
+      const tId = String(t.id);
+      const tFbId = t.firebaseId || t.firebase_id ? String(t.firebaseId || t.firebase_id) : '';
+
+      let duplicateKey: string | null = null;
+      for (const [key, existing] of dedupedMap.entries()) {
+        const eId = String(existing.id);
+        const eFbId = existing.firebaseId || existing.firebase_id ? String(existing.firebaseId || existing.firebase_id) : '';
+
+        if (eId === tId || (tFbId && eId === tFbId) || (eFbId && tId === eFbId) || (eFbId && tFbId && eFbId === tFbId)) {
+          duplicateKey = key;
+          break;
+        }
+
+        const sameAsset = existing.asset === t.asset;
+        const sameDir = (existing.type || existing.direction) === (t.type || t.direction);
+        const sameAmt = Math.abs(Number(existing.amount) - Number(t.amount)) < 0.01;
+        const createdDiff = Math.abs((existing.createdAt || existing.created_at || 0) - (t.createdAt || t.created_at || 0));
+
+        if (sameAsset && sameDir && sameAmt && createdDiff < 20000) {
+          duplicateKey = key;
+          break;
+        }
+      }
+
+      if (duplicateKey) {
+        const existing = dedupedMap.get(duplicateKey);
+        if (tId.length < existing.id.length || (!isNaN(Number(tId)) && isNaN(Number(existing.id)))) {
+          dedupedMap.delete(duplicateKey);
+          dedupedMap.set(tId, t);
+        }
+      } else {
+        dedupedMap.set(tId, t);
+      }
+    });
+
+    return Array.from(dedupedMap.values()).sort((a, b) => (b.createdAt || b.created_at || 0) - (a.createdAt || a.created_at || 0));
+  }, [userTrades, accountType]);
 
   // Calculation of user's today's profit:
   const userTodayProfit = React.useMemo(() => {
@@ -5712,14 +5920,13 @@ const PROMOTED_ARTICLES = [
         const isDraw = trade.status === 'draw';
         const notifStatus = isWon ? 'won' : (isDraw ? 'draw' : 'lost');
         const notifAmount = isWon ? (trade.payoutAmount || trade.amount * 1.9) : trade.amount;
-        const newNotif = {
-            id: trade.id || Math.random().toString(),
+        addTradeNotification({
+            id: trade.id || trade.firebaseId || Math.random().toString(),
+            tradeId: trade.id || trade.firebaseId,
             status: notifStatus,
             asset: trade.asset,
-            amount: notifAmount,
-            timestamp: Date.now()
-        };
-        setTradeNotifications(prev => [newNotif, ...prev.filter(n => n.id !== newNotif.id)]);
+            amount: notifAmount
+        });
 
 
 
@@ -6260,14 +6467,13 @@ const PROMOTED_ARTICLES = [
 
           // Trigger result notification for local settlement
           const notifAmount = won ? returnAmt : trade.amount;
-          const newNotif = {
-              id: trade.id || Math.random().toString(),
+          addTradeNotification({
+              id: trade.id || trade.firebaseId || Math.random().toString(),
+              tradeId: trade.id || trade.firebaseId,
               status: tradeStatus,
               asset: trade.asset,
-              amount: notifAmount,
-              timestamp: Date.now()
-          };
-          setTradeNotifications(prev => [newNotif, ...prev.filter(n => n.id !== newNotif.id)]);
+              amount: notifAmount
+          });
 
 
 
@@ -7215,11 +7421,18 @@ const PROMOTED_ARTICLES = [
 
         // Update the optimistic trade with the real ID from the server
         if (resData.trade && resData.trade.id) {
-          const serverId = resData.trade.id;
+          const serverId = String(resData.trade.id);
           newTrade.id = serverId;
-          const updatedTrades = activeTradesRef.current.map(t => t.id === newTradeId ? { ...t, id: serverId } : t);
-          activeTradesRef.current = updatedTrades;
-          setActiveTrades(updatedTrades);
+          const updatedTrades = activeTradesRef.current.map(t => 
+            (String(t.id) === String(newTradeId) || String(t.id) === serverId) 
+              ? { ...t, id: serverId, firebaseId: newTradeId, firebase_id: newTradeId } 
+              : t
+          );
+          const dedupMap = new Map<string, any>();
+          updatedTrades.forEach(t => dedupMap.set(String(t.id), t));
+          const finalTrades = Array.from(dedupMap.values());
+          activeTradesRef.current = finalTrades;
+          setActiveTrades(finalTrades);
         }
 
         // We rely on the server API to handle the actual database balance deduction 
@@ -7239,18 +7452,18 @@ const PROMOTED_ARTICLES = [
     }
     
     // Only draw markers for current asset
-    const relevantTrades = newActiveTrades.filter(
+    const relevantTrades = activeTradesRef.current.filter(
       (t) => t.asset === activeAsset,
     );
 
     // Add horizontal entry line explicitly mirroring the user's screenshot
     // Handled by custom DOM overlay `active-trades-overlays` and sync loop
     
-    setActiveTrades(newActiveTrades);
+    setActiveTrades(activeTradesRef.current);
     
     // Also update userTrades locally so history tab reflects the new trade immediately
     setUserTrades(prev => {
-      const exists = prev.find(t => t.id === newTrade.id);
+      const exists = prev.find(t => String(t.id) === String(newTrade.id) || String(t.id) === String(newTradeId));
       if (exists) return prev;
       const combined = [{ ...newTrade, status: 'open' }, ...prev];
       combined.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));

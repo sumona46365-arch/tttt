@@ -195,7 +195,7 @@ export default function BinancePayPage() {
   const [currentUser, setCurrentUser] = useState<any>(auth.currentUser);
 
   // Redesign state managers
-  const [isDarkMode, setIsDarkMode] = useState(true);
+  const [isDarkMode, setIsDarkMode] = useState(false);
   const [selectedLang, setSelectedLang] = useState('en');
   const [isLangSheetOpen, setIsLangSheetOpen] = useState(false);
 
