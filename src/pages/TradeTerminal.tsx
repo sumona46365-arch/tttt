@@ -4960,9 +4960,13 @@ const PROMOTED_ARTICLES = [
                                }
                                
                                if (el) {
-                                   const y = currentSeries.priceToCoordinate(trade.entryPrice);
+                                   const y = currentSeries.priceToCoordinate(Number(trade.entryPrice));
                                    const entryTimeSecs = (trade.entryTime || (typeof trade.createdAt === 'number' ? Math.floor(trade.createdAt / 1000) : (trade.createdAt && typeof (trade.createdAt as any).toDate === 'function' ? Math.floor((trade.createdAt as any).toDate().getTime() / 1000) : ((trade.createdAt as any) instanceof Date ? Math.floor((trade.createdAt as any).getTime() / 1000) : Math.floor(Date.now() / 1000)))));
-                                   const xBase = getX(entryTimeSecs as number);
+                                   let xBase = getX(entryTimeSecs as number);
+                                   if (xBase === null && rawLastCandleRef.current) {
+                                       const lastTime = rawLastCandleRef.current.time as number;
+                                       xBase = ts.timeToCoordinate(lastTime as Time);
+                                   }
                                    const xExp = getX(Math.floor(trade.expirationTime / 1000));
                                    
                                    const adjXBase = xBase !== null ? xBase - candleHalfWidth : null;
@@ -5386,18 +5390,6 @@ const PROMOTED_ARTICLES = [
           duplicateKey = key;
           break;
         }
-
-        const sameAsset = existing.asset === t.asset;
-        const sameDir = (existing.type || existing.direction) === (t.type || t.direction);
-        const sameAcc = (existing.accountType || 'real') === (t.accountType || 'real');
-        const sameAmt = Math.abs(Number(existing.amount) - Number(t.amount)) < 0.01;
-        const expDiff = Math.abs((existing.expirationTime || 0) - (t.expirationTime || 0));
-        const createdDiff = Math.abs((existing.createdAt || 0) - (t.createdAt || 0));
-
-        if (sameAsset && sameDir && sameAcc && sameAmt && (expDiff < 20000 || createdDiff < 20000)) {
-          duplicateKey = key;
-          break;
-        }
       }
 
       if (duplicateKey) {
@@ -5431,16 +5423,6 @@ const PROMOTED_ARTICLES = [
         const eFbId = existing.firebaseId || existing.firebase_id ? String(existing.firebaseId || existing.firebase_id) : '';
 
         if (eId === tId || (tFbId && eId === tFbId) || (eFbId && tId === eFbId) || (eFbId && tFbId && eFbId === tFbId)) {
-          duplicateKey = key;
-          break;
-        }
-
-        const sameAsset = existing.asset === t.asset;
-        const sameDir = (existing.type || existing.direction) === (t.type || t.direction);
-        const sameAmt = Math.abs(Number(existing.amount) - Number(t.amount)) < 0.01;
-        const createdDiff = Math.abs((existing.createdAt || existing.created_at || 0) - (t.createdAt || t.created_at || 0));
-
-        if (sameAsset && sameDir && sameAmt && createdDiff < 20000) {
           duplicateKey = key;
           break;
         }
@@ -7330,7 +7312,7 @@ const PROMOTED_ARTICLES = [
       return;
     }
     // Professional precision: use the interpolated price that the user actually SEE on the chart.
-    const currentPrice = currentInterpolatedPriceRef.current > 0 ? currentInterpolatedPriceRef.current : rawLastCandleRef.current.close;
+    const currentPrice = targetPriceRef.current > 0 ? targetPriceRef.current : (rawLastCandleRef.current?.close || currentInterpolatedPriceRef.current || 0);
     console.log("placeTrade currentPrice (Interp)", currentPrice);
     
     // Calculate fresh expiration elements inside placeTrade based on exact execution instant
