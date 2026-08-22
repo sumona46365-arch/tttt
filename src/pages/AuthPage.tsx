@@ -108,14 +108,10 @@ export default function AuthPage() {
     if (urlRef) {
       localStorage.setItem('referral_code', urlRef);
       localStorage.setItem('referralCode', urlRef);
-    }
-    if (urlSub) {
-      localStorage.setItem('referral_sub_id', urlSub);
-      localStorage.setItem('referralSub', urlSub);
-    }
-    if (urlType) {
-      localStorage.setItem('referral_type', urlType);
-      localStorage.setItem('referralType', urlType);
+      localStorage.setItem('referral_sub_id', urlSub || 'default');
+      localStorage.setItem('referralSub', urlSub || 'default');
+      localStorage.setItem('referral_type', urlType || 'revshare');
+      localStorage.setItem('referralType', urlType || 'revshare');
     }
   }, [urlRef, urlSub, urlType]);
   const [characterState, setCharacterState] = useState<'idle' | 'success' | 'error' | 'thinking'>('idle');
@@ -325,12 +321,14 @@ export default function AuthPage() {
           demoBalance: 10000.0,
           currency: currency,
           affiliateId: affiliateId,
+          referralCode: affiliateId.toString(),
           country: detectedCountry || 'Global',
           countryCode: detectedCountryCode || 'BD',
           createdAt: Date.now(),
           isVerified: false,
           referredBy: finalReferrerUid || null,
           referredByUid: finalReferrerUid || null,
+          referredByCode: ref || null,
           referralSubId: sub || null,
           referralType: type || null
         });
@@ -342,7 +340,7 @@ export default function AuthPage() {
               referralCount: increment(1)
             });
           } catch (e) {
-            console.error("Failed to increment referral count", e);
+            console.error("Failed to increment referral count in Firestore", e);
           }
         }
 
@@ -358,7 +356,9 @@ export default function AuthPage() {
               nickname: fullName.split(' ')[0],
               country: detectedCountry || 'Global',
               countryCode: detectedCountryCode || 'BD',
-              referralCode: ref,
+              referralCode: affiliateId.toString(),
+              referredByUid: finalReferrerUid || null,
+              referredByCode: ref || null,
               referralSubId: sub,
               referralType: type
             })

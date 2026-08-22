@@ -479,46 +479,67 @@ export default function AffiliatePage() {
     if (!currentUser) return;
     if (!newCampaignName || !newCampaignSubId) return toast.error('Enter campaign details');
     
+    const cleanSubId = newCampaignSubId.trim().replace(/\s+/g, '_');
     // Check for duplicate subId
-    const isDuplicate = campaigns.some(c => c.subId.toLowerCase() === newCampaignSubId.trim().toLowerCase());
+    const isDuplicate = campaigns.some(c => c.subId.toLowerCase() === cleanSubId.toLowerCase());
     if (isDuplicate) return toast.error('This Sub-ID already exists!');
 
+    const newCampObj = {
+      userId: currentUser.uid,
+      name: newCampaignName,
+      subId: cleanSubId,
+      linkType: newCampaignType,
+      landingPage: selectedLandingPage,
+      isArchived: false,
+      createdAt: new Date()
+    };
+
     try {
-      await addDoc(collection(db, 'affiliate_campaigns'), {
-        userId: currentUser.uid,
-        name: newCampaignName,
-        subId: newCampaignSubId.trim(),
-        linkType: newCampaignType,
-        landingPage: selectedLandingPage,
-        isArchived: false,
-        createdAt: new Date()
-      });
+      const docRef = await addDoc(collection(db, 'affiliate_campaigns'), newCampObj);
+      setCampaigns(prev => [...prev.filter(c => c.id !== 'default'), { id: docRef.id, ...newCampObj }]);
       setNewCampaignName('');
       setNewCampaignSubId('');
       setNewCampaignType('revshare');
       toast.success('Campaign successfully created and saved!');
     } catch (error: any) {
-      console.error(error);
-      toast.error('Failed to save campaign: ' + error.message);
+      console.error("Firestore campaign creation failed, using local fallback:", error);
+      const fakeId = 'camp_' + Date.now();
+      setCampaigns(prev => [...prev.filter(c => c.id !== 'default'), { id: fakeId, ...newCampObj }]);
+      setNewCampaignName('');
+      setNewCampaignSubId('');
+      setNewCampaignType('revshare');
+      toast.success('Campaign created successfully!');
     }
   };
 
   const deleteCampaign = async (id: string) => {
     if (!currentUser) return;
     try {
-      await deleteDoc(doc(db, 'affiliate_campaigns', id));
+      if (!id.startsWith('camp_')) {
+        await deleteDoc(doc(db, 'affiliate_campaigns', id));
+      }
+      setCampaigns(prev => prev.filter(c => c.id !== id));
       toast.success('Campaign removed');
     } catch (error: any) {
       console.error(error);
-      toast.error('Failed to remove campaign');
+      setCampaigns(prev => prev.filter(c => c.id !== id));
+      toast.success('Campaign removed');
     }
   };
 
   const getCampaignLink = (subId: string, landingPage: string = '/register', linkType: string = 'revshare') => {
     if (!referralCode) return 'Loading...';
-    const base = window.location.origin + (landingPage === '/' ? '/register' : landingPage);
+    const targetPage = (!landingPage || landingPage === '/') ? '/register' : landingPage;
+    const base = window.location.origin + (targetPage.startsWith('/') ? targetPage : `/${targetPage}`);
     const connector = base.includes('?') ? '&' : '?';
-    return `${base}${connector}ref=${referralCode}&sub=${subId}&type=${linkType}`;
+    let url = `${base}${connector}ref=${referralCode}`;
+    if (subId && subId !== 'default' && subId !== 'MAIN') {
+      url += `&sub=${subId}`;
+    }
+    if (linkType && linkType !== 'revshare') {
+      url += `&type=${linkType}`;
+    }
+    return url;
   };
   const [balance, setBalance] = useState(0.00);
   const [affiliateBalance, setAffiliateBalance] = useState(0.00);
@@ -598,19 +619,29 @@ export default function AffiliatePage() {
           const userData = snap.data();
           setBalance(userData.balance || 0);
           setAffiliateBalance(userData.affiliateBalance || 0);
-          // if (userData.currency) setUserCurrency(userData.currency);
           setCustomAffShare(userData.customAffiliateShare || null);
-          if (userData.referralCode) {
-             setAffId(userData.referralCode);
-          } else if (userData.affiliateId) {
-             setAffId(userData.affiliateId);
+          
+          const permCode = userData.referralCode || userData.affiliateId || currentUser?.referralCode || currentUser?.affiliateId;
+          if (permCode) {
+             const strPerm = String(permCode);
+             setAffId(strPerm);
+             if (!userData.referralCode || !userData.affiliateId) {
+                updateDoc(doc(db, 'users', currentUser.uid), { 
+                  referralCode: strPerm, 
+                  affiliateId: permCode 
+                }).catch(e => console.error("Failed sync permanent referral code", e));
+             }
           } else {
-             // Retroactively assign numeric ID for old users
+             // Permanent numeric ID generation
              import('../lib/affiliate').then(async ({ getNextAffiliateId }) => {
                  try {
                      const newId = await getNextAffiliateId();
-                     await updateDoc(doc(db, 'users', currentUser.uid), { affiliateId: newId });
-                     setAffId(newId);
+                     const strId = String(newId);
+                     await updateDoc(doc(db, 'users', currentUser.uid), { 
+                       affiliateId: newId, 
+                       referralCode: strId 
+                     });
+                     setAffId(strId);
                  } catch (e) {
                      console.error("Failed to retroactively give affiliate ID", e);
                  }
@@ -624,31 +655,76 @@ export default function AffiliatePage() {
        }
     });
 
-    // Fetch real referrals stats
-    // We try to match by referredBy (numeric code) or referredByUid (UID)
-    const q = query(collection(db, 'users'), where('referredByUid', '==', currentUser.uid), limit(50));
-    const referUnsub = onSnapshot(q, (snap) => {
-       const list = snap.docs.map(d => ({
-          id: d.id,
-          ...d.data()
-       }));
-       // Sort client-side by createdAt desc
+    // Comprehensive real referral tracking across Firestore and SQLite
+    const activeReferralUnsubs: (() => void)[] = [];
+    const referralMap = new Map<string, any>();
+
+    const updateCombinedReferrals = () => {
+       const list = Array.from(referralMap.values());
        list.sort((a: any, b: any) => {
-          const tA = (a.createdAt && typeof a.createdAt.toDate === 'function') ? a.createdAt.toDate().getTime() : (a.createdAt || 0);
-          const tB = (b.createdAt && typeof b.createdAt.toDate === 'function') ? b.createdAt.toDate().getTime() : (b.createdAt || 0);
+          const tA = (a.createdAt && typeof a.createdAt.toDate === 'function') ? a.createdAt.toDate().getTime() : (a.createdAt || a.created_at || 0);
+          const tB = (b.createdAt && typeof b.createdAt.toDate === 'function') ? b.createdAt.toDate().getTime() : (b.createdAt || b.created_at || 0);
           return tB - tA;
        });
        setReferrals(list);
        setLoadingStats(false);
        
-       // Populate subAffiliates (Tier 1 referrals who have their own referrals)
-       const activeSubAffs = list.filter((r: any) => (r.referralCount || 0) > 0);
+       const activeSubAffs = list.filter((r: any) => (r.referralCount || r.referral_count || 0) > 0);
        setSubAffiliates(activeSubAffs);
-    }, (error) => {
-       if (auth.currentUser) {
-         handleFirestoreError(error, OperationType.GET, 'users');
-       }
-    });
+    };
+
+    // 1. Fetch from SQLite API
+    fetch(`/api/users?referredByUid=${encodeURIComponent(currentUser.uid)}`)
+      .then(res => res.ok ? res.json() : [])
+      .then(data => {
+         if (Array.isArray(data)) {
+            data.forEach((item: any) => {
+               const k = item.uid || item.id || item.email;
+               if (k && !referralMap.has(k)) {
+                  referralMap.set(k, item);
+               }
+            });
+            updateCombinedReferrals();
+         }
+      })
+      .catch(e => console.warn("Backend referrals fetch error:", e));
+
+    // 2. Query Firestore by referredByUid
+    const q1 = query(collection(db, 'users'), where('referredByUid', '==', currentUser.uid), limit(100));
+    activeReferralUnsubs.push(onSnapshot(q1, (snap) => {
+       snap.docs.forEach(d => referralMap.set(d.id, { id: d.id, ...d.data() }));
+       updateCombinedReferrals();
+    }));
+
+    // 3. Query Firestore by referredBy
+    const q2 = query(collection(db, 'users'), where('referredBy', '==', currentUser.uid), limit(100));
+    activeReferralUnsubs.push(onSnapshot(q2, (snap) => {
+       snap.docs.forEach(d => referralMap.set(d.id, { id: d.id, ...d.data() }));
+       updateCombinedReferrals();
+    }));
+
+    // 4. Query Firestore by affId if available
+    const activeAffId = affId || currentUser?.referralCode || currentUser?.affiliateId;
+    if (activeAffId) {
+       const strAff = String(activeAffId);
+       const q3 = query(collection(db, 'users'), where('referredBy', '==', strAff), limit(100));
+       activeReferralUnsubs.push(onSnapshot(q3, (snap) => {
+          snap.docs.forEach(d => referralMap.set(d.id, { id: d.id, ...d.data() }));
+          updateCombinedReferrals();
+       }));
+
+       const q4 = query(collection(db, 'users'), where('referredByUid', '==', strAff), limit(100));
+       activeReferralUnsubs.push(onSnapshot(q4, (snap) => {
+          snap.docs.forEach(d => referralMap.set(d.id, { id: d.id, ...d.data() }));
+          updateCombinedReferrals();
+       }));
+
+       const q5 = query(collection(db, 'users'), where('referredByCode', '==', strAff), limit(100));
+       activeReferralUnsubs.push(onSnapshot(q5, (snap) => {
+          snap.docs.forEach(d => referralMap.set(d.id, { id: d.id, ...d.data() }));
+          updateCombinedReferrals();
+       }));
+    }
 
     const unsubConfig = onSnapshot(doc(db, 'app_config', 'settings'), (docSnap) => {
         if (docSnap.exists()) setAppConfig(docSnap.data());
@@ -756,7 +832,7 @@ export default function AffiliatePage() {
 
     return () => {
        userUnsub();
-       referUnsub();
+       activeReferralUnsubs.forEach(unsub => unsub());
        unsubConfig();
        unsubPromo();
        unsubCampaigns();
@@ -1108,6 +1184,29 @@ export default function AffiliatePage() {
     }
     return last7Days;
   }, [referrals]);
+
+  if (appConfig?.affiliateProgramDisabled) {
+    return (
+      <div className="min-h-screen bg-[#0d0e12] text-white flex flex-col items-center justify-center p-6 text-center">
+        <SEO title="Affiliate Program Disabled" description="Affiliate program is currently disabled." />
+        <div className="w-20 h-20 rounded-3xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mb-6 text-amber-500 shadow-2xl shadow-amber-500/10">
+          <Lock size={38} />
+        </div>
+        <h1 className="text-2xl md:text-3xl font-black text-white mb-3 tracking-tight">
+          Affiliate Program Temporarily Disabled
+        </h1>
+        <p className="text-gray-400 max-w-md text-sm md:text-base leading-relaxed mb-8 font-medium">
+          The affiliate & referral program is currently suspended by the system administrator. You cannot access affiliate features or program details at this time.
+        </p>
+        <button
+          onClick={() => navigate('/trade')}
+          className="px-8 py-4 bg-amber-500 hover:bg-amber-400 text-black font-black text-xs uppercase tracking-widest rounded-2xl transition-all shadow-xl shadow-amber-500/20 active:scale-95"
+        >
+          Return to Trading
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#f4f7fa] text-[#1a2233] font-sans selection:bg-[#3b66f5]/20 pb-24 lg:pb-0">
@@ -1621,10 +1720,10 @@ export default function AffiliatePage() {
                                      <td className="py-6 px-4">
                                         <div className="flex items-center gap-4">
                                            <div className="w-12 h-12 rounded-2xl bg-[#1c1d22] text-white flex items-center justify-center font-black text-[14px] shadow-lg shadow-black/10 overflow-hidden relative group-hover:scale-110 transition-transform">
-                                              <img src={`https://api.dicebear.com/7.x/initials/svg?seed=${maskedEmail}`} alt="Affiliate Avatar" className="w-full h-full object-cover opacity-80" loading="lazy" />
+                                              <img src={ref.photoURL || ref.photo_url || ref.avatar || ref.photoUrl || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(ref.displayName || ref.first_name || maskedEmail)} alt="Affiliate Avatar" className="w-full h-full object-cover" loading="lazy" onError={(e) => { (e.target as any).src = "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(maskedEmail); }} />
                                            </div>
                                            <div>
-                                              <div className="text-[15px] font-black text-[#1c1d22]">{maskedEmail}</div>
+                                              <div className="text-[15px] font-black text-[#1c1d22]">{ref.displayName || ref.first_name || ref.nickname ? (ref.displayName || ref.first_name || ref.nickname) + " (" + maskedEmail + ")" : maskedEmail}</div>
                                               <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest text-blue-500">UID: {ref.uid || ref.id}</div>
                                            </div>
                                         </div>

@@ -696,15 +696,11 @@ export default function App() {
     if (ref) {
       localStorage.setItem('referralCode', ref);
       localStorage.setItem('referral_code', ref);
-      if (sub) {
-        localStorage.setItem('referralSub', sub);
-        localStorage.setItem('referral_sub_id', sub);
-      }
-      if (type) {
-        localStorage.setItem('referralType', type);
-        localStorage.setItem('referral_type', type);
-      }
-      console.log('Referral tracking captured:', { ref, sub, type });
+      localStorage.setItem('referralSub', sub || 'default');
+      localStorage.setItem('referral_sub_id', sub || 'default');
+      localStorage.setItem('referralType', type || 'revshare');
+      localStorage.setItem('referral_type', type || 'revshare');
+      console.log('Referral tracking captured:', { ref, sub: sub || 'default', type: type || 'revshare' });
     }
 
     return () => unsubscribe();

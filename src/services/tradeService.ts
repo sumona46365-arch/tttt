@@ -278,6 +278,83 @@ export async function settleTrade(tradeId: number | string, currentMarketPrice?:
       if (!trade.is_demo && trade.account_type !== 'demo' && trade.account_type !== 'tournament') {
         const profit = payoutAmount.minus(tradeAmount).toNumber();
         await updateLeaderboardStats(trade.user_id, newStatus as any, profit, tradeAmount.toNumber(), conn);
+
+        // 1. Increment trader's total live trade volume
+        await run('UPDATE users SET total_live_volume = total_live_volume + ? WHERE uid = ?', [tradeAmount.toNumber(), trade.user_id], conn);
+
+        // 2. Process real-time Affiliate Commission
+        try {
+          const traderUser = await get('SELECT referred_by_uid, referral_sub_id, referral_type FROM users WHERE uid = ?', [trade.user_id], conn) as any;
+          if (traderUser && traderUser.referred_by_uid) {
+            const referrerUid = traderUser.referred_by_uid;
+            const referrer = await get('SELECT uid, custom_affiliate_share, affiliate_balance, total_affiliate_earnings FROM users WHERE uid = ? OR referral_code = ?', [referrerUid, referrerUid], conn) as any;
+            
+            if (referrer) {
+              const actualReferrerUid = referrer.uid;
+              const sharePct = (referrer.custom_affiliate_share && referrer.custom_affiliate_share > 0) ? referrer.custom_affiliate_share : 50;
+              
+              let commAmount = 0;
+              if (newStatus === 'lost') {
+                // RevShare model on lost trades (50% default or custom share)
+                commAmount = tradeAmount.times(sharePct).div(100).toNumber();
+              } else if (newStatus === 'won') {
+                // Volume turnover share (2%) on won trades
+                commAmount = tradeAmount.times(0.02).toNumber();
+              }
+
+              if (commAmount > 0) {
+                const commFormatted = commAmount.toFixed(2);
+                await run(
+                  'UPDATE users SET affiliate_balance = affiliate_balance + ?, total_affiliate_earnings = total_affiliate_earnings + ? WHERE uid = ?',
+                  [commFormatted, commFormatted, actualReferrerUid],
+                  conn
+                );
+
+                await createAuditLog(actualReferrerUid, 'affiliate_trade_commission', 'user', trade.user_id, { 
+                  tradeId: trade.id, 
+                  tradeAmount: tradeAmount.toNumber(), 
+                  tradeStatus: newStatus,
+                  commission: commFormatted 
+                });
+
+                if (adminDb) {
+                  try {
+                    await adminDb.collection('affiliate_commissions').add({
+                      referrerUid: actualReferrerUid,
+                      referredUid: trade.user_id,
+                      tradeId: trade.id,
+                      amount: parseFloat(commFormatted),
+                      tradeAmount: tradeAmount.toNumber(),
+                      tradeStatus: newStatus,
+                      subId: traderUser.referral_sub_id || 'default',
+                      createdAt: Date.now(),
+                      type: 'trade_commission'
+                    });
+
+                    const currentAffBal = parseFloat(referrer.affiliate_balance || 0);
+                    const currentTotalEarnings = parseFloat(referrer.total_affiliate_earnings || 0);
+                    await adminDb.collection('users').doc(actualReferrerUid).update({
+                      affiliateBalance: currentAffBal + parseFloat(commFormatted),
+                      totalAffiliateEarnings: currentTotalEarnings + parseFloat(commFormatted)
+                    });
+                  } catch (fsErr: any) {
+                    logger.error(`Failed to record affiliate_commissions to Firestore: ${fsErr.message}`);
+                  }
+                }
+
+                // Notify referrer via Socket and Firestore
+                const updatedReferrer = await get('SELECT * FROM users WHERE uid = ?', [actualReferrerUid], conn) as any;
+                if (updatedReferrer) {
+                  const mappedReferrer = mapUserForFrontend(updatedReferrer);
+                  getIO().to(`user_${actualReferrerUid}`).emit('user_profile_update', mappedReferrer);
+                  syncUserToFirestore(actualReferrerUid, mappedReferrer);
+                }
+              }
+            }
+          }
+        } catch (affErr: any) {
+          logger.error(`Affiliate commission calculation error: ${affErr.message}`);
+        }
       }
 
       const fullTrade = await get('SELECT * FROM trades WHERE id = ?', [trade.id], conn) as any;

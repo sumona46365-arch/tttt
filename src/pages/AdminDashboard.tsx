@@ -3806,6 +3806,40 @@ export default function AdminDashboard() {
                    </div>
 
                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+
+                    {/* Affiliate Program Master Control Toggle Card */}
+                    <div className="bg-[#0a0a0f] border border-white/5 p-6 md:p-8 rounded-[36px] flex flex-col md:flex-row items-center justify-between gap-6 my-6">
+                        <div className="space-y-1 text-center md:text-left">
+                            <div className="flex items-center gap-3 justify-center md:justify-start">
+                                <div className={`w-3.5 h-3.5 rounded-full animate-pulse ${appConfig.affiliateProgramDisabled ? 'bg-red-500 shadow-lg shadow-red-500/50' : 'bg-emerald-500 shadow-lg shadow-emerald-500/50'}`} />
+                                <h3 className="text-xl font-black uppercase tracking-tight text-white">
+                                    Affiliate & Referral Program Status
+                                </h3>
+                            </div>
+                            <p className="text-xs font-semibold text-gray-400">
+                                {appConfig.affiliateProgramDisabled 
+                                    ? "Program is currently DISABLED (OFF). Users cannot access affiliate pages or rules." 
+                                    : "Program is currently ACTIVE (ON). All referral links and affiliate pages are functioning."}
+                            </p>
+                        </div>
+                        <button
+                            onClick={async () => {
+                                const newDisabledState = !appConfig.affiliateProgramDisabled;
+                                setAppConfig({ ...appConfig, affiliateProgramDisabled: newDisabledState });
+                                const { doc, setDoc } = await import('../firebase');
+                                await setDoc(doc(db, 'app_config', 'settings'), { affiliateProgramDisabled: newDisabledState }, { merge: true });
+                                await logAdminAction('Affiliate Status Toggle', `Affiliate Program changed to ${newDisabledState ? 'DISABLED' : 'ENABLED'}`);
+                                toast.success(`Affiliate Program is now ${newDisabledState ? 'DISABLED (OFF)' : 'ENABLED (ON)'}`);
+                            }}
+                            className={`px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-xl active:scale-95 ${
+                                appConfig.affiliateProgramDisabled
+                                    ? 'bg-red-500 hover:bg-red-600 text-white shadow-red-500/20'
+                                    : 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-emerald-500/20'
+                            }`}
+                        >
+                            {appConfig.affiliateProgramDisabled ? 'OFF (Program Disabled)' : 'ON (Program Active)'}
+                        </button>
+                    </div>
                        <div className="bg-[#0a0a0f] border border-white/5 p-8 rounded-[48px] space-y-8">
                            <h3 className="text-xl font-black uppercase tracking-tight flex items-center gap-3">
                                <Settings2 className="text-yellow-500" size={24} />

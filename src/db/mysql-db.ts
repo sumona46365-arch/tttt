@@ -543,6 +543,8 @@ function initSqliteTables(db: Database.Database) {
   try { db.exec("ALTER TABLE users ADD COLUMN last_name TEXT;"); } catch (e) {}
   try { db.exec("ALTER TABLE users ADD COLUMN gender TEXT;"); } catch (e) {}
   try { db.exec("ALTER TABLE users ADD COLUMN dob TEXT;"); } catch (e) {}
+  try { db.exec("ALTER TABLE users ADD COLUMN photo_url TEXT;"); } catch (e) {}
+  try { db.exec("ALTER TABLE users ADD COLUMN total_deposits NUMERIC DEFAULT 0.00;"); } catch (e) {}
   try { db.exec("ALTER TABLE users ADD COLUMN smart_mode_enabled INTEGER DEFAULT 0;"); } catch (e) {}
   try { db.exec("ALTER TABLE users ADD COLUMN smart_mode_strategy TEXT DEFAULT 'auto_25_percent';"); } catch (e) {}
   try { db.exec("ALTER TABLE users ADD COLUMN manipulation_mode TEXT DEFAULT 'neutral';"); } catch (e) {}

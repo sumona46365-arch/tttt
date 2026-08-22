@@ -62,6 +62,14 @@ export default function ProfilePage() {
   const [allowNotifications, setAllowNotifications] = useState(true);
   const [depositCountry, setDepositCountry] = useState('United Kingdom');
   const [platformLanguage, setPlatformLanguage] = useState('en');
+  const [appConfig, setAppConfig] = useState<any>({});
+
+  useEffect(() => {
+    const unsubConfig = onSnapshot(doc(db, 'app_config', 'settings'), (snap) => {
+      if (snap.exists()) setAppConfig(snap.data());
+    });
+    return () => unsubConfig();
+  }, []);
 
   useEffect(() => {
     if (language) {
@@ -1351,9 +1359,22 @@ export default function ProfilePage() {
                   </p>
                 </div>
 
+                {appConfig?.affiliateProgramDisabled && (
+                  <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-4 text-center text-red-600 text-xs font-bold flex items-center justify-center gap-2">
+                    <AlertCircle size={16} className="shrink-0" />
+                    <span>The referral program is currently disabled by administrator.</span>
+                  </div>
+                )}
+
                 {/* "How it works?" Button */}
                 <button 
-                  onClick={() => navigate('/affiliate')}
+                  onClick={() => {
+                    if (appConfig?.affiliateProgramDisabled) {
+                      toast.error("Affiliate program is currently disabled by administrator.");
+                      return;
+                    }
+                    navigate('/affiliate');
+                  }}
                   className="w-full py-4 text-base font-black text-gray-900 bg-[#f4f5f8] hover:bg-[#ebedf1] active:bg-[#e2e5ea] active:scale-[0.99] rounded-2xl transition-all text-center border border-gray-100"
                 >
                   {tr.howItWorks || "How it works?"}
@@ -1410,7 +1431,13 @@ export default function ProfilePage() {
                 {/* Bottom link to Affiliated Program Page */}
                 <div className="text-center pt-2 pb-4">
                   <span 
-                    onClick={() => navigate('/affiliate')}
+                    onClick={() => {
+                      if (appConfig?.affiliateProgramDisabled) {
+                        toast.error("Affiliate program is currently disabled by administrator.");
+                        return;
+                      }
+                      navigate('/affiliate');
+                    }}
                     className="text-[#3875df] hover:underline cursor-pointer font-bold text-sm tracking-wide inline-block transition-colors"
                   >
                     {tr.referralRules || "Referral program rules in detail"}

@@ -31,52 +31,83 @@ export async function getNextAffiliateId(): Promise<number> {
  */
 export async function getUserByAffiliateId(id: string | number) {
   if (!id) return null;
-  
+  const strId = String(id).trim();
+  if (!strId) return null;
+
   // 1. If it is numeric or convertible to a valid integer, search by affiliateId (numeric)
-  const numericId = typeof id === 'string' ? parseInt(id) : id;
-  if (!isNaN(numericId) && String(numericId) === String(id)) {
-    const q = query(
-      collection(db, 'users'), 
-      where('affiliateId', '==', numericId), 
-      limit(1)
-    );
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      return { uid: snap.docs[0].id, ...snap.docs[0].data() };
+  const numericId = parseInt(strId);
+  if (!isNaN(numericId) && String(numericId) === strId) {
+    try {
+      const q = query(
+        collection(db, 'users'), 
+        where('affiliateId', '==', numericId), 
+        limit(1)
+      );
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        return { uid: snap.docs[0].id, ...snap.docs[0].data() };
+      }
+    } catch (e) {
+      console.warn("Numeric affiliateId query error:", e);
     }
   }
 
   // 2. Search by referralCode (string)
-  const qStr = query(
-    collection(db, 'users'),
-    where('referralCode', '==', String(id)),
-    limit(1)
-  );
-  const snapStr = await getDocs(qStr);
-  if (!snapStr.empty) {
-    return { uid: snapStr.docs[0].id, ...snapStr.docs[0].data() };
+  try {
+    const qStr = query(
+      collection(db, 'users'),
+      where('referralCode', '==', strId),
+      limit(1)
+    );
+    const snapStr = await getDocs(qStr);
+    if (!snapStr.empty) {
+      return { uid: snapStr.docs[0].id, ...snapStr.docs[0].data() };
+    }
+  } catch (e) {
+    console.warn("String referralCode query error:", e);
   }
 
   // 3. Fallback: search by affiliateId as a string
-  const qAffStr = query(
-    collection(db, 'users'),
-    where('affiliateId', '==', String(id)),
-    limit(1)
-  );
-  const snapAffStr = await getDocs(qAffStr);
-  if (!snapAffStr.empty) {
-    return { uid: snapAffStr.docs[0].id, ...snapAffStr.docs[0].data() };
+  try {
+    const qAffStr = query(
+      collection(db, 'users'),
+      where('affiliateId', '==', strId),
+      limit(1)
+    );
+    const snapAffStr = await getDocs(qAffStr);
+    if (!snapAffStr.empty) {
+      return { uid: snapAffStr.docs[0].id, ...snapAffStr.docs[0].data() };
+    }
+  } catch (e) {
+    console.warn("String affiliateId query error:", e);
   }
 
-  // 4. Fallback: search by uid direct doc check
-  const qUid = query(
-    collection(db, 'users'),
-    where('uid', '==', String(id)),
-    limit(1)
-  );
-  const snapUid = await getDocs(qUid);
-  if (!snapUid.empty) {
-    return { uid: snapUid.docs[0].id, ...snapUid.docs[0].data() };
+  // 4. Fallback: search by uid
+  try {
+    const qUid = query(
+      collection(db, 'users'),
+      where('uid', '==', strId),
+      limit(1)
+    );
+    const snapUid = await getDocs(qUid);
+    if (!snapUid.empty) {
+      return { uid: snapUid.docs[0].id, ...snapUid.docs[0].data() };
+    }
+  } catch (e) {
+    console.warn("Uid query error:", e);
+  }
+
+  // 5. Backend REST API fallback (SQLite database)
+  try {
+    const res = await fetch(`/api/users?referralCode=${encodeURIComponent(strId)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        return data[0];
+      }
+    }
+  } catch (e) {
+    console.warn("Backend referral lookup fallback error:", e);
   }
 
   return null;

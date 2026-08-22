@@ -2930,7 +2930,7 @@ router.post('/admin/deposits/update', requireAuth, async (req: AuthRequest, res)
       if (user) {
         const currentBalance = new Big(user.real_balance || 0);
         const newBalance = currentBalance.plus(depositAmountWithBonus).toFixed(2);
-        await run('UPDATE users SET real_balance = ? WHERE uid = ?', [newBalance, userId]);
+        await run('UPDATE users SET real_balance = ?, total_deposits = total_deposits + ? WHERE uid = ?', [newBalance, rawDepositAmount, userId]);
         
         // Affiliate Commission (10%) - based on base deposit amount (excluding bonus)
         const depositAmountBase = new Big(rawDepositAmount);
@@ -3503,7 +3503,7 @@ router.post('/admin/transactions/approve', requireAuth, async (req: AuthRequest,
         const currentBalance = new Big(user.real_balance || 0);
         const depositAmount = new Big(tx.amount);
         const newBalance = currentBalance.plus(depositAmount).toFixed(2);
-        await run('UPDATE users SET real_balance = ? WHERE uid = ?', [newBalance, tx.user_id], conn);
+        await run('UPDATE users SET real_balance = ?, total_deposits = total_deposits + ? WHERE uid = ?', [newBalance, depositAmount.toNumber(), tx.user_id], conn);
 
         // DR & Audit Logging
         try {
@@ -3685,7 +3685,12 @@ router.get('/users', requireAuth, async (req: AuthRequest, res) => {
   const uid = req.query.uid as string;
 
   if (referredByUid) {
-    const referredUsers = await query('SELECT * FROM users WHERE referred_by_uid = ?', [referredByUid]);
+    const affVal = affiliateId || referredByUid;
+    const refVal = referralCode || referredByUid;
+    const referredUsers = await query(
+      'SELECT * FROM users WHERE referred_by_uid = ? OR referred_by_uid = ? OR referred_by_uid = ?', 
+      [referredByUid, affVal, refVal]
+    );
     return res.json(referredUsers.map(mapUserForFrontend));
   }
 

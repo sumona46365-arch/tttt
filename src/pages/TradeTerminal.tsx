@@ -11525,7 +11525,13 @@ const PROMOTED_ARTICLES = [
 
                   <div className="w-full max-w-sm mx-auto flex flex-col gap-3">
                     <button 
-                      onClick={() => navigate('/affiliate')}
+                      onClick={() => {
+                        if (appConfig?.affiliateProgramDisabled) {
+                          toast.error("Affiliate program is currently disabled by administrator.");
+                          return;
+                        }
+                        navigate('/affiliate');
+                      }}
                       className="w-full bg-[#3b3b3f] hover:bg-[#4A4B50] text-[#e1e1e1] font-semibold text-[16px] py-4 rounded-[14px] shadow-sm transition-colors active:scale-[0.98]"
                     >
                       Read details
@@ -12697,7 +12703,13 @@ const PROMOTED_ARTICLES = [
                 </button>
 
                 <button 
-                  onClick={() => { navigate("/affiliate"); }}
+                  onClick={() => { 
+                    if (appConfig?.affiliateProgramDisabled) {
+                      toast.error("Affiliate program is currently disabled by administrator.");
+                      return;
+                    }
+                    navigate("/affiliate"); 
+                  }}
                   className="w-full flex items-center gap-4 px-6 py-3.5 hover:bg-white/5 transition-colors group"
                 >
                   <UserPlus size={22} className="text-gray-400 group-hover:text-gray-300" strokeWidth={1.5} />
