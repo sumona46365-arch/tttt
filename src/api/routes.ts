@@ -2800,13 +2800,13 @@ router.post('/admin/deposits/update', requireAuth, async (req: AuthRequest, res)
       logger.info(`[Deposit Status Update] Deposit ID ${id} not found in Firestore. Proceeding with payload data.`);
     }
 
-    const userId = rawUserId || depositData?.userId || depositData?.uid || depositData?.user_id;
-
-    if (!userId) {
-      return res.status(400).json({ error: 'User ID is missing and could not be inferred' });
-    }
+    const userId = rawUserId || depositData?.userId || depositData?.uid || depositData?.user_id || '';
 
     const isSuccessOrApproved = status === 'success' || status === 'approved';
+
+    if (!userId && isSuccessOrApproved) {
+      return res.status(400).json({ error: 'User ID is missing. Cannot approve this ghost request. Please reject it.' });
+    }
 
     // Determine the exact deposit amount requested by user
     let rawDepositAmount = 0;
@@ -3047,9 +3047,11 @@ router.post('/admin/withdrawals/update', requireAuth, async (req: AuthRequest, r
       }
     }
 
-    const userId = rawUserId || withdrawalData?.userId || withdrawalData?.uid || withdrawalData?.user_id;
-    if (!userId) {
-      return res.status(400).json({ error: 'User ID is missing and could not be inferred' });
+    const userId = rawUserId || withdrawalData?.userId || withdrawalData?.uid || withdrawalData?.user_id || '';
+    const isSuccessOrApproved = status === 'success' || status === 'approved';
+
+    if (!userId && isSuccessOrApproved) {
+      return res.status(400).json({ error: 'User ID is missing. Cannot approve this ghost request. Please reject it.' });
     }
     const amount = Number(rawAmount !== undefined ? rawAmount : (withdrawalData?.amount || 0));
 

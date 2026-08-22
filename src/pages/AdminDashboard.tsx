@@ -1634,7 +1634,7 @@ export default function AdminDashboard() {
                                                     })()}
                                                 </span>
                                             </div>
-                                            <h4 className="font-bold text-lg">{d.userEmail || d.userId}</h4>
+                                            <h4 className="font-bold text-lg">{d.userEmail || d.userId || d.user_id || d.uid || 'Unknown User'}</h4>
                                             <p className="text-sm text-gray-400">{d.method}: <span className="font-mono text-white">{d.walletNumber}</span></p>
                                             {d.trxId && <p className="text-xs text-blue-400 mt-1">TrxID: <span className="font-mono">{d.trxId}</span></p>}
                                             {d.promoBonus > 0 && (
@@ -1666,14 +1666,14 @@ export default function AdminDashboard() {
                                                 <div className="flex gap-2 text-center items-center justify-center">
                                                     <button 
                                                         disabled={processingDeposits.has(d.id)} 
-                                                        onClick={() => handleDepositStatus(d.id, 'approved', d.userId, d.amount, d.currency, d.orderId)} 
+                                                        onClick={() => handleDepositStatus(d.id, 'approved', d.userId || d.user_id || d.uid || '', d.amount, d.currency, d.orderId)} 
                                                         className={`px-4 py-2 ${processingDeposits.has(d.id) ? 'opacity-50 cursor-not-allowed' : ''} bg-green-500/10 text-green-500 hover:bg-green-500 hover:text-black font-bold uppercase text-xs rounded-xl transition-all shadow-md`}
                                                     >
                                                         Approve & Credit
                                                     </button>
                                                     <button 
                                                         disabled={processingDeposits.has(d.id)} 
-                                                        onClick={() => handleDepositStatus(d.id, 'rejected', d.userId, d.amount, d.currency, d.orderId)} 
+                                                        onClick={() => handleDepositStatus(d.id, 'rejected', d.userId || d.user_id || d.uid || '', d.amount, d.currency, d.orderId)} 
                                                         className={`px-4 py-2 ${processingDeposits.has(d.id) ? 'opacity-50 cursor-not-allowed' : ''} bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white font-bold uppercase text-xs rounded-xl transition-all shadow-md`}
                                                     >
                                                         Reject
@@ -1737,9 +1737,9 @@ export default function AdminDashboard() {
                                             </div>
                                             {w.status === 'pending' || w.status === 'approved' ? (
                                                 <div className="flex gap-2 text-center items-center justify-center">
-                                                    {w.status === 'pending' && <button disabled={processingWithdrawals.has(w.id)} onClick={() => handleWithdrawalStatus(w.id, 'approved', w.userId || w.user_id, w.amount, w.orderId)} className={`px-4 py-2.5 ${processingWithdrawals.has(w.id) ? 'opacity-50 cursor-not-allowed' : ''} bg-blue-500 text-white font-black uppercase text-[10px] tracking-widest rounded-xl hover:bg-blue-600 transition-all shadow-lg shadow-blue-500/20`}>Approve</button>}
-                                                    <button disabled={processingWithdrawals.has(w.id)} onClick={() => handleWithdrawalStatus(w.id, 'success', w.userId || w.user_id, w.amount, w.orderId)} className={`px-4 py-2.5 ${processingWithdrawals.has(w.id) ? 'opacity-50 cursor-not-allowed' : ''} bg-emerald-500 text-black font-black uppercase text-[10px] tracking-widest rounded-xl hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-500/20`}>Success</button>
-                                                    <button disabled={processingWithdrawals.has(w.id)} onClick={() => handleWithdrawalStatus(w.id, 'rejected', w.userId || w.user_id, w.amount, w.orderId)} className={`px-4 py-2.5 ${processingWithdrawals.has(w.id) ? 'opacity-50 cursor-not-allowed' : ''} bg-rose-500 text-white font-black uppercase text-[10px] tracking-widest rounded-xl hover:bg-rose-600 transition-all shadow-lg shadow-rose-500/20`}>Reject</button>
+                                                    {w.status === 'pending' && <button disabled={processingWithdrawals.has(w.id)} onClick={() => handleWithdrawalStatus(w.id, 'approved', w.userId || w.user_id || w.uid || '', w.amount, w.orderId)} className={`px-4 py-2.5 ${processingWithdrawals.has(w.id) ? 'opacity-50 cursor-not-allowed' : ''} bg-blue-500 text-white font-black uppercase text-[10px] tracking-widest rounded-xl hover:bg-blue-600 transition-all shadow-lg shadow-blue-500/20`}>Approve</button>}
+                                                    <button disabled={processingWithdrawals.has(w.id)} onClick={() => handleWithdrawalStatus(w.id, 'success', w.userId || w.user_id || w.uid || '', w.amount, w.orderId)} className={`px-4 py-2.5 ${processingWithdrawals.has(w.id) ? 'opacity-50 cursor-not-allowed' : ''} bg-emerald-500 text-black font-black uppercase text-[10px] tracking-widest rounded-xl hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-500/20`}>Success</button>
+                                                    <button disabled={processingWithdrawals.has(w.id)} onClick={() => handleWithdrawalStatus(w.id, 'rejected', w.userId || w.user_id || w.uid || '', w.amount, w.orderId)} className={`px-4 py-2.5 ${processingWithdrawals.has(w.id) ? 'opacity-50 cursor-not-allowed' : ''} bg-rose-500 text-white font-black uppercase text-[10px] tracking-widest rounded-xl hover:bg-rose-600 transition-all shadow-lg shadow-rose-500/20`}>Reject</button>
                                                 </div>
                                             ) : (
                                                 <span className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest ${w.status === 'success' || w.status === 'completed' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/10' : 'bg-rose-500/10 text-rose-400 border border-rose-500/10'}`}>
