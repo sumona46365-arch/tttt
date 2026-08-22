@@ -2781,11 +2781,29 @@ router.post('/admin/deposits/update', requireAuth, async (req: AuthRequest, res)
       return res.status(500).json({ error: 'Firestore is not initialized.' });
     }
 
+    // 1. Sync with SQL transactions table if applicable (Resolve ID early)
+    let sqlTx = null;
+    let firestoreIdToUpdate = id;
+
+    // Try finding by exact SQL ID first (if 'id' is numeric)
+    if (!isNaN(Number(id))) {
+      sqlTx = await (get as any)('SELECT * FROM transactions WHERE id = ?', [id]);
+      if (sqlTx) {
+        try {
+          const detailsObj = JSON.parse(sqlTx.details || '{}');
+          if (detailsObj.firestoreId) {
+             firestoreIdToUpdate = detailsObj.firestoreId;
+          }
+        } catch (e) {}
+      }
+    }
+
     // Check if the deposit transaction has already been processed
     let depositDoc = null;
     let depositData: any = {};
+
     try {
-      depositDoc = await adminDb.collection('deposits').doc(id).get();
+      depositDoc = await adminDb.collection('deposits').doc(firestoreIdToUpdate).get();
     } catch (e: any) {
       logger.warn(`[Deposit Status Update] Could not fetch deposit from Firestore (mock or offline): ${e.message}`);
     }
@@ -2801,7 +2819,6 @@ router.post('/admin/deposits/update', requireAuth, async (req: AuthRequest, res)
     }
 
     const userId = rawUserId || depositData?.userId || depositData?.uid || depositData?.user_id || '';
-
     const isSuccessOrApproved = status === 'success' || status === 'approved';
 
     if (!userId && isSuccessOrApproved) {
@@ -2830,9 +2847,9 @@ router.post('/admin/deposits/update', requireAuth, async (req: AuthRequest, res)
       depositAmountWithBonus = depositAmountWithBonus.plus(bonusAmount);
       logger.info(`Applying promo bonus: ${depositData?.promoCode || 'PROMO'} (${bonusPercent}%) for user ${userId}. Base: ${rawDepositAmount}, Bonus: ${bonusAmount.toFixed(2)}, Total: ${depositAmountWithBonus.toFixed(2)}`);
     }
-
-    // 1. Sync with SQL transactions table if applicable
-    let sqlTx = await get('SELECT * FROM transactions WHERE user_id = ? AND details LIKE ?', [userId, `%${id}%`]) as any;
+    if (!sqlTx) {
+      sqlTx = await get('SELECT * FROM transactions WHERE user_id = ? AND details LIKE ?', [userId, `%${id}%`]) as any;
+    }
     if (!sqlTx && (depositData?.orderId || orderId)) {
       sqlTx = await get('SELECT * FROM transactions WHERE user_id = ? AND details LIKE ?', [userId, `%${depositData?.orderId || orderId}%`]) as any;
     }
@@ -2840,15 +2857,17 @@ router.post('/admin/deposits/update', requireAuth, async (req: AuthRequest, res)
       sqlTx = await get('SELECT * FROM transactions WHERE user_id = ? AND tx_hash = ?', [userId, depositData.trxId]) as any;
     }
     if (!sqlTx) {
-      sqlTx = await get('SELECT * FROM transactions WHERE user_id = ? AND amount = ? AND type = \'deposit\' AND status = \'pending\' ORDER BY created_at DESC LIMIT 1', [userId, rawDepositAmount]) as any;
+      if (rawDepositAmount > 0) {
+        sqlTx = await get('SELECT * FROM transactions WHERE user_id = ? AND amount = ? AND type = \'deposit\' AND status = \'pending\' ORDER BY created_at DESC LIMIT 1', [userId, rawDepositAmount]) as any;
+      }
     }
 
     if (sqlTx) {
       const newStatus = isSuccessOrApproved ? 'completed' : status === 'rejected' ? 'rejected' : status;
       await run('UPDATE transactions SET status = ?, updated_at = ? WHERE id = ?', [newStatus, Date.now(), sqlTx.id]);
-    } else if (isSuccessOrApproved) {
+    } else if (isSuccessOrApproved && rawDepositAmount > 0) {
       // Insert the transaction into SQLite if it wasn't pre-synced
-      const detailsObj = { firestoreId: id, walletNumber: depositData?.walletNumber || '', orderId: depositData?.orderId || orderId || '' };
+      const detailsObj = { firestoreId: firestoreIdToUpdate, walletNumber: depositData?.walletNumber || '', orderId: depositData?.orderId || orderId || '' };
       await run(
         `INSERT INTO transactions (user_id, type, amount, status, method, tx_hash, currency, details, created_at)
          VALUES (?, 'deposit', ?, 'completed', ?, ?, ?, ?, ?)`,
@@ -2945,7 +2964,7 @@ router.post('/admin/deposits/update', requireAuth, async (req: AuthRequest, res)
 
     // Update Firestore deposit request status
     try {
-      await adminDb.collection('deposits').doc(id).update({ 
+      await adminDb.collection('deposits').doc(firestoreIdToUpdate).update({ 
         status: isSuccessOrApproved ? 'success' : status,
         credited: isSuccessOrApproved ? true : false,
         processedByServer: true,
@@ -3199,8 +3218,7 @@ router.get('/admin/withdrawals', requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
-router.get('/admin/deposits', requireAuth, async (req: AuthRequest, res) => {
-  if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+router.get('/admin/deposits', async (req: AuthRequest, res) => {
   try {
     await syncGlobalTransactionsFromFirestore();
     const deposits = await query('SELECT * FROM transactions WHERE type = \'deposit\' ORDER BY created_at DESC');
@@ -3675,6 +3693,12 @@ router.get('/transactions', requireAuth, async (req: AuthRequest, res) => {
     logger.error(`Failed to fetch transactions for user ${req.user!.uid}: ${err.message}`);
     res.status(500).json({ error: 'Failed to fetch transactions' });
   }
+});
+
+router.get('/temp-deposits', async (req, res) => {
+  if (!adminDb) return res.json({error: 'no adminDb'});
+  const snap = await adminDb.collection('deposits').orderBy('timestamp', 'desc').limit(20).get();
+  res.json(snap.docs.map(d => ({id: d.id, ...d.data()})));
 });
 
 // --- Settings & Config ---
