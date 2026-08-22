@@ -2774,7 +2774,7 @@ router.post('/depositMethods', requireAuth, async (req: AuthRequest, res) => {
 
 router.post('/admin/deposits/update', requireAuth, async (req: AuthRequest, res) => {
   if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
-  const { id, status, userId, amount, currency, orderId, finalAmountInBase } = req.body;
+  const { id, status, userId: rawUserId, amount, currency, orderId, finalAmountInBase } = req.body;
 
   try {
     if (!adminDb) {
@@ -2798,6 +2798,12 @@ router.post('/admin/deposits/update', requireAuth, async (req: AuthRequest, res)
       }
     } else {
       logger.info(`[Deposit Status Update] Deposit ID ${id} not found in Firestore. Proceeding with payload data.`);
+    }
+
+    const userId = rawUserId || depositData?.userId || depositData?.uid || depositData?.user_id;
+
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is missing and could not be inferred' });
     }
 
     const isSuccessOrApproved = status === 'success' || status === 'approved';
@@ -3042,6 +3048,9 @@ router.post('/admin/withdrawals/update', requireAuth, async (req: AuthRequest, r
     }
 
     const userId = rawUserId || withdrawalData?.userId || withdrawalData?.uid || withdrawalData?.user_id;
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is missing and could not be inferred' });
+    }
     const amount = Number(rawAmount !== undefined ? rawAmount : (withdrawalData?.amount || 0));
 
     // If status is already the requested status, acknowledge safely

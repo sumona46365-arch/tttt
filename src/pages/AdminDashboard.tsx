@@ -1625,7 +1625,14 @@ export default function AdminDashboard() {
                                                 <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${d.status === 'pending' ? 'bg-yellow-500/10 text-yellow-500' : d.status === 'success' ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
                                                     {d.status}
                                                 </span>
-                                                <span className="text-xs text-gray-500">{d.timestamp?.toDate ? d.timestamp.toDate().toLocaleString() : new Date(d.timestamp).toLocaleString()}</span>
+                                                <span className="text-xs text-gray-500">
+                                                    {(() => {
+                                                        const ts = d.timestamp || d.createdAt;
+                                                        if (ts?.toDate) return ts.toDate().toLocaleString();
+                                                        const parsed = new Date(isNaN(Number(ts)) ? ts : Number(ts || 0));
+                                                        return isNaN(parsed.getTime()) ? 'Pending' : parsed.toLocaleString();
+                                                    })()}
+                                                </span>
                                             </div>
                                             <h4 className="font-bold text-lg">{d.userEmail || d.userId}</h4>
                                             <p className="text-sm text-gray-400">{d.method}: <span className="font-mono text-white">{d.walletNumber}</span></p>
@@ -1701,7 +1708,14 @@ export default function AdminDashboard() {
                                                 <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${w.status === 'pending' ? 'bg-yellow-500/10 text-yellow-500' : (w.status === 'approved' || w.status === 'success' || w.status === 'completed') ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
                                                     {w.status}
                                                 </span>
-                                                <span className="text-xs text-gray-500">{w.timestamp?.toDate ? w.timestamp.toDate().toLocaleString() : new Date(Number(w.timestamp || w.createdAt || 0)).toLocaleString()}</span>
+                                                <span className="text-xs text-gray-500">
+                                                    {(() => {
+                                                        const ts = w.timestamp || w.createdAt;
+                                                        if (ts?.toDate) return ts.toDate().toLocaleString();
+                                                        const parsed = new Date(isNaN(Number(ts)) ? ts : Number(ts || 0));
+                                                        return isNaN(parsed.getTime()) ? 'Pending' : parsed.toLocaleString();
+                                                    })()}
+                                                </span>
                                             </div>
                                             <h4 className="font-bold text-lg">{w.userEmail || w.userId || 'Traders ID: ' + w.user_id}</h4>
                                             <div className="space-y-1 mt-1">
