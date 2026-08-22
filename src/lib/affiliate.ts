@@ -1,5 +1,5 @@
 import { db } from '../firebase';
-import { doc, runTransaction, collection, query, where, getDocs, limit, updateDoc, increment, addDoc } from '../firebase';
+import { doc, runTransaction, collection, query, where, getDocs, limit, updateDoc, increment, addDoc, getDoc, setDoc } from '../firebase';
 
 /**
  * Generates a sequential professional numeric ID for a new user.
@@ -24,6 +24,62 @@ export async function getNextAffiliateId(): Promise<number> {
     console.error("Transaction failed, using fallback random numeric ID", err);
     return 100000 + Math.floor(Math.random() * 899999);
   }
+}
+
+/**
+ * Ensures a user has a permanent sequential affiliate ID.
+ * If user already has one, returns existing ID without generating a new one.
+ */
+export async function ensureUserAffiliateId(uid: string, userData?: any): Promise<string> {
+  if (!uid) return '';
+
+  // 1. Check passed user object first
+  let existingCode = userData?.referralCode || userData?.referral_code || userData?.affiliateId || userData?.affiliate_id;
+  if (existingCode) {
+    return String(existingCode);
+  }
+
+  // 2. Check Firestore document
+  try {
+    const userRef = doc(db, 'users', uid);
+    const snap = await getDoc(userRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      existingCode = data.referralCode || data.referral_code || data.affiliateId || data.affiliate_id;
+      if (existingCode) {
+        return String(existingCode);
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to check Firestore for affiliateId:", err);
+  }
+
+  // 3. Generate a brand new sequential numeric ID ONLY IF missing
+  const newNumericId = await getNextAffiliateId();
+  const strId = String(newNumericId);
+
+  // 4. Save permanently to Firestore
+  try {
+    await setDoc(doc(db, 'users', uid), {
+      affiliateId: newNumericId,
+      referralCode: strId
+    }, { merge: true });
+  } catch (err) {
+    console.error("Failed to save generated affiliateId to Firestore:", err);
+  }
+
+  // 5. Sync to backend SQLite API
+  try {
+    await fetch(`/api/users/${uid}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ referralCode: strId, affiliateId: newNumericId })
+    });
+  } catch (err) {
+    // network fallback ignored
+  }
+
+  return strId;
 }
 
 /**

@@ -63,6 +63,21 @@ export default function ProfilePage() {
   const [depositCountry, setDepositCountry] = useState('United Kingdom');
   const [platformLanguage, setPlatformLanguage] = useState('en');
   const [appConfig, setAppConfig] = useState<any>({});
+  const userRefCode = user?.referralCode || user?.affiliateId || user?.referral_code || user?.affiliate_id;
+  const [activeRefCode, setActiveRefCode] = useState<string>(userRefCode ? String(userRefCode) : '');
+
+  useEffect(() => {
+    const code = user?.referralCode || user?.affiliateId || user?.referral_code || user?.affiliate_id;
+    if (code) {
+      setActiveRefCode(String(code));
+    } else if (user?.uid) {
+      import('../lib/affiliate').then(({ ensureUserAffiliateId }) => {
+        ensureUserAffiliateId(user.uid, user).then((c) => {
+          if (c) setActiveRefCode(c);
+        });
+      });
+    }
+  }, [user]);
 
   useEffect(() => {
     const unsubConfig = onSnapshot(doc(db, 'app_config', 'settings'), (snap) => {
@@ -1385,12 +1400,12 @@ export default function ProfilePage() {
                   <div className="min-w-0 flex-1">
                     <span className="block text-xs font-bold text-gray-400 mb-0.5">{tr.yourReferralLink || "Your referral link"}</span>
                     <span className="text-sm font-bold text-gray-900 font-mono tracking-tight truncate block select-all">
-                      {`${window.location.origin}/register?ref=${user?.referralCode || user?.uid?.slice(0, 8).toUpperCase() || 'BIVAAX'}`}
+                      {`${window.location.origin}/register?ref=${activeRefCode || user?.referralCode || user?.affiliateId || '100000'}`}
                     </span>
                   </div>
                   <button 
                     onClick={() => {
-                      const refLink = `${window.location.origin}/register?ref=${user?.referralCode || user?.uid?.slice(0, 8).toUpperCase() || 'BIVAAX'}`;
+                      const refLink = `${window.location.origin}/register?ref=${activeRefCode || user?.referralCode || user?.affiliateId || '100000'}`;
                       navigator.clipboard.writeText(refLink);
                       toast.success(tr.linkCopied || 'Referral link copied!');
                     }}
@@ -1406,7 +1421,7 @@ export default function ProfilePage() {
                 {/* Yellow "Share link" Button */}
                 <button 
                   onClick={() => {
-                    const shareUrl = `${window.location.origin}/register?ref=${user?.referralCode || user?.uid?.slice(0, 8).toUpperCase() || 'BIVAAX'}`;
+                    const shareUrl = `${window.location.origin}/register?ref=${activeRefCode || user?.referralCode || user?.affiliateId || '100000'}`;
                     if (navigator.share) {
                       navigator.share({
                         title: 'Bivaax Trading',

@@ -621,7 +621,7 @@ export default function AffiliatePage() {
           setAffiliateBalance(userData.affiliateBalance || 0);
           setCustomAffShare(userData.customAffiliateShare || null);
           
-          const permCode = userData.referralCode || userData.affiliateId || currentUser?.referralCode || currentUser?.affiliateId;
+          const permCode = userData.referralCode || userData.referral_code || userData.affiliateId || userData.affiliate_id || currentUser?.referralCode || currentUser?.affiliateId;
           if (permCode) {
              const strPerm = String(permCode);
              setAffId(strPerm);
@@ -633,15 +633,10 @@ export default function AffiliatePage() {
              }
           } else {
              // Permanent numeric ID generation
-             import('../lib/affiliate').then(async ({ getNextAffiliateId }) => {
+             import('../lib/affiliate').then(async ({ ensureUserAffiliateId }) => {
                  try {
-                     const newId = await getNextAffiliateId();
-                     const strId = String(newId);
-                     await updateDoc(doc(db, 'users', currentUser.uid), { 
-                       affiliateId: newId, 
-                       referralCode: strId 
-                     });
-                     setAffId(strId);
+                     const permanentCode = await ensureUserAffiliateId(currentUser.uid, userData);
+                     if (permanentCode) setAffId(permanentCode);
                  } catch (e) {
                      console.error("Failed to retroactively give affiliate ID", e);
                  }

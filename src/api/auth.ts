@@ -283,7 +283,15 @@ router.post('/sync', async (req, res) => {
 
     // 3. Create new user if still not found in SQLite or Firestore
     if (!user) {
-      const affiliateId = Math.random().toString(36).substring(2, 8).toUpperCase();
+      let affiliateIdStr = '';
+      try {
+        const maxRow = await get('SELECT MAX(CAST(referral_code AS INTEGER)) as maxId FROM users WHERE CAST(referral_code AS INTEGER) > 0') as any;
+        const currentMax = maxRow?.maxId ? parseInt(maxRow.maxId) : 100000;
+        affiliateIdStr = String(Math.max(100000, currentMax) + 1);
+      } catch (err) {
+        affiliateIdStr = String(100000 + Math.floor(Math.random() * 899999));
+      }
+
       let referredBy = null;
       if (referralCode) {
         const referrer = await get('SELECT uid FROM users WHERE referral_code = ? OR uid = ?', [referralCode, referralCode]);
@@ -304,9 +312,20 @@ router.post('/sync', async (req, res) => {
       await run(
         `INSERT OR IGNORE INTO users (uid, email, display_name, photo_url, referral_code, referred_by_uid, referral_sub_id, referral_type, is_admin, is_verified) 
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [firebaseUid, email, name || email.split('@')[0], picture || null, affiliateId, referredBy, referralSubId || null, referralType || null, isHardcodedAdmin ? 1 : 0, email_verified ? 1 : 0]
+        [firebaseUid, email, name || email.split('@')[0], picture || null, affiliateIdStr, referredBy, referralSubId || null, referralType || null, isHardcodedAdmin ? 1 : 0, email_verified ? 1 : 0]
       );
       
+      if (adminDb) {
+        try {
+          await adminDb.collection('users').doc(firebaseUid).set({
+            affiliateId: parseInt(affiliateIdStr) || 100001,
+            referralCode: affiliateIdStr
+          }, { merge: true });
+        } catch (e) {
+          logger.error(`Error saving affiliateId to Firestore: ${e}`);
+        }
+      }
+
       if (referredBy) {
         await run('UPDATE users SET referral_count = referral_count + 1 WHERE uid = ?', [referredBy]);
       }

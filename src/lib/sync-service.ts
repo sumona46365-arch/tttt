@@ -218,6 +218,8 @@ export async function authoritativeSync(userId: string, emitSocket = true) {
       ? (oldAffBal > 0 && fireAffBal === 0 ? oldAffBal : fireAffBal)
       : oldAffBal;
 
+    const fireRefCode = fireData.referralCode || fireData.referral_code || fireData.affiliateId || fireData.affiliate_id || '';
+
     if (!user) {
       // Restore basic profile
       await run(
@@ -235,7 +237,7 @@ export async function authoritativeSync(userId: string, emitSocket = true) {
           fireData.kycStatus || fireData.kyc_status || 'unverified',
           (fireData.is_verified || fireData.isVerified || fireData.emailVerified) ? 1 : 0,
           fireData.country || '',
-          fireData.referralCode || fireData.referral_code || '',
+          fireRefCode,
           fireData.referredBy || fireData.referred_by_uid || '',
           finalAffBal,
           fireData.totalAffiliateEarnings || fireData.total_affiliate_earnings || 0,
@@ -244,12 +246,13 @@ export async function authoritativeSync(userId: string, emitSocket = true) {
       );
       user = await get('SELECT * FROM users WHERE uid = ?', [userId]);
     } else {
+      const finalRefCode = fireRefCode || user.referral_code || '';
       // Authoritatively update existing record without wiping positive balances
       await run(
         `UPDATE users SET 
           real_balance = ?, demo_balance = ?, kyc_status = ?, is_verified = ?,
           display_name = ?, country = ?, affiliate_balance = ?, 
-          total_affiliate_earnings = ?, referral_count = ?
+          total_affiliate_earnings = ?, referral_count = ?, referral_code = ?
         WHERE uid = ?`,
         [
           finalRealBal,
@@ -261,6 +264,7 @@ export async function authoritativeSync(userId: string, emitSocket = true) {
           finalAffBal,
           fireData.totalAffiliateEarnings || fireData.total_affiliate_earnings || user.total_affiliate_earnings || 0,
           fireData.referralCount || fireData.referral_count || user.referral_count || 0,
+          finalRefCode,
           userId
         ]
       );

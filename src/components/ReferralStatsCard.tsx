@@ -64,7 +64,7 @@ const ReferralStatsCard: React.FC = () => {
       <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between">
         <div className="flex flex-col">
           <span className="text-[9px] font-bold text-gray-600 uppercase tracking-widest mb-0.5">Invite Code</span>
-          <span className="text-xs font-black text-yellow-500 uppercase tracking-widest">{user.referralCode || 'NOT_SET'}</span>
+          <span className="text-xs font-black text-yellow-500 uppercase tracking-widest">{user.referralCode || user.affiliateId || user.referral_code || user.affiliate_id || 'NOT_SET'}</span>
         </div>
         <div className="text-right">
           <span className="text-[9px] font-bold text-gray-600 uppercase tracking-widest mb-0.5">Lifetime Profit</span>
