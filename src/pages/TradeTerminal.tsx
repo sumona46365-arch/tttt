@@ -1658,6 +1658,35 @@ export default function TradeTerminal() {
                 signal: controller.signal
               });
               if (response.ok) {
+                const syncData = await response.json().catch(() => null);
+                const uData = syncData?.data || syncData?.user;
+                if (uData) {
+                  if (uData.currency) {
+                    setUserCurrency(uData.currency);
+                    userCurrencyRef.current = uData.currency;
+                  }
+                  if (uData.balance !== undefined || uData.realBalance !== undefined || uData.real_balance !== undefined) {
+                    const rawBal = uData.balance ?? uData.realBalance ?? uData.real_balance;
+                    const val = parseFloat(rawBal?.toString());
+                    if (!isNaN(val)) {
+                      setRealBalance(val);
+                      realBalanceRef.current = val;
+                    }
+                  }
+                  if (uData.demoBalance !== undefined || uData.demo_balance !== undefined) {
+                    const rawDemo = uData.demoBalance ?? uData.demo_balance;
+                    const dval = parseFloat(rawDemo?.toString());
+                    if (!isNaN(dval)) {
+                      setDemoBalance(dval);
+                      demoBalanceRef.current = dval;
+                    }
+                  }
+                  if (uData.nickname) {
+                    setNickname(uData.nickname);
+                    setSavedNickname(uData.nickname);
+                    savedNicknameRef.current = uData.nickname;
+                  }
+                }
                 break; // Succeeded! Exit the loop.
               }
               throw new Error(`HTTP ${response.status}`);
@@ -4625,8 +4654,14 @@ const PROMOTED_ARTICLES = [
             });
             if (syncRes.ok) {
                 const syncData = await syncRes.json();
-                if (syncData.user) {
-                    setRealBalance(syncData.user.real_balance);
+                const uData = syncData?.data || syncData?.user;
+                if (uData) {
+                    const rawBal = uData.balance ?? uData.realBalance ?? uData.real_balance;
+                    const val = parseFloat(rawBal?.toString());
+                    if (!isNaN(val)) {
+                        setRealBalance(val);
+                        realBalanceRef.current = val;
+                    }
                 }
             }
         } else {
@@ -5667,20 +5702,52 @@ const PROMOTED_ARTICLES = [
     if (!auth.currentUser) return;
     setIsRefreshing(true);
     try {
+      const syncRes = await fetch('/api/user/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uid: auth.currentUser.uid })
+      });
+      if (syncRes.ok) {
+        const syncData = await syncRes.json();
+        const uData = syncData?.data || syncData?.user;
+        if (uData) {
+          if (uData.currency) {
+            setUserCurrency(uData.currency);
+            userCurrencyRef.current = uData.currency;
+          }
+          if (uData.balance !== undefined || uData.realBalance !== undefined || uData.real_balance !== undefined) {
+            const rawBal = uData.balance ?? uData.realBalance ?? uData.real_balance;
+            const val = parseFloat(rawBal?.toString());
+            if (!isNaN(val)) {
+              setRealBalance(val);
+              realBalanceRef.current = val;
+            }
+          }
+          if (uData.demoBalance !== undefined || uData.demo_balance !== undefined) {
+            const rawDemo = uData.demoBalance ?? uData.demo_balance;
+            const dval = parseFloat(rawDemo?.toString());
+            if (!isNaN(dval)) {
+              setDemoBalance(dval);
+              demoBalanceRef.current = dval;
+            }
+          }
+        }
+      } else {
         const userDocRef = doc(db, "users", auth.currentUser.uid);
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
-            const userData = userDoc.data();
-            if (accountType === 'demo') {
-              if (userData.demoBalance !== undefined) setDemoBalance(userData.demoBalance);
-            } else {
-              if (userData.balance !== undefined) setRealBalance(userData.balance);
-            }
+          const userData = userDoc.data();
+          if (accountType === 'demo') {
+            if (userData.demoBalance !== undefined) setDemoBalance(userData.demoBalance);
+          } else {
+            if (userData.balance !== undefined) setRealBalance(userData.balance);
+          }
         }
+      }
     } catch (error) {
-        console.error("Error refreshing balance:", error);
+      console.error("Error refreshing balance:", error);
     } finally {
-        setIsRefreshing(false);
+      setIsRefreshing(false);
     }
   };
   
