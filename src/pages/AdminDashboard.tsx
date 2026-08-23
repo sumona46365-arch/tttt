@@ -449,59 +449,45 @@ export default function AdminDashboard() {
         }
         const headers: any = token ? { 'Authorization': `Bearer ${token}` } : {};
 
-        // Fetch users, withdrawals, deposits, kyc and admins concurrently in parallel
-        await Promise.allSettled([
-          (async () => {
-            try {
-              const uRef = await fetch('/api/admin/users', { headers });
-              if (uRef.ok) {
-                const apiUsers = await uRef.json();
-                if (Array.isArray(apiUsers) && apiUsers.length > 0) {
-                  setUsers(apiUsers);
-                }
-              }
-            } catch (e) {}
-          })(),
-          (async () => {
-            try {
-              const wRef = await fetch('/api/admin/withdrawals', { headers });
-              if (wRef.ok) {
-                const apiWithdrawals = await wRef.json();
-                if (Array.isArray(apiWithdrawals)) {
-                  setWithdrawals(prev => deduplicateRequests([...prev, ...apiWithdrawals]));
-                }
-              }
-            } catch (e) {}
-          })(),
-          (async () => {
-            try {
-              const dRef = await fetch('/api/admin/deposits', { headers });
-              if (dRef.ok) {
-                const apiDeposits = await dRef.json();
-                if (Array.isArray(apiDeposits)) {
-                  setDepositRequests(prev => deduplicateRequests([...prev, ...apiDeposits]));
-                }
-              }
-            } catch (e) {}
-          })(),
-          (async () => {
-            try {
-              const kycRef = await fetch('/api/admin/kyc/requests', { headers });
-              if (kycRef.ok) {
-                const apiKyc = await kycRef.json();
-                if (Array.isArray(apiKyc)) {
-                  setKycRequests(apiKyc);
-                }
-              }
-            } catch (e) {}
-          })(),
-          (async () => {
-            try {
-              const adminsSnap = await getDocs(collection(db, 'admins'));
-              setAdmins(adminsSnap.docs.map(d => ({id: d.id, ...d.data()})));
-            } catch (e) {}
-          })()
-        ]);
+        // Fetch all users from backend API
+        const uRef = await fetch('/api/admin/users', { headers });
+        if (uRef.ok) {
+            const apiUsers = await uRef.json();
+            if (Array.isArray(apiUsers) && apiUsers.length > 0) {
+                setUsers(apiUsers);
+            }
+        }
+
+        // Fetch withdrawals from backend API
+        const wRef = await fetch('/api/admin/withdrawals', { headers });
+        if (wRef.ok) {
+            const apiWithdrawals = await wRef.json();
+            if (Array.isArray(apiWithdrawals)) {
+                setWithdrawals(prev => deduplicateRequests([...prev, ...apiWithdrawals]));
+            }
+        }
+
+        // Fetch deposits from backend API
+        const dRef = await fetch('/api/admin/deposits', { headers });
+        if (dRef.ok) {
+            const apiDeposits = await dRef.json();
+            if (Array.isArray(apiDeposits)) {
+                setDepositRequests(prev => deduplicateRequests([...prev, ...apiDeposits]));
+            }
+        }
+
+        // Fetch KYC requests from backend API
+        const kycRef = await fetch('/api/admin/kyc/requests', { headers });
+        if (kycRef.ok) {
+            const apiKyc = await kycRef.json();
+            if (Array.isArray(apiKyc)) {
+                setKycRequests(apiKyc);
+            }
+        }
+
+        // Fetch admins from Firestore as secondary
+        const adminsSnap = await getDocs(collection(db, 'admins'));
+        setAdmins(adminsSnap.docs.map(d => ({id: d.id, ...d.data()})));
     } catch (err) {
         console.warn("Lists fetch issue:", err);
     }
@@ -772,10 +758,7 @@ export default function AdminDashboard() {
             }));
             
             const token = await user.getIdToken();
-            setLoading(false); // Instantly render admin dashboard without blocking
-
-            // Concurrently fetch lists, static data and settings in background
-            Promise.allSettled([
+            await Promise.all([
                 fetchLists(),
                 fetchStaticAdminData(),
                 fetchMarketState(),
@@ -783,9 +766,9 @@ export default function AdminDashboard() {
                 fetch('/api/admin/config/fmp-key', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 }).then(res => res.ok ? res.json() : null).then(data => data && setFmpApiKey(data.fmpApiKey || ''))
-            ]).catch(err => {
-                console.warn("Background admin data fetch notice:", err);
-            });
+            ]);
+
+            setLoading(false);
         } catch(e) {
             console.error("Admin init error:", e);
             setLoading(false);
@@ -1032,6 +1015,22 @@ export default function AdminDashboard() {
               });
           } catch (fsErr) {
               console.warn("Direct Firestore update fallback error:", fsErr);
+          }
+
+          // If rejected, also refund the user balance directly in Firestore as instant UI sync
+          if (status === 'rejected' && userId && amount && amount > 0) {
+              try {
+                  const userDocRef = doc(db, 'users', userId);
+                  const userSnap = await getDoc(userDocRef);
+                  if (userSnap.exists()) {
+                      const curBal = Number(userSnap.data().balance || 0);
+                      await updateDoc(userDocRef, {
+                          balance: Number((curBal + amount).toFixed(2))
+                      });
+                  }
+              } catch (balErr) {
+                  console.warn("Direct Firestore user refund sync error:", balErr);
+              }
           }
 
           if (userId) {
@@ -1937,27 +1936,6 @@ export default function AdminDashboard() {
                                 Seed Defaults
                             </button>
                         )}
-                       {activeTab === 'education' && education.length > 0 && (
-                         <button 
-                           onClick={async () => {
-                             if (!confirm("Are you sure you want to delete ALL educational videos?")) return;
-                             try {
-                               for (const item of education) {
-                                 await deleteDoc(doc(db, 'education', item.id));
-                               }
-                               await logAdminAction('Deleted All Education Videos', 'Cleared all education videos');
-                               await fetchStaticAdminData();
-                               await clearServerCache();
-                               alert('All education videos have been successfully deleted!');
-                             } catch (err: any) {
-                               alert('Failed to delete: ' + err.message);
-                             }
-                           }}
-                           className="bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white px-4 py-3 rounded-2xl font-bold flex items-center gap-2 transition-all border border-red-500/20"
-                         >
-                           <Trash2 size={18} /> Clear All Videos
-                         </button>
-                       )}
                        <button 
                          onClick={() => {
                              setEditingItem(

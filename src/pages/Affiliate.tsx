@@ -486,10 +486,7 @@ export default function AffiliatePage() {
 
 
   const referralCode = affId || '';
-  
-  // Ensure link points to main app's register page even if on partner subdomain
-  const mainOrigin = window.location.origin.replace('partner.', '');
-  const referralLink = referralCode ? `${mainOrigin}/register?ref=${referralCode}` : '';
+  const referralLink = referralCode ? `${window.location.origin}/register?ref=${referralCode}` : '';
 
   const addCampaign = async () => {
     if (!currentUser) return;
@@ -546,7 +543,7 @@ export default function AffiliatePage() {
   const getCampaignLink = (subId: string, landingPage: string = '/register', linkType: string = 'revshare') => {
     if (!referralCode) return 'Loading...';
     const targetPage = (!landingPage || landingPage === '/') ? '/register' : landingPage;
-    const base = window.location.origin.replace('partner.', '') + (targetPage.startsWith('/') ? targetPage : `/${targetPage}`);
+    const base = window.location.origin + (targetPage.startsWith('/') ? targetPage : `/${targetPage}`);
     const connector = base.includes('?') ? '&' : '?';
     let url = `${base}${connector}ref=${referralCode}`;
     if (subId && subId !== 'default' && subId !== 'MAIN') {
@@ -2240,8 +2237,8 @@ export default function AffiliatePage() {
                         <div className="bg-white/5 rounded-2xl p-4 border border-white/10 flex items-center justify-between mb-4">
                            {referralCode ? (
                                <>
-                                   <span className="text-[12px] font-mono text-gray-500 font-bold truncate pr-3">{referralLink}</span>
-                                   <button onClick={() => { navigator.clipboard.writeText(referralLink); toast.success('Invite link copied'); }} className="text-indigo-400">
+                                   <span className="text-[12px] font-mono text-gray-500 font-bold truncate pr-3">{window.location.protocol}//{window.location.host}/register?ref={referralCode}</span>
+                                   <button onClick={() => { navigator.clipboard.writeText(`${window.location.protocol}//${window.location.host}/register?ref=${referralCode}`); toast.success('Invite link copied'); }} className="text-indigo-400">
                                      <Copy size={16} />
                                    </button>
                                </>

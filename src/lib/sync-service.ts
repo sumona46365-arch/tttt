@@ -201,27 +201,15 @@ export async function authoritativeSync(userId: string, emitSocket = true) {
 
     const rawFireRealBal = fireData.real_balance ?? fireData.realBalance ?? fireData.balance;
     const fireRealBal = (rawFireRealBal !== undefined && rawFireRealBal !== null) ? parseFloat(rawFireRealBal.toString()) : null;
-    const oldRealBal = oldUser ? parseFloat((oldUser.real_balance ?? 0).toString()) : 0;
-    
-    // PostgreSQL / SQLite is the single source of truth for user balance.
-    // Only inherit from Firestore if user is brand new or previously had 0 balance and Firestore has initial deposit.
-    const finalRealBal = oldUser 
-      ? ((oldRealBal === 0 && fireRealBal !== null && !isNaN(fireRealBal) && fireRealBal > 0) ? fireRealBal : oldRealBal)
-      : ((fireRealBal !== null && !isNaN(fireRealBal)) ? fireRealBal : 0);
+    const finalRealBal = (fireRealBal !== null && !isNaN(fireRealBal)) ? fireRealBal : (oldUser ? parseFloat((oldUser.real_balance ?? 0).toString()) : 0);
 
     const rawFireDemoBal = fireData.demo_balance ?? fireData.demoBalance;
     const fireDemoBal = (rawFireDemoBal !== undefined && rawFireDemoBal !== null) ? parseFloat(rawFireDemoBal.toString()) : null;
-    const oldDemoBal = oldUser ? parseFloat((oldUser.demo_balance ?? 10000).toString()) : 10000;
-    const finalDemoBal = oldUser
-      ? oldDemoBal
-      : ((fireDemoBal !== null && !isNaN(fireDemoBal)) ? fireDemoBal : 10000);
+    const finalDemoBal = (fireDemoBal !== null && !isNaN(fireDemoBal)) ? fireDemoBal : (oldUser ? parseFloat((oldUser.demo_balance ?? 10000).toString()) : 10000);
 
     const rawFireAffBal = fireData.affiliate_balance ?? fireData.affiliateBalance;
     const fireAffBal = (rawFireAffBal !== undefined && rawFireAffBal !== null) ? parseFloat(rawFireAffBal.toString()) : null;
-    const oldAffBal = oldUser ? parseFloat((oldUser.affiliate_balance ?? 0).toString()) : 0;
-    const finalAffBal = oldUser
-      ? ((oldAffBal === 0 && fireAffBal !== null && !isNaN(fireAffBal) && fireAffBal > 0) ? fireAffBal : oldAffBal)
-      : ((fireAffBal !== null && !isNaN(fireAffBal)) ? fireAffBal : 0);
+    const finalAffBal = (fireAffBal !== null && !isNaN(fireAffBal)) ? fireAffBal : (oldUser ? parseFloat((oldUser.affiliate_balance ?? 0).toString()) : 0);
 
     const fireRefCode = fireData.referralCode || fireData.referral_code || fireData.affiliateId || fireData.affiliate_id || '';
 

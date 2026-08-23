@@ -155,14 +155,14 @@ export const TradingChart: React.FC = () => {
       const now = Date.now();
       const candleTime = (Math.floor(now / (timeframeSeconds * 1000)) * timeframeSeconds) as Time;
 
-      // Only move the price in distinct ticks (e.g., every 400ms to 800ms)
+      // Only move the price in distinct ticks (e.g., every 250ms to 500ms)
       // This prevents 60FPS micro-jitter and creates solid, confident movements like major platforms
       if (now - lastTickTime > nextTickDelay) {
         lastTickTime = now;
-        nextTickDelay = Math.random() * 400 + 400; // Ticks happen every 400ms-800ms
+        nextTickDelay = Math.random() * 250 + 250; // Ticks happen every 250ms-500ms
 
         // Larger, more deliberate price movements matching historical scale
-        const baseVolatility = 0.0004;
+        const baseVolatility = 0.0006;
         const jump = (Math.random() - 0.5) * baseVolatility;
         const momentum = (Math.random() - 0.5) > 0 ? 1.5 : 0.7; 
         

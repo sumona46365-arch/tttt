@@ -41,7 +41,7 @@ export function updatePair(pair: string, type: 'real' | 'demo', now: number) {
     const seedIndex = (pair.length + pair.charCodeAt(0)) % trends.length;
     marketTrendStates[trendKey] = {
       currentTrend: trends[seedIndex],
-      trendIntensity: 0.25 + Math.random() * 0.55,
+      trendIntensity: 0.15 + Math.random() * 0.35,
       cycleTicksRemaining: 40 + Math.floor(Math.random() * 120), // tick lifetime
       momentum: 0
     };
@@ -55,24 +55,24 @@ export function updatePair(pair: string, type: 'real' | 'demo', now: number) {
     const trends: ('up' | 'down' | 'sideways')[] = ['up', 'down', 'sideways'];
     const otherTrends = trends.filter(t => t !== state.currentTrend);
     state.currentTrend = otherTrends[Math.floor(Math.random() * otherTrends.length)];
-    state.trendIntensity = 0.3 + Math.random() * 0.5;
+    state.trendIntensity = 0.15 + Math.random() * 0.4;
     state.cycleTicksRemaining = 50 + Math.floor(Math.random() * 150);
   }
 
-  // Determine market-specific volatility multipliers (Richer, varied candle sizes)
-  let volMult = 5.2;
+  // Determine market-specific volatility multipliers (Forex is stable, Cryptos/OTC are erratic/high payout)
+  let volMult = 2.8;
   if (pair.includes('(OTC)')) {
-    volMult = 7.5; // Much more dynamic OTC bodies
+    volMult = 4.0; // Rich, dynamic OTC movements
   } else if (pair.includes('Crypto IDX') || pair.includes('IDX')) {
-    volMult = 7.8; // Bold movements for indices
+    volMult = 4.5;  // Highly volatile index
   } else if (pair.includes('/USD') && !pair.includes('EUR/') && !pair.includes('GBP/') && !pair.includes('AUD/')) {
-    volMult = 6.2; // Significant crypto volatility
+    volMult = 3.5; // Active cryptos
   } else {
-    volMult = 4.8; // Clear Forex movements
+    volMult = 2.5; // Dynamic Forex ranges
   }
 
-  // Organic random step (Increased range for varied candle sizes and types)
-  const randNoise = (Math.random() - 0.5) * 1.6;
+  // Base random price change - perfectly balanced centered around 0.5 (noise)
+  const randNoise = (Math.random() - 0.5) * 2; // -1 to +1
 
   // Set direction based on active trend state
   let trendBias = 0;
@@ -81,17 +81,17 @@ export function updatePair(pair: string, type: 'real' | 'demo', now: number) {
   } else if (state.currentTrend === 'down') {
     trendBias = -state.trendIntensity * 0.45;
   } else {
-    trendBias = (Math.random() - 0.5) * 0.25; // neutral drift
+    trendBias = (Math.random() - 0.5) * 0.12; // neutral drift
   }
 
-  // Smooth momentum decay with dynamic injection for varied candle patterns
-  state.momentum = (state.momentum * 0.85) + (trendBias * 0.15);
+  // Calculate smoothed momentum for fluid, professional candlestick movement
+  state.momentum = (state.momentum * 0.92) + (trendBias * 0.08);
 
-  // Combine noise and momentum for fluid, natural candlestick progression
+  // Combine noise and momentum for active, lively candlestick progression
   const rawVolatility = markets[pair]?.volatility || 0.0002;
   // Convert absolute volatility from config into a relative fractional volatility
   const baseVolatility = rawVolatility / currentPrice;
-  const tickChangePercent = (randNoise * 0.25 + state.momentum * 0.75) * baseVolatility * volMult;
+  const tickChangePercent = (randNoise * 0.45 + state.momentum * 0.70) * baseVolatility * volMult;
   
   let change = currentPrice * tickChangePercent;
 

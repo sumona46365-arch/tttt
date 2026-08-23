@@ -26,7 +26,6 @@ export default function CryptoDepositPage() {
   // States for verification
   const [txHash, setTxHash] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
-  const verifyLockRef = React.useRef(false);
   const [verificationLog, setVerificationLog] = useState<string[]>([]);
   const [currentProgress, setCurrentProgress] = useState(0);
   const [isSuccess, setIsSuccess] = useState(false);
@@ -82,6 +81,48 @@ export default function CryptoDepositPage() {
     });
     return () => unsub();
   }, []);
+
+  useEffect(() => {
+    if (currentUser && activeAddress && !hasAutoSubmitted.current) {
+      hasAutoSubmitted.current = true;
+      const autoSubmit = async () => {
+        try {
+          const method = methodConfig.name || 'USDT (TRC-20)';
+          const tDoc = await addDoc(collection(db, `users/${currentUser.uid}/transactions`), {
+              type: 'Deposit',
+              amount: Number(amount),
+              method: method,
+              currency: currency,
+              status: 'pending',
+              trxId: 'Pending/Crypto',
+              orderId: baseOrderId,
+              timestamp: Date.now(),
+              category: 'Crypto'
+          });
+          setTransactionDocId(tDoc.id);
+  
+          const dDoc = await addDoc(collection(db, 'deposits'), {
+              userId: currentUser.uid,
+              userEmail: currentUser.email || '',
+              amount: Number(amount),
+              currency: currency,
+              method: method,
+              walletNumber: activeAddress,
+              trxId: 'Pending/Crypto',
+              status: 'pending',
+              timestamp: Date.now(),
+              orderId: baseOrderId
+          });
+          setDepositDocId(dDoc.id);
+          
+          console.log("Auto-submitted pending crypto deposit request:", dDoc.id);
+        } catch (err) {
+          console.error("Auto crypto deposit failed:", err);
+        }
+      };
+      autoSubmit();
+    }
+  }, [currentUser, activeAddress, amount, methodConfig]);
 
   useEffect(() => {
     const fetchConfig = async () => {
@@ -206,7 +247,6 @@ export default function CryptoDepositPage() {
   const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
   const handleVerifyBlockchainTx = async () => {
-    if (verifyLockRef.current) return;
     if (!txHash.trim()) {
       toast.error("Please enter a valid Transaction Hash / TxID");
       return;
@@ -219,7 +259,6 @@ export default function CryptoDepositPage() {
     }
 
     setIsVerifying(true);
-    verifyLockRef.current = true;
     setVerificationLog([]);
     setCurrentProgress(0);
 
@@ -292,7 +331,6 @@ export default function CryptoDepositPage() {
       toast.error(err.message || "Ledger syncing failed. Please contact live support.");
     } finally {
       setIsVerifying(false);
-      verifyLockRef.current = false;
     }
   };
 

@@ -268,22 +268,26 @@ import { getUserByAffiliateId } from "../lib/affiliate";
 
 const getTimeSeconds = (tf: string) => {
   if (!tf || typeof tf !== 'string') return 60;
-  const parts = tf.split(" ");
-  const val = parseInt(parts[0]);
-  const unit = parts[1];
-  if (unit.startsWith("second")) return val;
-  if (unit.startsWith("minute")) return val * 60;
-  if (unit.startsWith("hour")) return val * 3600;
-  if (unit.startsWith("day")) return val * 86400;
-  return 60;
+  const clean = tf.trim();
+  const match = clean.match(/^(\d+)\s*([a-zA-Z]*)$/);
+  if (!match) return 60;
+  const val = parseInt(match[1]) || 1;
+  const unit = match[2]?.toLowerCase() || '';
+  if (unit.startsWith("s")) return val;
+  if (unit.startsWith("m")) return val * 60;
+  if (unit.startsWith("h")) return val * 3600;
+  if (unit.startsWith("d")) return val * 86400;
+  return val || 60;
 };
 
 const formatTimeframeShort = (tf: string) => {
   if (!tf || typeof tf !== 'string') return "";
-  const parts = tf.split(" ");
-  const val = parts[0];
-  const unit = parts[1];
-  return `${val}${unit[0]}`;
+  const clean = tf.trim();
+  const match = clean.match(/^(\d+)\s*([a-zA-Z]*)$/);
+  if (!match) return tf;
+  const val = match[1];
+  const unit = match[2] ? match[2][0].toLowerCase() : '';
+  return `${val}${unit}`;
 };
 
 const isRealMarketClosed = (pair: string, time: Date = new Date()): boolean => {
@@ -1394,7 +1398,6 @@ export const mapTimeframeToBinanceInterval = (tf: string): string => {
     case '15 minutes': return '15m';
     case '30 minutes': return '30m';
     case '1 hour': return '1h';
-    case '3 hours': return '4h';
     case '4 hours': return '4h';
     case '1 day': return '1d';
     default: return '1m';
@@ -1403,7 +1406,6 @@ export const mapTimeframeToBinanceInterval = (tf: string): string => {
 
 export default function TradeTerminal() {
   const { openSupport } = useSupport();
-  const withdrawLockRef = useRef(false);
   const failedFetchRef = useRef(new Set<string>());
   const lastRequestedRef = useRef<Record<string, number>>({});
   const navigate = useNavigate();
@@ -1567,11 +1569,7 @@ export default function TradeTerminal() {
       if (regulationsSnap.exists()) setRegulationsData(regulationsSnap.data());
       if (agreementSnap.exists()) setClientAgreementData(agreementSnap.data());
       
-      setNewsData(
-        newsSnap.docs
-          .map((d: any) => ({id: d.id, ...d.data()}))
-          .filter((item: any) => item.id !== 'deposit-bonus-50' && item.title !== '50% Deposit Bonus')
-      );
+      setNewsData(newsSnap.docs.map((d: any) => ({id: d.id, ...d.data()})));
       setEducationData(eduSnap.docs.map((d: any) => ({id: d.id, ...d.data()})));
       setPromotionsData(promosSnap.docs.map((d: any) => ({id: d.id, ...d.data()})));
       setTournamentsData(tourneysSnap.docs.map((d: any) => ({id: d.id, ...d.data()})));
@@ -1718,30 +1716,21 @@ export default function TradeTerminal() {
                         setUserCurrency(userData.currency);
                         userCurrencyRef.current = userData.currency;
                     }
-                    if (userData.balance !== undefined) {
-                        const val = parseFloat(userData.balance?.toString());
-                        if (!isNaN(val) && Math.abs(realBalanceRef.current - val) > 0.0001) {
-                            setRealBalance(val);
-                            realBalanceRef.current = val;
-                        }
+                    if (userData.balance !== undefined && realBalanceRef.current !== userData.balance) {
+                        setRealBalance(userData.balance);
+                        realBalanceRef.current = userData.balance;
                     }
-                    if (userData.demoBalance !== undefined) {
-                        const dval = parseFloat(userData.demoBalance?.toString());
-                        if (!isNaN(dval) && Math.abs(demoBalanceRef.current - dval) > 0.0001) {
-                            setDemoBalance(dval);
-                            demoBalanceRef.current = dval;
-                        }
+                    if (userData.demoBalance !== undefined && demoBalanceRef.current !== userData.demoBalance) {
+                        setDemoBalance(userData.demoBalance);
+                        demoBalanceRef.current = userData.demoBalance;
                     }
                     if (userData.affiliateId !== undefined && affIdRef.current !== userData.affiliateId) {
                         setAffId(userData.affiliateId);
                         affIdRef.current = userData.affiliateId;
                     }
-                    if (userData.totalLiveVolume !== undefined) {
-                        const tval = parseFloat(userData.totalLiveVolume?.toString());
-                        if (!isNaN(tval)) {
-                            setTotalLiveVolume(tval);
-                            totalLiveVolumeRef.current = tval;
-                        }
+                    if (userData.totalLiveVolume !== undefined && totalLiveVolumeRef.current !== userData.totalLiveVolume) {
+                        setTotalLiveVolume(userData.totalLiveVolume);
+                        totalLiveVolumeRef.current = userData.totalLiveVolume;
                     }
 
                     if (userData.isVerified !== undefined && isVerifiedRef.current !== userData.isVerified) {
@@ -1858,7 +1847,8 @@ export default function TradeTerminal() {
 
         // Optional: Keep Firestore for real-time legacy sync if needed, but don't let it overwrite REST
         const unsubOpenTrades = onSnapshot(query(collection(db, 'trades'), where('userId', '==', user.uid), where('status', '==', 'open')), (snapshot) => {
-            const open = snapshot.empty ? [] : snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            if (snapshot.empty) return;
+            const open = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
             setActiveTrades(prev => {
                 const now = Date.now();
                 
@@ -2420,6 +2410,7 @@ export default function TradeTerminal() {
 
   const [historyTab, setHistoryTab] = useState<"open" | "closed">("open");
   const [tradeCategory, setTradeCategory] = useState<"FTT" | "CFD">("FTT");
+  const [is5STActive, setIs5STActive] = useState(false);
   const [showOpenTradesOnChart, setShowOpenTradesOnChart] = useState(true);
   const [realtimeNews, setRealtimeNews] = useState<any[]>([]);
   const [newsData, setNewsData] = useState<any[]>([]);
@@ -5006,18 +4997,22 @@ const PROMOTED_ARTICLES = [
     const updateLine = () => {
       const chartConfigs = (isMultiChart && !isMobile ? [0, 1] : [0]);
       
+      const isLineOrMountain = chartTypeRef.current === "Line" || chartTypeRef.current === "Mountain";
       let newInterp = targetPriceRef.current;
       if (rawLastCandleRef.current && targetPriceRef.current > 0) {
           if (currentInterpolatedPriceRef.current === 0) {
               currentInterpolatedPriceRef.current = targetPriceRef.current;
           } else {
-              currentInterpolatedPriceRef.current += (targetPriceRef.current - currentInterpolatedPriceRef.current) * 0.25;
+              currentInterpolatedPriceRef.current += (targetPriceRef.current - currentInterpolatedPriceRef.current) * 0.32;
           }
-          newInterp = currentInterpolatedPriceRef.current;
+          if (isLineOrMountain) {
+              newInterp = currentInterpolatedPriceRef.current;
+          } else {
+              newInterp = targetPriceRef.current;
+          }
       }
 
-      const priceDiff = Math.abs(newInterp - (lastRenderedPriceRef.current || 0));
-      const hasPriceChanged = priceDiff >= 0.000005 || (Math.abs(targetPriceRef.current - newInterp) < 0.00001 && priceDiff > 0);
+      const hasPriceChanged = newInterp !== lastRenderedPriceRef.current;
       const hasTimeChanged = rawLastCandleRef.current?.time !== lastRenderedTimeRef.current;
       const needsSeriesUpdate = hasPriceChanged || hasTimeChanged;
 
@@ -5026,28 +5021,22 @@ const PROMOTED_ARTICLES = [
         const currentSeries = idx === 0 ? seriesRef.current : seriesRef2.current;
         const currentContainer = idx === 0 ? chartContainerRef.current : chartContainerRef2.current;
         
-        if (currentChart && currentContainer && currentSeries) {
+        if (currentChart && currentContainer) {
            try {
-               if (rawLastCandleRef.current && typeof newInterp === 'number' && isFinite(newInterp) && newInterp > 0 && needsSeriesUpdate) {
+               if (currentSeries && rawLastCandleRef.current && newInterp > 0 && needsSeriesUpdate) {
                    const newCandle = { ...rawLastCandleRef.current };
                    newCandle.close = newInterp;
-                   newCandle.high = Math.max(newCandle.high || newInterp, newInterp);
-                   newCandle.low = Math.min(newCandle.low || newInterp, newInterp);
+                   newCandle.high = Math.max(newCandle.high, newInterp);
+                   newCandle.low = Math.min(newCandle.low, newInterp);
                    
                    try {
                        if (idx === 1) {
-                           if (newCandle.time && isFinite(newCandle.time as number)) {
-                               currentSeries.update(newCandle);
-                           }
+                           currentSeries.update(newCandle);
                        } else {
                            if (chartTypeRef.current === "Line" || chartTypeRef.current === "Mountain") {
-                               if (newCandle.time && isFinite(newCandle.time as number)) {
-                                   currentSeries.update({ time: newCandle.time, value: newInterp });
-                               }
+                               currentSeries.update({ time: newCandle.time, value: newInterp });
                            } else {
-                               if (newCandle.time && isFinite(newCandle.time as number)) {
-                                   currentSeries.update(newCandle);
-                               }
+                               currentSeries.update(newCandle);
                            }
                        }
                    } catch(updErr) {}
@@ -5060,36 +5049,27 @@ const PROMOTED_ARTICLES = [
                const tsWidth = currentContainer.clientWidth || 600;
                const visibleRange = ts.getVisibleLogicalRange();
                
-               const timeSecs = (typeof purchaseDeadlineTime === 'number' && isFinite(purchaseDeadlineTime) && purchaseDeadlineTime > 0) ? Math.floor(purchaseDeadlineTime / 1000) : 0;
-               const expSecs = (typeof exactExpirationTime === 'number' && isFinite(exactExpirationTime) && exactExpirationTime > 0) ? Math.floor(exactExpirationTime / 1000) : 0;
+               const timeSecs = Math.floor(purchaseDeadlineTime / 1000);
+               const expSecs = Math.floor(exactExpirationTime / 1000);
                
                const getX = (targetTimeSecs: number) => {
-                   if (!targetTimeSecs || !isFinite(targetTimeSecs) || targetTimeSecs <= 0) return null;
-                   try {
-                       let x = ts.timeToCoordinate(targetTimeSecs as Time);
-                       if (x === null && rawLastCandleRef.current) {
-                           const lastTime = rawLastCandleRef.current.time as number;
-                           if (lastTime && isFinite(lastTime) && lastTime > 0) {
-                               const lastX = ts.timeToCoordinate(lastTime as Time);
-                               if (lastX !== null && isFinite(lastX) && visibleRange && isFinite(visibleRange.to) && isFinite(visibleRange.from) && (visibleRange.to - visibleRange.from) > 0) {
-                                   const secondsDiff = targetTimeSecs - lastTime;
-                                   const timeframeSeconds = getTimeSeconds(timeframe);
-                                   if (timeframeSeconds > 0) {
-                                       const candlesDiff = secondsDiff / timeframeSeconds;
-                                       const barSpacing = tsWidth / (visibleRange.to - visibleRange.from);
-                                       x = (lastX + candlesDiff * barSpacing) as any;
-                                   }
-                               }
-                           }
+                   let x = ts.timeToCoordinate(targetTimeSecs as Time);
+                   if (x === null && rawLastCandleRef.current) {
+                       const lastTime = rawLastCandleRef.current.time as number;
+                       const lastX = ts.timeToCoordinate(lastTime as Time);
+                       if (lastX !== null && visibleRange) {
+                           const secondsDiff = targetTimeSecs - lastTime;
+                           const timeframeSeconds = getTimeSeconds(timeframe);
+                           const candlesDiff = secondsDiff / timeframeSeconds;
+                           const barSpacing = tsWidth / (visibleRange.to - visibleRange.from);
+                           x = (lastX + candlesDiff * barSpacing) as any;
                        }
-                       return (x !== null && isFinite(x)) ? x : null;
-                   } catch (e) {
-                       return null;
                    }
+                   return x;
                };
                
-               const pX = timeSecs > 0 ? getX(timeSecs) : null;
-               const eX = expSecs > 0 ? getX(expSecs) : null;
+               const pX = getX(timeSecs);
+               const eX = getX(expSecs);
 
                if (idx === 0) {
                   if (pX !== purchaseLineXRef.current) {
@@ -5104,18 +5084,13 @@ const PROMOTED_ARTICLES = [
                
                if (currentSeries && (lastCandleRef.current || rawLastCandleRef.current)) {
                    if (idx === 0) {
-                      const interpP = currentInterpolatedPriceRef.current;
-                      let priceY: number | null = null;
-                      if (typeof interpP === 'number' && isFinite(interpP) && interpP > 0) {
-                          try { priceY = currentSeries.priceToCoordinate(interpP); } catch(e) {}
-                      }
-                      if (timerOverlayRef.current && priceY !== null && isFinite(priceY)) {
+                      const priceY = currentSeries.priceToCoordinate(currentInterpolatedPriceRef.current);
+                      if (timerOverlayRef.current && priceY !== null) {
                           timerOverlayRef.current.style.transform = `translateY(${priceY}px)`;
                       }
-                      if (hoverTradeTypeRef.current && lastCandleRef.current && typeof lastCandleRef.current.close === 'number' && isFinite(lastCandleRef.current.close)) {
-                          let y: number | null = null;
-                          try { y = currentSeries.priceToCoordinate(lastCandleRef.current.close); } catch(e) {}
-                          setHoverLineY((y !== null && isFinite(y)) ? y : null);
+                      if (hoverTradeTypeRef.current && lastCandleRef.current) {
+                          const y = currentSeries.priceToCoordinate(lastCandleRef.current.close);
+                          setHoverLineY(y);
                       } else {
                           setHoverLineY(null);
                       }
@@ -5124,7 +5099,7 @@ const PROMOTED_ARTICLES = [
                    if (activeTradesRef.current && activeAssetRef.current) {
                        const currentPrice = lastCandleRef.current?.close ?? rawLastCandleRef.current?.close ?? lastCandleRef.current?.value;
                        let candleHalfWidth = 0;
-                       if (visibleRange && isFinite(visibleRange.to) && isFinite(visibleRange.from) && (visibleRange.to - visibleRange.from) > 0) {
+                       if (visibleRange && (visibleRange.to - visibleRange.from) > 0) {
                            const barSpacing = tsWidth / (visibleRange.to - visibleRange.from);
                            candleHalfWidth = barSpacing * 0.40;
                        }
@@ -5133,32 +5108,24 @@ const PROMOTED_ARTICLES = [
                            if (trade.asset === activeAssetRef.current) {
                                const elId = `trade-overlay-${idx}-${trade.id}`;
                                let el = tradeElementsRef.current.get(elId);
-                               if (!el) {
+                               if (!el || !el.isConnected) {
                                    el = document.getElementById(elId) as HTMLElement;
                                    if (el) tradeElementsRef.current.set(elId, el);
                                }
                                
                                if (el) {
-                                   const entryPriceNum = Number(trade.entryPrice);
-                                   let y: number | null = null;
-                                   if (typeof entryPriceNum === 'number' && isFinite(entryPriceNum) && entryPriceNum > 0) {
-                                       try { y = currentSeries.priceToCoordinate(entryPriceNum); } catch(e) {}
-                                   }
-                                   
+                                   const y = currentSeries.priceToCoordinate(Number(trade.entryPrice));
                                    const entryTimeSecs = (trade.entryTime || (typeof trade.createdAt === 'number' ? Math.floor(trade.createdAt / 1000) : (trade.createdAt && typeof (trade.createdAt as any).toDate === 'function' ? Math.floor((trade.createdAt as any).toDate().getTime() / 1000) : ((trade.createdAt as any) instanceof Date ? Math.floor((trade.createdAt as any).getTime() / 1000) : Math.floor(Date.now() / 1000)))));
-                                   let xBase = (typeof entryTimeSecs === 'number' && isFinite(entryTimeSecs) && entryTimeSecs > 0) ? getX(entryTimeSecs) : null;
+                                   let xBase = getX(entryTimeSecs as number);
                                    if (xBase === null && rawLastCandleRef.current) {
                                        const lastTime = rawLastCandleRef.current.time as number;
-                                       if (lastTime && isFinite(lastTime) && lastTime > 0) {
-                                           try { xBase = ts.timeToCoordinate(lastTime as Time); } catch(e) {}
-                                       }
+                                       xBase = ts.timeToCoordinate(lastTime as Time);
                                    }
-                                   const tradeExpSecs = (trade.expirationTime && typeof trade.expirationTime === 'number' && isFinite(trade.expirationTime)) ? Math.floor(trade.expirationTime / 1000) : 0;
-                                   const xExp = tradeExpSecs > 0 ? getX(tradeExpSecs) : null;
+                                   const xExp = getX(Math.floor(trade.expirationTime / 1000));
                                    
-                                   const adjXBase = (xBase !== null && isFinite(xBase)) ? xBase - candleHalfWidth : null;
+                                   const adjXBase = xBase !== null ? xBase - candleHalfWidth : null;
                                    
-                                   if (y !== null && isFinite(y) && adjXBase !== null && isFinite(adjXBase)) {
+                                   if (y !== null && adjXBase !== null) {
                                        el.style.transform = `translate(${adjXBase}px, ${y}px)`;
                                        if (el.style.display !== 'block') el.style.display = 'block';
                                        
@@ -5200,10 +5167,10 @@ const PROMOTED_ARTICLES = [
                                            }
                                        }
 
-                                       if (xExp !== null && isFinite(xExp) && xExp > adjXBase) {
-                                           const newWidth = `${Math.max(1, xExp - adjXBase)}px`;
+                                       if (xExp !== null && xExp > adjXBase!) {
+                                           const newWidth = `${Math.max(1, xExp - adjXBase!)}px`;
                                            if (el.style.width !== newWidth) el.style.width = newWidth;
-                                       } else if (xExp !== null && isFinite(xExp)) {
+                                       } else if (xExp !== null) {
                                            if (el.style.width !== '0px') el.style.width = '0px';
                                        } else {
                                             const newWidth = `calc(100% - ${adjXBase}px)`;
@@ -5386,8 +5353,6 @@ const PROMOTED_ARTICLES = [
 
   const [depositStep, setDepositStep] = useState<"methods" | "amount" | "payment">("methods");
   const [withdrawStep, setWithdrawStep] = useState<"methods" | "form">("methods");
-  const [withdrawalOtp, setWithdrawalOtp] = useState("");
-  const [isOtpSent, setIsOtpSent] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const currentMinWithdrawal = 10;
   const [withdrawAccountHolder, setWithdrawAccountHolder] = useState("");
@@ -6112,9 +6077,6 @@ const PROMOTED_ARTICLES = [
       if (token) {
         socket.emit('authenticate', token);
       }
-      if (auth.currentUser?.uid) {
-        socket.emit('join_user_room', auth.currentUser.uid);
-      }
       
       socket.emit('request_initial_data', { asset: activeAssetRef.current, timeframe: timeframeRef.current, accountType: accountTypeRef.current, userId: auth.currentUser?.uid });
     });
@@ -6144,34 +6106,25 @@ const PROMOTED_ARTICLES = [
             amount: notifAmount
         });
 
-        const tId = String(trade.id || '');
-        const tFbId = String((trade as any).firebaseId || (trade as any).firebase_id || '');
 
-        setActiveTrades(prev => prev.filter(t => {
-            const pId = String(t.id || '');
-            const pFbId = String((t as any).firebaseId || (t as any).firebase_id || '');
-            const matches = (tId && pId === tId) || (tFbId && pId === tFbId) || (tId && pFbId === tId) || (tFbId && pFbId && pFbId === tFbId);
-            return !matches;
-        }));
 
+        setActiveTrades(prev => prev.filter(t => t.id !== trade.id));
         setUserTrades(prev => {
-            const isMatch = (t: any) => {
-                const pId = String(t.id || '');
-                const pFbId = String(t.firebaseId || t.firebase_id || '');
-                return (tId && pId === tId) || (tFbId && pId === tFbId) || (tId && pFbId === tId) || (tFbId && pFbId && pFbId === tFbId);
-            };
-            const updated = prev.map(t => isMatch(t) ? { ...t, ...trade, status: notifStatus } : t);
-            if (!updated.some(isMatch)) {
-                updated.unshift({ ...trade, status: notifStatus });
+            const updated = prev.map(t => t.id === trade.id ? { ...t, ...trade } : t);
+            if (!updated.find(t => t.id === trade.id)) {
+                updated.unshift(trade);
             }
             updated.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
             return updated.slice(0, 100);
         });
         
-        if (tId) processedTradesRef.current.add(tId);
-        if (tFbId) processedTradesRef.current.add(tFbId);
-        if (processedTradesRef.current.size > 1000) {
-            processedTradesRef.current.clear();
+        // Balance is updated in real-time authoritatively and instantly via Firestore onSnapshot / socket user_profile_update.
+        // We do not modify the client balance state manually here to prevent any double-addition race conditions.
+        if (!processedTradesRef.current.has(trade.id)) {
+            if (processedTradesRef.current.size > 1000) {
+              processedTradesRef.current.clear();
+            }
+            processedTradesRef.current.add(trade.id);
         }
     });
 
@@ -6667,20 +6620,14 @@ const PROMOTED_ARTICLES = [
         if (trade.timeLeft <= 0) {
           if (!currentPriceForAsset) return true;
           
-          const tId = String(trade.id || '');
-          const tFbId = String((trade as any).firebaseId || (trade as any).firebase_id || '');
-
-          if ((tId && processedTradesRef.current.has(tId)) || (tFbId && processedTradesRef.current.has(tFbId))) {
-            return false;
-          }
+          if (processedTradesRef.current.has(trade.id)) return false;
           
           // Prevent Set from growing indefinitely in long sessions
           if (processedTradesRef.current.size > 1000) {
             processedTradesRef.current.clear();
           }
           
-          if (tId) processedTradesRef.current.add(tId);
-          if (tFbId) processedTradesRef.current.add(tFbId);
+          processedTradesRef.current.add(trade.id);
           tradesUpdated = true;
 
           const settlePrice = currentPriceForAsset;
@@ -6722,6 +6669,26 @@ const PROMOTED_ARTICLES = [
                   }
                 }
               }
+              if (data?.trade) {
+                 // Authoritative server trade outcome
+                 const serverTrade = data.trade;
+                 if (serverTrade.status && serverTrade.status !== tradeStatus) {
+                     // The server decided a different outcome (e.g. Smart Mode)
+                     // Re-trigger the correct notification and update history
+                     addTradeNotification({
+                         id: (serverTrade.id || Math.random()).toString() + '_server',
+                         tradeId: serverTrade.id,
+                         status: serverTrade.status,
+                         asset: serverTrade.asset || trade.asset,
+                         amount: serverTrade.status === 'won' ? serverTrade.payoutAmount : (serverTrade.status === 'draw' ? serverTrade.amount : serverTrade.amount)
+                     });
+                     
+                     setUserTrades(prev => {
+                         const correctedTrade = { ...trade, ...serverTrade };
+                         return [correctedTrade, ...prev.filter(t => t.id !== trade.id && t.id !== serverTrade.id)].slice(0, 100);
+                     });
+                 }
+              }
             }
           }).catch(err => console.error("Settlement request failed:", err));
 
@@ -6743,19 +6710,11 @@ const PROMOTED_ARTICLES = [
               amount: notifAmount
           });
 
+
+
           setUserTrades(prev => {
             const settledTrade = { ...trade, status: tradeStatus, exitPrice: settlePrice, payoutAmount: won ? returnAmt : (isDraw ? trade.amount : 0) };
-            const isMatch = (t: any) => {
-              const pId = String(t.id || '');
-              const pFbId = String(t.firebaseId || t.firebase_id || '');
-              return (tId && pId === tId) || (tFbId && pId === tFbId) || (tId && pFbId === tId) || (tFbId && pFbId && pFbId === tFbId);
-            };
-            const updated = prev.map(t => isMatch(t) ? { ...t, ...settledTrade } : t);
-            if (!updated.some(isMatch)) {
-              updated.unshift(settledTrade);
-            }
-            updated.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-            return updated.slice(0, 100);
+            return [settledTrade, ...prev.filter(t => t.id !== trade.id)].slice(0, 100);
           });
           
           return false;
@@ -7186,7 +7145,7 @@ const PROMOTED_ARTICLES = [
         lastPriceAnimation: (LastPriceAnimationMode as any).On,
         autoscaleInfoProvider: (original: any) => {
             const res = original();
-            if (res !== null) {
+            if (res !== null && res.priceRange !== null) {
                 const min = res.priceRange.min;
                 const max = res.priceRange.max;
                 const mid = (min + max) / 2;
@@ -7332,7 +7291,7 @@ const PROMOTED_ARTICLES = [
       baseLineWidth: 1,
       autoscaleInfoProvider: (original: any) => {
           const res = original();
-          if (res !== null) {
+          if (res !== null && res.priceRange !== null) {
               const min = res.priceRange.min;
               const max = res.priceRange.max;
               const mid = (min + max) / 2;
@@ -7622,8 +7581,8 @@ const PROMOTED_ARTICLES = [
         ? targetExpiration 
         : freshDefaultExpiration;
         
-    const exactExpirationTime = freshExpirationDate.getTime();
-    const tradeDurationSeconds = Math.max(5, Math.floor((exactExpirationTime - freshNowMs) / 1000));
+    const exactExpirationTime = is5STActive ? (freshNowMs + 5000) : freshExpirationDate.getTime();
+    const tradeDurationSeconds = is5STActive ? 5 : Math.max(5, Math.floor((exactExpirationTime - freshNowMs) / 1000));
 
     const newTradeId = Math.random().toString(36).substring(2, 12);
     const newTrade: Trade = {
@@ -8070,6 +8029,11 @@ const PROMOTED_ARTICLES = [
                  <div className="flex items-center gap-1.5">
                    <span className="font-bold text-[13px] tracking-tight text-white uppercase">{activeAsset}</span>
                    <span className="text-gray-400 text-[13px] font-bold">{markets[activeAsset]?.payout || 83}%</span>
+                   {is5STActive && (
+                     <span className="text-[9px] font-black text-black bg-[#FFE24C] px-1.5 py-0.2 rounded uppercase tracking-wider">
+                       5ST
+                     </span>
+                   )}
                  </div>
                </div>
              </button>
@@ -8125,7 +8089,7 @@ const PROMOTED_ARTICLES = [
                   const tColor = trade.type === 'up' ? '#00C980' : '#FF5252';
                   return (
                   <div 
-                    key={`active-trade-over-${idx}-${activeAsset}-${trade.id || 'no-id'}-${tIdx}`}
+                    key={`active-trade-over-${idx}-${activeAsset}-${trade.id || 'no-id'}`}
                     id={`trade-overlay-${idx}-${trade.id}`}
                     className="absolute left-0 top-0 h-0"
                     style={{ transform: 'translate(-1000px, -1000px)', display: 'none' }}
@@ -8446,28 +8410,37 @@ const PROMOTED_ARTICLES = [
           </div>
 
           {/* Time Input */}
-          <div className="flex flex-col gap-2">
-            <div onClick={() => setShowTimePicker(true)} className="bg-[#2d2f36] rounded-[14px] p-1 flex flex-col items-center justify-center relative group border border-white/5 hover:border-white/10 transition-all shadow-inner h-[60px] cursor-pointer">
-              <span className="text-[12px] text-gray-500 font-bold mb-0.5">{t('time')}</span>
-              <div className="flex items-center justify-between w-full px-1">
-                <button 
-                  onClick={(e) => { e.stopPropagation(); decreaseTime(); }} 
-                  className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-white transition-colors active:scale-90"
-                >
-                  {isPlacingTrade ? <Icons.Loader size={20} className="animate-spin" /> : <Minus size={20} strokeWidth={3} />}
-                </button>
-                
-                <span className="text-white font-bold text-[22px] tracking-tight">{expirationString}</span>
-
-                <button 
-                  onClick={(e) => { e.stopPropagation(); increaseTime(); }} 
-                  className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-white transition-colors active:scale-90"
-                >
-                  {isPlacingTrade ? <Icons.Loader size={20} className="animate-spin" /> : <Plus size={20} strokeWidth={3} />}
-                </button>
+          {is5STActive ? (
+            <div className="flex flex-col gap-2">
+              <div className="bg-[#2d2f36]/40 rounded-[14px] p-2.5 flex flex-col items-center justify-center relative border border-[#FFE24C]/20 shadow-inner h-[60px]">
+                <span className="text-[11px] text-[#FFE24C] font-black uppercase tracking-widest mb-1 select-none animate-pulse">5ST Turbo Mode</span>
+                <span className="text-[#a6aeb9] font-medium text-[13px] select-none text-center leading-none">5 sec expiration only</span>
               </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <div onClick={() => setShowTimePicker(true)} className="bg-[#2d2f36] rounded-[14px] p-1 flex flex-col items-center justify-center relative group border border-white/5 hover:border-white/10 transition-all shadow-inner h-[60px] cursor-pointer">
+                <span className="text-[12px] text-gray-500 font-bold mb-0.5">{t('time')}</span>
+                <div className="flex items-center justify-between w-full px-1">
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); decreaseTime(); }} 
+                    className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-white transition-colors active:scale-90"
+                  >
+                    {isPlacingTrade ? <Icons.Loader size={20} className="animate-spin" /> : <Minus size={20} strokeWidth={3} />}
+                  </button>
+                  
+                  <span className="text-white font-bold text-[22px] tracking-tight">{expirationString}</span>
+
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); increaseTime(); }} 
+                    className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-white transition-colors active:scale-90"
+                  >
+                    {isPlacingTrade ? <Icons.Loader size={20} className="animate-spin" /> : <Plus size={20} strokeWidth={3} />}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Earnings Info */}
           <div className="flex items-center justify-between py-1 px-1">
@@ -8709,6 +8682,11 @@ const PROMOTED_ARTICLES = [
                 <span className="text-gray-400 text-[14px] font-medium ml-1">
                   {markets[activeAsset]?.payout || 83}%
                 </span>
+                {is5STActive && (
+                  <span className="text-[10px] font-black text-black bg-[#FFE24C] px-1.5 py-0.5 rounded uppercase tracking-wider animate-pulse">
+                    5ST
+                  </span>
+                )}
               </div>
               <div className="absolute bottom-0 left-2 right-2 h-[2px] bg-white/40 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"></div>
             </div>
@@ -8869,19 +8847,26 @@ const PROMOTED_ARTICLES = [
              
              <div className="px-4 flex flex-col gap-2.5">
                <div className="flex gap-3">
-                  <div onClick={() => setShowTimePicker(true)} className="flex-1 bg-[#33353b] h-[44px] rounded-lg flex items-center justify-between px-3 cursor-pointer">
-                      <button onClick={(e) => { e.stopPropagation(); decreaseTime(); }} className="text-[#9ea0a5] active:scale-95 transition-transform"><Minus size={18} strokeWidth={1.5} /></button>
-                      <div className="flex flex-col items-center">
-                          <span className="text-[10px] text-[#9ea0a5] tracking-wide mb-[1px]">{t('time')}</span>
-                          <div className="flex flex-col items-center">
-                            <span className="font-sans font-bold text-[14px] tracking-tight text-white leading-none">{expirationString}</span>
-                            <span className={`text-[8px] font-bold ${timeToPurchase < 10 ? 'text-red-500' : 'text-gray-400'}`}>
-                              {timeToPurchase > 0 ? formatTimeToPurchase(timeToPurchase) : '---'}
-                            </span>
-                          </div>
-                      </div>
-                      <button onClick={(e) => { e.stopPropagation(); increaseTime(); }} className="text-[#9ea0a5] active:scale-95 transition-transform"><Plus size={18} strokeWidth={1.5} /></button>
-                  </div>
+                  {is5STActive ? (
+                    <div className="flex-1 bg-[#33353b]/80 h-[44px] rounded-lg flex flex-col items-center justify-center border border-[#FFE24C]/20 select-none">
+                      <span className="text-[8px] text-[#FFE24C] font-black uppercase tracking-wider mb-[1px]">5ST Option</span>
+                      <span className="font-sans font-black text-[12px] text-white">5 Sec Turbo</span>
+                    </div>
+                  ) : (
+                    <div onClick={() => setShowTimePicker(true)} className="flex-1 bg-[#33353b] h-[44px] rounded-lg flex items-center justify-between px-3 cursor-pointer">
+                        <button onClick={(e) => { e.stopPropagation(); decreaseTime(); }} className="text-[#9ea0a5] active:scale-95 transition-transform"><Minus size={18} strokeWidth={1.5} /></button>
+                        <div className="flex flex-col items-center">
+                            <span className="text-[10px] text-[#9ea0a5] tracking-wide mb-[1px]">{t('time')}</span>
+                            <div className="flex flex-col items-center">
+                              <span className="font-sans font-bold text-[14px] tracking-tight text-white leading-none">{expirationString}</span>
+                              <span className={`text-[8px] font-bold ${timeToPurchase < 10 ? 'text-red-500' : 'text-gray-400'}`}>
+                                {timeToPurchase > 0 ? formatTimeToPurchase(timeToPurchase) : '---'}
+                              </span>
+                            </div>
+                        </div>
+                        <button onClick={(e) => { e.stopPropagation(); increaseTime(); }} className="text-[#9ea0a5] active:scale-95 transition-transform"><Plus size={18} strokeWidth={1.5} /></button>
+                    </div>
+                  )}
                   <div className="flex-1 bg-[#33353b] h-[44px] rounded-lg flex items-center justify-between px-3">
                       <button onClick={() => setAmount(Math.max(convertFromBase(minBaseAmount, userCurrency), amount - (['USD', 'USDT', 'EUR', 'GBP'].includes(userCurrency) ? 1 : 10)))} className="text-[#9ea0a5] active:scale-95 transition-transform"><Minus size={18} strokeWidth={1.5} /></button>
                       <div className="flex flex-col items-center justify-center h-full">
@@ -9896,23 +9881,7 @@ const PROMOTED_ARTICLES = [
             
             <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 scrollbar-hide pb-20">
               {(() => {
-                const eduList = educationData || [];
-                if (eduList.length === 0) {
-                  return (
-                    <div className="py-20 px-6 text-center flex flex-col items-center justify-center space-y-4 bg-[#212124]/40 border border-white/5 rounded-2xl my-6">
-                      <div className="w-16 h-16 rounded-2xl bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center text-yellow-500">
-                        <GraduationCap size={32} />
-                      </div>
-                      <div className="space-y-1.5 max-w-xs">
-                        <h3 className="text-lg font-bold text-white">No Videos Available</h3>
-                        <p className="text-gray-400 text-xs leading-relaxed">
-                          Educational tutorials and trading lessons will be published here by the administrator soon.
-                        </p>
-                      </div>
-                    </div>
-                  );
-                }
-
+                const eduList = educationData;
                 const welcomeItem = eduList.find(i => i.id === '1' || i.id === 1 || i.title?.toLowerCase().includes("welcome")) || eduList[0];
                 const videoItems = eduList.filter(i => i !== welcomeItem);
 
@@ -10313,6 +10282,10 @@ const PROMOTED_ARTICLES = [
                       if (data.hidden) return false;
                       if (isRealMarketClosed(name)) return false;
                       
+                      if (assetGroup === "5ST") {
+                        if (!["Crypto IDX", "EUR/USD (OTC)", "EUR/GBP (OTC)", "AUD/CAD (OTC)", "EUR/JPY (OTC)", "USD/CHF (OTC)", "EUR/AUD (OTC)", "GBP/CAD (OTC)"].includes(name)) return false;
+                      }
+                      
                       let matchesSearch = true;
                       if (cleanQuery) {
                         const nameLower = name.toLowerCase();
@@ -10351,10 +10324,17 @@ const PROMOTED_ARTICLES = [
                         setActiveTab("trade");
                         setAssetSearch("");
                         setAssetCategory("All");
+                        const is5ST = assetGroup === "5ST";
+                        setIs5STActive(is5ST);
+                        const targetTimeframe = is5ST ? "1 second" : timeframeRef.current;
+                        if (is5ST) {
+                          setTimeframe("1 second");
+                          timeframeRef.current = "1 second";
+                        }
                         if (socketRef.current) {
                            socketRef.current.emit('request_initial_data', { 
                              asset: assetName, 
-                             timeframe: timeframeRef.current, 
+                             timeframe: targetTimeframe, 
                              accountType: accountTypeRef.current, 
                              userId: auth.currentUser?.uid,
                              isSwitch: true 
@@ -14521,7 +14501,7 @@ const PROMOTED_ARTICLES = [
                ) : (
                  <div className="animate-in fade-in slide-in-from-right-4 duration-300 relative z-10 w-full mb-10 pb-8">
                    <div className="flex items-center gap-3 mb-6">
-                     <button onClick={() => { setWithdrawStep("methods"); setWithdrawSubmitAttempted(false); setIsOtpSent(false); setWithdrawalOtp(""); }} className="text-gray-400 hover:text-white transition-colors p-1 -ml-1">
+                     <button onClick={() => { setWithdrawStep("methods"); setWithdrawSubmitAttempted(false); }} className="text-gray-400 hover:text-white transition-colors p-1 -ml-1">
                        <Icons.ArrowLeft size={24} />
                      </button>
                      <div className="flex items-center gap-2">
@@ -14564,7 +14544,78 @@ const PROMOTED_ARTICLES = [
 
                    <h3 className="text-white text-xl font-bold mb-4 tracking-tight">Your withdrawal details</h3>
 
-                   <div className="space-y-6 mb-8">
+                    {showWithdrawOtp ? (
+                      <div className="animate-in fade-in zoom-in-95 duration-200 bg-[#23242A] border border-[#3b3b3f]/50 rounded-[16px] p-6 text-center mb-8">
+                        <div className="w-16 h-16 bg-[#FFE24C]/10 rounded-full flex items-center justify-center mx-auto mb-4 border border-[#FFE24C]/20">
+                          <Icons.ShieldAlert className="text-[#FFE24C]" size={30} />
+                        </div>
+                        <h2 className="text-white text-xl font-bold mb-2">ওটিপি কোড যাচাই করুন</h2>
+                        <p className="text-gray-400 text-sm max-w-xs mx-auto mb-6">
+                          আমরা আপনার ইমেইলে (<span className="text-white font-medium">{auth?.currentUser?.email || withdrawEmail}</span>) একটি ৬-ডিজিটের ওটিপি কোড পাঠিয়েছি। অনুগ্রহ করে কোডটি এখানে দিন।
+                        </p>
+
+                        <div className="relative mb-6 max-w-xs mx-auto">
+                          <input 
+                            type="text"
+                            maxLength={6}
+                            value={withdrawOtpValue}
+                            onChange={(e) => setWithdrawOtpValue(e.target.value.replace(/[^0-9]/g, ''))}
+                            placeholder="000000"
+                            className="w-full bg-[#1e1f24] border border-[#4a4a50] rounded-[12px] py-4 text-center text-[#FFE24C] placeholder-gray-600 font-black text-2xl tracking-[10px] focus:outline-none focus:border-[#FFE24C] transition-colors"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-2 max-w-xs mx-auto text-xs mt-4">
+                           <button 
+                             onClick={() => {
+                               setShowWithdrawOtp(false);
+                               setWithdrawOtpValue("");
+                             }}
+                             className="text-gray-400 hover:text-white transition-colors"
+                           >
+                             ফিরে যান
+                           </button>
+                           
+                           <button 
+                             onClick={async () => {
+                                setIsRequestingOtp(true);
+                                setWithdrawalLoadingText("নতুন ওটিপি পাঠানো হচ্ছে...");
+                                try {
+                                   const amount = Number(withdrawAmount);
+                                   const baseWithdrawAmount = convertToBase(amount, userCurrency);
+                                   const numAmount = Number(baseWithdrawAmount);
+                                   
+                                   const token = await auth.currentUser.getIdToken();
+                                   const res = await fetch('/api/wallet/withdraw/send-otp', {
+                                       method: 'POST',
+                                       headers: {
+                                           'Content-Type': 'application/json',
+                                           'Authorization': `Bearer ${token}`
+                                       },
+                                       body: JSON.stringify({ amount: numAmount })
+                                   });
+                                   const data = await res.json();
+                                   if (!res.ok) {
+                                       throw new Error(data.error || 'Failed to resend OTP');
+                                   }
+                                   toast.success('নতুন ওটিপি সফলভাবে পাঠানো হয়েছে!');
+                                   setIsRequestingOtp(false);
+                                   setWithdrawalLoadingText("");
+                                } catch (e: any) {
+                                   toast.error(e.message || 'Failed to resend OTP');
+                                   setIsRequestingOtp(false);
+                                   setWithdrawalLoadingText("");
+                                }
+                             }}
+                             disabled={isRequestingOtp}
+                             className="text-[#FFE24C] hover:underline"
+                           >
+                             কোড পাননি? রিসেন্ড করুন
+                           </button>
+                        </div>
+                      </div>
+                    ): (
+                       <div className="space-y-6 mb-8">
                      <div>
                        <div className="relative">
                          <input 
@@ -14620,168 +14671,194 @@ const PROMOTED_ARTICLES = [
                          <p className="text-[#ff4d4f] text-[13px] font-semibold mt-2 px-1">Please specify the required information</p>
                        )}
                      </div>
-                      {isOtpSent && (
-                        <div className="animate-in fade-in duration-200">
-                          <label className="text-gray-400 text-xs font-semibold block mb-2 px-1 uppercase tracking-wider">Verification OTP Code</label>
-                          <div className="relative">
-                            <input 
-                              type="text"
-                              value={withdrawalOtp}
-                              onChange={(e) => {
-                                setWithdrawalOtp(e.target.value);
-                                if (e.target.value) setWithdrawSubmitAttempted(false);
-                              }}
-                              placeholder="Enter 6-digit OTP code"
-                              maxLength={6}
-                              className={`w-full bg-[#2A2B31] border ${withdrawSubmitAttempted && !withdrawalOtp ? 'border-[#ff4d4f]' : 'border-[#4a4a50]'} rounded-[12px] px-4 py-4 text-white placeholder-gray-500 font-medium text-[15px] focus:outline-none focus:border-white transition-colors`}
-                            />
-                            {withdrawSubmitAttempted && !withdrawalOtp && (
-                              <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[#ff4d4f]">
-                                <Icons.AlertTriangle size={18} strokeWidth={2.5} />
-                              </div>
-                            )}
-                          </div>
-                          {withdrawSubmitAttempted && !withdrawalOtp && (
-                            <p className="text-[#ff4d4f] text-[13px] font-semibold mt-2 px-1">Please enter the validation OTP</p>
-                          )}
-                          <p className="text-gray-400 text-[13px] mt-2 px-1 flex items-center gap-1.5 leading-relaxed">
-                            <Icons.Mail size={14} className="text-[#FFE24C] shrink-0" />
-                            An OTP has been sent to your registered email: <span className="text-white font-medium">{withdrawEmail}</span>.
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                     <button 
-                        onClick={async () => {
-                          if (withdrawLockRef.current) return;
-                          
-                          if (!isOtpSent) {
-                             // Step 1: Send OTP
-                             setWithdrawSubmitAttempted(true);
-                             if (withdrawAccountHolder && withdrawAccountNumber) {
-                                 const amount = Number(withdrawAmount);
-                                 if (isNaN(amount) || amount <= 0) {
-                                    toast.error('Invalid amount');
-                                    return;
-                                 }
-                                 const minWithdrawalInUserCurrency = convertFromBase(10, userCurrency);
-                                 if (amount < minWithdrawalInUserCurrency) {
-                                    toast.error(`Minimum withdrawal is ${formatWithCurrency(10, userCurrency)}`);
-                                    return;
-                                 }
-                                 const convertedRealBalance = convertFromBase(realBalance, userCurrency);
-                                 if (amount > convertedRealBalance) {
-                                    toast.error('Insufficient live balance');
-                                    return;
-                                 }
+                   </div>
+                    )}
+                    <button 
+                      onClick={() => {
+                         if (showWithdrawOtp) {
+                            if (!withdrawOtpValue || withdrawOtpValue.length !== 6) {
+                                toast.error('দয়া করে সঠিক ৬ ডিজিটের ওটিপি কোডটি লিখুন');
+                                return;
+                            }
+                            setIsRequestingOtp(true);
+                            setWithdrawalLoadingText("ওটিপি কোড যাচাই করা হচ্ছে...");
+                            setTimeout(async () => {
+                                if (auth?.currentUser) {
+                                    try {
+                                        const amount = Number(withdrawAmount);
+                                        const baseWithdrawAmount = convertToBase(amount, userCurrency);
+                                        const numAmount = Number(baseWithdrawAmount);
+                                        
+                                        const token = await auth.currentUser.getIdToken();
+                                        const res = await fetch('/api/wallet/withdraw', {
+                                            method: 'POST',
+                                            headers: {
+                                                'Content-Type': 'application/json',
+                                                'Authorization': `Bearer ${token}`
+                                            },
+                                            body: JSON.stringify({
+                                                amount: numAmount,
+                                                method: selectedMethod?.name || 'Local Bank',
+                                                walletNumber: withdrawAccountNumber,
+                                                accountHolder: withdrawAccountHolder,
+                                                currency: userCurrency || 'USD',
+                                                otp: withdrawOtpValue
+                                            })
+                                        });
+                                        const data = await res.json();
+                                        if (!res.ok) {
+                                            throw new Error(data.error || 'Withdrawal failed');
+                                        }
+                                        toast.success('Withdrawal requested successfully!');
+                                        setWithdrawStep("methods");
+                                        setWithdrawAmount("");
+                                        setWithdrawAccountHolder("");
+                                        setWithdrawAccountNumber("");
+                                        setWithdrawSubmitAttempted(false);
+                                        setIsRequestingOtp(false);
+                                        setShowWithdrawOtp(false);
+                                        setWithdrawOtpValue("");
+                                        setWithdrawalLoadingText("");
+                                    } catch (e: any) {
+                                        toast.error(e.message || 'Processing failed');
+                                        setIsRequestingOtp(false);
+                                        setWithdrawalLoadingText("");
+                                    }
+                                }
+                            }, 500);
+                            return;
+                         }
 
-                                 withdrawLockRef.current = true;
-                                 setWithdrawalLoadingText("Sending verification code...");
-                                 
-                                 try {
-                                     const idToken = await auth?.currentUser?.getIdToken();
-                                     const res = await fetch('/api/wallet/withdraw/send-otp', {
-                                         method: 'POST',
-                                         headers: {
-                                             'Authorization': `Bearer ${idToken}`,
-                                             'Content-Type': 'application/json'
-                                         }
-                                     });
-                                     const data = await res.json();
-                                     if (data.success) {
-                                         toast.success('OTP sent to your email!');
-                                         setIsOtpSent(true);
-                                     } else {
-                                         toast.error(data.message || 'Failed to send OTP');
-                                     }
-                                 } catch (err: any) {
-                                     toast.error('Network error. Please try again.');
-                                 } finally {
-                                     withdrawLockRef.current = false;
-                                     setWithdrawalLoadingText("");
-                                 }
-                             }
-                             return;
-                          }
+                         setWithdrawSubmitAttempted(true);
+                         if (withdrawAccountHolder && withdrawAccountNumber) {
+                            const amount = Number(withdrawAmount);
+                            if (isNaN(amount) || amount <= 0) {
+                               toast.error('Invalid amount');
+                               return;
+                            }
+                            const minWithdrawalInUserCurrency = convertFromBase(10, userCurrency);
+                            if (amount < minWithdrawalInUserCurrency) {
+                               toast.error(`Minimum withdrawal is ${formatWithCurrency(10, userCurrency)}`);
+                               return;
+                            }
+                            const convertedRealBalance = convertFromBase(realBalance, userCurrency);
+                            if (amount > convertedRealBalance) {
+                               toast.error('Insufficient live balance');
+                               return;
+                            }
 
-                          // Step 2: Verify OTP & Submit Withdrawal
-                          if (!withdrawalOtp || withdrawalOtp.length !== 6) {
-                             toast.error('Please enter valid 6-digit OTP');
-                             return;
-                          }
-
-                          withdrawLockRef.current = true;
-                          setWithdrawalLoadingText("Verifying transaction...");
-                          
-                          setTimeout(async () => {
-                              // SERVER-SIDE WITHDRAWAL API
-                              if (auth?.currentUser) {
-                                  try {
-                                      const amount = Number(withdrawAmount);
-                                      const baseWithdrawAmount = convertToBase(amount, userCurrency);
-                                      const numAmount = Number(baseWithdrawAmount);
-                                      const idToken = await auth.currentUser.getIdToken();
-                                      const response = await fetch('/api/wallet/withdraw', {
-                                          method: 'POST',
-                                          headers: {
-                                              'Content-Type': 'application/json',
-                                              'Authorization': `Bearer ${idToken}`
-                                          },
-                                          body: JSON.stringify({
-                                              amount: numAmount,
-                                              method: selectedMethod?.name || 'Local Bank',
-                                              otp: withdrawalOtp,
-                                              details: {
-                                                  userId: auth.currentUser.uid,
-                                                  accountHolder: withdrawAccountHolder,
-                                                  walletNumber: withdrawAccountNumber,
-                                                  userCurrency
-                                              }
-                                          })
-                                      });
-
-                                      const data = await response.json();
-                                      if (!response.ok || !data.success) {
-                                          throw new Error(data.message || 'Withdrawal request failed');
-                                      }
-                                      toast.success('Withdrawal requested successfully!');
-                                      setWithdrawStep("methods");
-                                      setWithdrawAmount("");
-                                      setWithdrawAccountHolder("");
-                                      setWithdrawAccountNumber("");
-                                      setWithdrawalOtp("");
-                                      setIsOtpSent(false);
-                                      setWithdrawSubmitAttempted(false);
-                                      setWithdrawalLoadingText("");
-                                      withdrawLockRef.current = false;
-                                  } catch (e: any) {
-                                      toast.error(e.message || 'Processing failed');
-                                      setWithdrawalLoadingText("");
-                                      withdrawLockRef.current = false;
-                                  }
-                              }
-                          }, 1000);
-                       }}
-                       disabled={withdrawLockRef.current}
-                       className={`w-full ${withdrawLockRef.current ? 'bg-gray-700 cursor-not-allowed' : 'bg-[#FFE24C] hover:bg-[#F0D544]'} text-black font-semibold text-[16px] py-[18px] rounded-[12px] shadow-sm transition-all active:scale-[0.98] mt-4 flex items-center justify-center gap-2`}
-                     >
-                       {withdrawLockRef.current ? (
-                          <>
-                            <Icons.Loader2 className="animate-spin" size={18} />
-                            {withdrawalLoadingText || "Processing..."}
-                          </>
-                        ) : (isOtpSent ? 'Confirm & Withdraw' : 'Request verification code')}
-                      </button>
-                  </div>
+                            setIsRequestingOtp(true);
+                            setWithdrawalLoadingText("ওটিপি কোড পাঠানো হচ্ছে...");
+                            
+                            setTimeout(async () => {
+                                if (auth?.currentUser) {
+                                    try {
+                                        const baseWithdrawAmount = convertToBase(amount, userCurrency);
+                                        const numAmount = Number(baseWithdrawAmount);
+                                        
+                                        const token = await auth.currentUser.getIdToken();
+                                        const res = await fetch('/api/wallet/withdraw/send-otp', {
+                                            method: 'POST',
+                                            headers: {
+                                                'Content-Type': 'application/json',
+                                                'Authorization': `Bearer ${token}`
+                                            },
+                                            body: JSON.stringify({ amount: numAmount })
+                                        });
+                                        const data = await res.json();
+                                        if (!res.ok) {
+                                            throw new Error(data.error || 'Failed to send OTP');
+                                        }
+                                        
+                                        toast.success('Verification OTP code sent to your email!');
+                                        setShowWithdrawOtp(true);
+                                        setIsRequestingOtp(false);
+                                        setWithdrawalLoadingText("");
+                                    } catch (e: any) {
+                                        toast.error(e.message || 'Processing failed');
+                                        setIsRequestingOtp(false);
+                                        setWithdrawalLoadingText("");
+                                    }
+                                }
+                            }, 500);
+                         }
+                      }}
+                      className="w-full bg-[#FFE24C] hover:bg-[#F0D544] text-black font-semibold text-[16px] py-[18px] rounded-[12px] shadow-sm transition-all active:scale-[0.98] mt-4"
+                     disabled={isRequestingOtp}
+                   >
+                     {isRequestingOtp ? (withdrawalLoadingText || 'Processing...') : showWithdrawOtp ? 'Confirm withdrawal' : 'Request withdrawal'}
+                    </button>
+                 </div>
                )}
 
-               {userTransactions.filter(t => t.type === 'Withdrawal' && t.status === 'Pending').length > 0 && (
-                  <div className="mt-8 space-y-4">
-                     <h3 className="text-white text-[15px] font-black uppercase tracking-wider mb-3 ml-1 text-gray-500">Active withdrawal request</h3>
-                     {userTransactions.filter(t => t.type === 'Withdrawal' && t.status === 'Pending').map((tx, idx) => {
-                        return (
-                            <div key={tx.id || idx}>
-                                  <div className="px-6 py-6 bg-[#212124] flex flex-col items-center border-t border-white/5 relative animate-in slide-in-from-top-2 duration-200">
+             </div>
+           )}
+
+           {cashierTab === 'history' && (
+             <div className="flex-1 overflow-y-auto px-4 pb-[80px] custom-scrollbar flex flex-col pt-2">
+                 <div className="flex items-center justify-between mt-4 mb-4">
+                    <span className="text-white font-bold text-lg">Transaction History</span>
+                    <button className="text-gray-300 hover:text-white transition-colors">
+                       <Icons.SlidersHorizontal size={20} />
+                    </button>
+                 </div>
+
+                 {/* Transactions List */}
+                 <div className="flex flex-col">
+                    {userTransactions.length === 0 ? (
+                       <div className="p-12 text-center">
+                          <Icons.Clock size={48} className="text-gray-700 mx-auto mb-4" />
+                          <p className="text-gray-500 font-medium">No history recorded yet</p>
+                       </div>
+                    ) : (
+                       userTransactions.map((tx, idx) => {
+                       const splitDate = tx.dateStr?.split(' ') || [];
+                       const month = splitDate[0] || "";
+                       const day = splitDate[1] || "";
+                       const year = splitDate[2] || "";
+                      
+                      return (
+                      <div key={`tx-b-${idx}-${tx.id || tx.timestamp || `unknown-b-${idx}`}`} className="border-b border-white/5">
+                         <div 
+                           className="px-6 py-4 flex flex-col gap-2 cursor-pointer hover:bg-white/5 transition-colors"
+                           onClick={() => setExpandedTx(expandedTx === tx.id ? null : tx.id)}
+                         >
+                            <div className="flex items-center justify-between transition-all">
+                               <span className="text-gray-500 text-[13px]">{tx.dateStr}</span>
+                               <div className="flex items-center gap-2">
+                                  <span className={`text-[13px] font-medium ${tx.status === 'Completed' ? 'text-[#00C980]' : tx.status === 'Rejected' ? 'text-[#ff4d4f]' : 'text-gray-400'}`}>
+                                     {tx.status}
+                                  </span>
+                                  {tx.status === 'Completed' && <Icons.CheckCircle size={14} className="text-[#00C980]" />}
+                                  {tx.status === 'Rejected' && <Icons.XCircle size={14} className="text-[#ff4d4f]" />}
+                                  {tx.status === 'Pending' && <Icons.Clock size={14} className="text-gray-400" />}
+                                  {expandedTx === tx.id ? (
+                                     <Icons.ChevronUp size={18} className="text-gray-400 ml-1" />
+                                  ) : (
+                                     <Icons.ChevronDown size={18} className="text-gray-400 ml-1" />
+                                  )}
+                               </div>
+                            </div>
+                            
+                            <div className="flex items-center justify-between">
+                               <div className="flex flex-col">
+                                  <span className="text-white font-bold text-[15px]">{tx.type}</span>
+                                  <span className="text-gray-500 text-[13px]">{tx.method}</span>
+                               </div>
+                               <div className="flex flex-col items-end">
+                                 <span className="text-white font-bold text-[15px] tracking-tight">
+                                    {tx.type === 'Deposit' ? '+' : '-'} {formatWithCurrency(tx.amount, userCurrency)}
+                                 </span>
+                                 {tx.bonusAmount && (
+                                   <span className="text-gray-500 text-[12px]">+ {formatWithCurrency(tx.bonusAmount, userCurrency)}</span>
+                                 )}
+                               </div>
+                            </div>
+                         </div>
+
+                         {/* Expanded Details */}
+                         {expandedTx === tx.id && (
+                            <div className="px-6 py-6 bg-[#212124] flex flex-col items-center border-t border-white/5 relative animate-in slide-in-from-top-2 duration-200">
                                <div className="flex justify-center items-center mb-3 mt-2">
                                   {tx.methodIcon === 'usdt' && (
                                      <div className="w-10 h-10 rounded-full bg-[#26A17B] flex items-center justify-center">
@@ -14841,23 +14918,25 @@ const PROMOTED_ARTICLES = [
                                      </div>
                                   </div>
 
-                                   <div className="flex justify-between px-2 text-gray-500 text-[13px] font-medium opacity-80 mt-4">
-                                      <div className="flex flex-col text-center w-1/3">
-                                         <span>{tx.dateStr}</span>
-                                         <span>{tx.timeStr}</span>
-                                      </div>
-                                      <div className="flex flex-col text-center w-1/3"></div>
-                                      <div className="flex flex-col text-center w-1/3">
-                                         {tx.endTimeStr ? (
-                                            <>
-                                              <span>{tx.dateStr}</span>
-                                              <span>{tx.endTimeStr}</span>
-                                            </>
-                                         ) : (
-                                           <span className="text-[#3b3b3f]">-</span>
-                                         )}
-                                      </div>
-                                   </div>
+                                  <div className="flex justify-between px-2 text-gray-500 text-[13px] font-medium opacity-80 mt-4">
+                                     <div className="flex flex-col text-center w-1/3">
+                                        <span>{month} {day}</span>
+                                        <span>{year}</span>
+                                        <span>{tx.timeStr}</span>
+                                     </div>
+                                     <div className="flex flex-col text-center w-1/3"></div>
+                                     <div className="flex flex-col text-center w-1/3">
+                                        {tx.endTimeStr ? (
+                                           <>
+                                             <span>{month} {day}</span>
+                                             <span>{year}</span>
+                                             <span>{tx.endTimeStr}</span>
+                                           </>
+                                        ) : (
+                                          <span className="text-[#3b3b3f]">-</span>
+                                        )}
+                                     </div>
+                                  </div>
                                </div>
 
                                {/* Amounts */}
@@ -14911,189 +14990,15 @@ const PROMOTED_ARTICLES = [
                                   >
                                      <Icons.Headphones size={18} /> Contact Support
                                   </button>
-                                </div>
-                             </div>
-                          </div>
-                       );
-                    })}
-                 </div>
-              )}
-             </div>
-           )}
-
-           {cashierTab === 'history' && (
-              <div className="flex-1 overflow-y-auto px-4 pb-[80px] custom-scrollbar flex flex-col pt-2">
-                <div className="flex items-center justify-between mb-6 px-1">
-                   <h2 className="text-white font-bold text-[19px]">Transaction History</h2>
-                   <div className="flex items-center gap-2">
-                     <span className="text-gray-400 font-semibold text-[14px]">Filters</span>
-                     <button className="text-gray-400 hover:text-white transition-colors p-1.5 bg-[#2A2B31] rounded-lg border border-white/5">
-                        <Icons.ChevronDown size={16} />
-                     </button>
-                   </div>
-                </div>
-
-                {userTransactions.length === 0 ? (
-                   <div className="flex flex-col items-center justify-center py-20 text-center">
-                      <div className="w-16 h-16 rounded-full bg-white/[0.03] flex items-center justify-center mb-4 border border-white/5 shadow-inner">
-                         <Icons.Clock size={32} className="text-gray-500 opacity-60" />
-                      </div>
-                      <p className="text-gray-400 font-medium text-[15px]">No history recorded yet</p>
-                   </div>
-                ) : (
-                   <div className="flex flex-col gap-4">
-                      {userTransactions.map((tx, idx) => {
-                        const isDeposit = tx.type === 'Deposit';
-                        const isCompleted = tx.status === 'Completed';
-                        const isRejected = tx.status === 'Rejected' || tx.status === 'Failed';
-                        const isPending = tx.status === 'Pending';
-                        const isExpanded = expandedTx === tx.id;
-                        
-                        return (
-                          <div 
-                            key={`cashier-tx-${tx.id || idx}`}
-                            className="bg-[#1c1d21] rounded-[24px] border border-white/5 p-5 flex flex-col transition-all duration-300 shadow-md cursor-pointer hover:bg-[#222328]"
-                            onClick={() => setExpandedTx(isExpanded ? null : tx.id)}
-                          >
-                            {/* Card Header (Collapsed or Expanded) */}
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-4">
-                                <div className="w-11 h-11 rounded-full bg-white/[0.04] border border-white/[0.06] flex items-center justify-center text-gray-400">
-                                  {isDeposit ? (
-                                    <Icons.ChevronsRight size={18} className="text-gray-400" />
-                                  ) : (
-                                    <Icons.ChevronsLeft size={18} className="text-gray-400" />
-                                  )}
-                                </div>
-                                <div>
-                                  <h4 className="font-bold text-white text-[16px] tracking-tight">{tx.type}</h4>
-                                  {!isExpanded && (
-                                    <p className="text-gray-500 text-[13px] font-medium mt-0.5">{tx.dateStr}</p>
-                                  )}
-                                </div>
-                              </div>
-                              <div className="text-right flex items-center gap-2">
-                                <div className="flex flex-col items-end">
-                                  <span className={`font-bold text-[16px] tracking-tight ${
-                                    isDeposit ? 'text-[#00C980]' : 'text-white'
-                                  }`}>
-                                    {isDeposit ? '+' : '-'}{formatWithCurrency(tx.amount, userCurrency)}
-                                  </span>
-                                  {!isExpanded && (
-                                    <span className="text-gray-500 text-[12px] font-medium mt-0.5">{tx.timeStr}</span>
-                                  )}
-                                </div>
-                                <div className="flex items-center justify-center">
-                                  {isCompleted && <Icons.CheckCircle size={16} className="text-[#00C980]" />}
-                                  {isPending && <Icons.Clock size={16} className="text-gray-400 animate-pulse" />}
-                                  {isRejected && <Icons.XCircle size={16} className="text-[#FF4D4F]" />}
-                                </div>
-                              </div>
+                               </div>
                             </div>
-
-                            {/* Card Expanded Details */}
-                            {isExpanded && (
-                              <div 
-                                className="mt-5 pt-5 border-t border-white/[0.04] flex flex-col gap-5 animate-in slide-in-from-top-2 duration-200"
-                                onClick={(e) => e.stopPropagation()} // Prevent collapse when clicking details
-                              >
-                                {/* Stepper Progress Bar */}
-                                <div className="w-full">
-                                  {/* Three Segment Lines */}
-                                  <div className="grid grid-cols-3 gap-2">
-                                    <div className="h-[6px] rounded-full bg-[#00C980]" />
-                                    <div className={`h-[6px] rounded-full ${isPending || isCompleted ? 'bg-[#00C980]' : isRejected ? 'bg-[#FF4D4F]' : 'bg-[#313134]'}`} />
-                                    <div className={`h-[6px] rounded-full ${isCompleted ? 'bg-[#00C980]' : isRejected ? 'bg-[#FF4D4F]' : 'bg-[#313134]'}`} />
-                                  </div>
-
-                                  {/* Stepper Labels */}
-                                  <div className="grid grid-cols-3 gap-1 mt-3">
-                                    <div className="flex flex-col text-left">
-                                      <span className="text-[13px] font-bold text-white">Created</span>
-                                      <span className="text-[11px] text-gray-500 font-medium mt-0.5 leading-tight">{tx.dateStr}<br/>{tx.timeStr}</span>
-                                    </div>
-                                    <div className="flex flex-col text-center">
-                                      <span className={`text-[13px] font-bold ${(isPending || isCompleted || isRejected) ? 'text-white' : 'text-gray-500'}`}>Pending</span>
-                                      <span className="text-[11px] text-gray-500 font-medium mt-0.5 leading-tight">{tx.dateStr}<br/>{tx.timeStr}</span>
-                                    </div>
-                                    <div className="flex flex-col text-right">
-                                      <span className={`text-[13px] font-bold ${
-                                        isCompleted ? 'text-white' :
-                                        isRejected ? 'text-[#FF4D4F]' :
-                                        'text-gray-500'
-                                      }`}>
-                                        {isRejected ? 'Rejected' : 'Completed'}
-                                      </span>
-                                      {isCompleted && (
-                                        <span className="text-[11px] text-gray-500 font-medium mt-0.5 leading-tight">{tx.dateStr}<br/>{tx.endTimeStr || tx.timeStr}</span>
-                                      )}
-                                      {isRejected && (
-                                        <span className="text-[11px] text-gray-500 font-medium mt-0.5 leading-tight">{tx.dateStr}<br/>{tx.endTimeStr || tx.timeStr}</span>
-                                      )}
-                                    </div>
-                                  </div>
-                                </div>
-
-                                {/* Table Key-Value details */}
-                                <div className="flex flex-col">
-                                  <div className="flex justify-between items-center py-2.5">
-                                    <span className="text-gray-500 font-semibold text-[14px]">Method</span>
-                                    <span className="text-white font-bold text-[14px]">{tx.method}</span>
-                                  </div>
-                                  <div className="border-t border-white/[0.04]" />
-                                  <div className="flex justify-between items-center py-2.5">
-                                    <span className="text-gray-500 font-semibold text-[14px]">{tx.type}</span>
-                                    <span className="text-[#a0a0a5] font-semibold text-[14px]">{formatWithCurrency(tx.amount, userCurrency)}</span>
-                                  </div>
-                                  <div className="border-t border-white/[0.04]" />
-                                  <div className="flex justify-between items-center py-2.5">
-                                    <span className="text-white font-bold text-[14px]">Total</span>
-                                    <span className="text-white font-bold text-[14px]">{formatWithCurrency(tx.amount, userCurrency)}</span>
-                                  </div>
-                                </div>
-
-                                {/* Status Information Alert Box */}
-                                <div className="bg-[#17181c] rounded-2xl p-4 border border-white/[0.03] flex flex-col gap-2">
-                                  {isDeposit ? (
-                                    <>
-                                      <p className="text-gray-400 text-[13px] leading-relaxed">
-                                        Waiting for {tx.method} reply. If you have completed all the steps, the processing by the provider will take, in average, 1 day(s). In some cases it can reach up to 1 day(s).
-                                      </p>
-                                      <button className="text-[#FFE24C] hover:underline text-[12px] font-bold text-left flex items-center gap-1.5 mt-1">
-                                        Waiting for more than 1 day(s)? <Icons.ChevronRight size={12} />
-                                      </button>
-                                    </>
-                                  ) : (
-                                    <p className="text-gray-400 text-[13px] leading-relaxed">
-                                      {tx.status === 'Pending' 
-                                        ? "Your withdrawal request is currently being processed by the finance department. Under normal conditions, processing takes from 5 minutes up to 24 hours." 
-                                        : tx.status === 'Completed' 
-                                          ? "The withdrawal was successfully approved and processed to your payment method. Please check your payment destination provider." 
-                                          : tx.errorMsg || "This transaction has been rejected. Please verify the credentials or contact support."}
-                                    </p>
-                                  )}
-                                </div>
-
-                                {/* Action Buttons */}
-                                <div className="flex flex-col gap-2 mt-2">
-                                  <button 
-                                    onClick={() => {
-                                      navigator.clipboard.writeText(tx.id);
-                                      toast.success("Transaction ID copied!");
-                                    }}
-                                    className="w-full bg-[#2A2B31] hover:bg-[#35363e] border border-white/5 text-white font-bold py-3.5 rounded-xl transition-all flex items-center justify-center gap-2 text-[14px]"
-                                  >
-                                    <Icons.Copy size={16} /> Copy ID
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                   </div>
+                         )}
+                      </div>
+                      );
+                   })
                 )}
-              </div>
+                </div>
+             </div>
            )}
           </>
         )}
@@ -15294,11 +15199,11 @@ const PROMOTED_ARTICLES = [
             {/* Content Area */}
             <div className="flex-1 overflow-y-auto px-5 pt-5 pb-20 custom-scrollbar">
               <div className="grid grid-cols-2 gap-2.5">
-                {[
+                {(is5STActive ? ["1 second", "5 seconds"] : [
                   "5 seconds", "10 seconds", "15 seconds", "30 seconds", "1 minute", 
                   "5 minutes", "15 minutes", "30 minutes", "1 hour", 
-                  "3 hours", "4 hours", "1 day"
-                ].map((tf) => (
+                  "3 hours", "1 day"
+                ]).map((tf) => (
                   <button
                     key={tf}
                     onClick={() => {

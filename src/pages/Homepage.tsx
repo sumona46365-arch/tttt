@@ -543,11 +543,8 @@ export default function Homepage() {
           <div className="p-8">
             <span className="text-[#ffcf00] font-medium text-sm">Bivaax referral program</span>
             <h2 className="text-2xl font-bold mt-3 mb-8">Invite friends and get up to $100 to your real account</h2>
-            <button 
-              onClick={() => window.location.href = 'https://partner.bivaax.com'}
-              className="w-full bg-[#ffcf00] hover:bg-[#e6bb00] text-black font-bold text-lg py-4 rounded-xl transition-colors"
-            >
-              How it works
+            <button className="w-full bg-[#ffcf00] hover:bg-[#e6bb00] text-black font-bold text-lg py-4 rounded-xl transition-colors">
+              Learn more
             </button>
           </div>
         </div>
@@ -911,7 +908,6 @@ export default function Homepage() {
                 <h4 className="font-black text-sm uppercase tracking-widest text-white mb-6">Company</h4>
                 <ul className="space-y-4 text-gray-500 text-sm font-bold">
                   <li><Link to="/about-us" className="hover:text-[#ffcf00] transition-colors">About Us</Link></li>
-                  <li><a href="https://partner.bivaax.com" className="hover:text-[#ffcf00] transition-colors">Partnership</a></li>
                   <li><Link to="/page/contact" className="hover:text-[#ffcf00] transition-colors">Contact</Link></li>
                   <li><Link to="/page/legal-agreement" className="hover:text-[#ffcf00] transition-colors">Legal Agreement</Link></li>
                   <li><Link to="/page/risk-disclosure" className="hover:text-[#ffcf00] transition-colors">Risk Disclosure</Link></li>

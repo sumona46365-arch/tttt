@@ -16,7 +16,6 @@ const NagadDeposit: React.FC = () => {
 
   const [trxId, setTrxId] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const submitLockRef = React.useRef(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [timeLeft, setTimeLeft] = useState(600);
   const [lang, setLang] = useState<'BN' | 'EN'>('BN');
@@ -115,13 +114,11 @@ const NagadDeposit: React.FC = () => {
   };
 
   const handleConfirm = async () => {
-    if (submitLockRef.current) return;
     if (!trxId || trxId.length < 6) {
       toast.error(lang === 'BN' ? "দয়া করে সঠিক লেনদেন আইডি দিন" : "Please enter a valid Transaction ID");
       return;
     }
 
-    submitLockRef.current = true;
     setIsSubmitting(true);
     try {
       if (auth.currentUser) {
@@ -163,7 +160,6 @@ const NagadDeposit: React.FC = () => {
       toast.error("Failed to submit. Please try again.");
     } finally {
       setIsSubmitting(false);
-      submitLockRef.current = false;
     }
   };
 

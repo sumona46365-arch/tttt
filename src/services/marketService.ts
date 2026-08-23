@@ -44,7 +44,6 @@ export const TIMEFRAMES = [
   "15 minutes",
   "30 minutes",
   "1 hour",
-  "3 hours",
   "4 hours",
   "1 day"
 ];
@@ -60,7 +59,6 @@ export const timeframeSecondsMap: Record<string, number> = {
   "15 minutes": 900,
   "30 minutes": 1800,
   "1 hour": 3600,
-  "3 hours": 10800,
   "4 hours": 14400,
   "1 day": 86400
 };
@@ -246,8 +244,6 @@ export async function initializeCandlesFromDB() {
       try {
         const basePrice = markets[pair]?.price || 100;
         let volatility = (markets[pair]?.volatility || 0.0002) / basePrice;
-        const isOTC = pair.includes('(OTC)') || pair.includes('Crypto IDX');
-        const otcVolBoost = isOTC ? 1.6 : 1.2;
         
         // Load active candles and history for standard timeframes instantly
         // Use a smaller seed set for faster startup
@@ -255,8 +251,7 @@ export async function initializeCandlesFromDB() {
           const tfSeconds = timeframeSecondsMap[tf];
           const bucketTime = now - (now % tfSeconds);
           
-          const tfMultiplier = tfSeconds <= 10 ? 0.14 : tfSeconds <= 60 ? 0.10 : tfSeconds <= 300 ? 0.07 : tfSeconds <= 3600 ? 0.035 : tfSeconds <= 14400 ? 0.018 : 0.01;
-          const stepVol = volatility * Math.sqrt(Math.min(tfSeconds, 1800)) * tfMultiplier * otcVolBoost;
+          const stepVol = volatility * Math.sqrt(tfSeconds) * 0.06;
           const seedCount = 100; // Reduced from 200 for faster boot
           const seedRows = [];
           let currentPrice = basePrice;

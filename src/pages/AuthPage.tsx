@@ -28,13 +28,10 @@ import { motion, AnimatePresence } from 'motion/react';
 export default function AuthPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const isAffiliateSubdomain = window.location.hostname.startsWith('affiliate.') || window.location.hostname.includes('affiliate') || window.location.hostname.includes('partner.bivaax');
-  const isSignUpDomain = window.location.hostname.includes('sign-up-bivaax');
-  const isSignInDomain = window.location.hostname.includes('sign-in-bivaax');
+  const isAffiliateSubdomain = window.location.hostname.startsWith('affiliate.') || window.location.hostname.includes('affiliate');
   
-  // Determine if login or register based on URL path or domain
-  const isRegisterPath = location.pathname === '/register' || location.pathname === '/signup' || isSignUpDomain;
-  const isLoginPath = location.pathname === '/login' || isSignInDomain;
+  // Determine if login or register based on URL path
+  const isRegisterPath = location.pathname === '/register' || location.pathname === '/signup';
   
   const [view, setView] = useState<'login' | 'register' | 'forgot_password' | 'verify_otp' | 'reset_password'>(
     isRegisterPath ? 'register' : 'login'

@@ -1,55 +1,35 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate, Link, useLocation } from 'react-router-dom';
+import React, { useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Award, 
   ArrowRight, 
   Users, 
   DollarSign, 
-  Target, 
+  TrendingUp, 
+  Percent, 
   Zap, 
   ChevronDown, 
   ShieldCheck, 
+  MessageSquare,
   Globe,
   PieChart,
-  Rocket,
-  ArrowUpRight,
-  Star,
-  BarChart3
+  Bot,
+  Laptop
 } from 'lucide-react';
 import { Logo } from '../components/Logo';
 import SEO from '../components/SEO';
 
 export default function AffiliateLandingPage() {
   const navigate = useNavigate();
-  const location = useLocation();
   const [openFaq, setOpenFaq] = useState<number | null>(null);
-
-  // Capture referral from URL if present
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const ref = params.get('ref');
-    const sub = params.get('sub');
-    const type = params.get('type');
-    
-    if (ref) {
-      localStorage.setItem('referralCode', ref);
-      localStorage.setItem('referral_code', ref);
-    }
-    if (sub) {
-      localStorage.setItem('referralSub', sub);
-      localStorage.setItem('referral_sub_id', sub);
-    }
-    if (type) {
-      localStorage.setItem('referralType', type);
-      localStorage.setItem('referral_type', type);
-    }
-  }, [location.search]);
+  const [faqSearch, setFaqSearch] = useState('');
 
   // Interactive Calculator State
   const [tradersCount, setTradersCount] = useState(50);
   const [avgTradeVolume, setAvgTradeVolume] = useState(5000);
 
+  // Dynamic RevShare Rate based on referrals count
   const getRevShareRate = (count: number) => {
     if (count <= 10) return 50;
     if (count <= 50) return 60;
@@ -58,303 +38,167 @@ export default function AffiliateLandingPage() {
   };
 
   const revShareRate = getRevShareRate(tradersCount);
+  // Estimate platform fee/revenue rate as 2.5% of total traded volume
   const estimatedPlatformRevenue = tradersCount * avgTradeVolume * 0.025;
   const estimatedMonthlyCommission = (estimatedPlatformRevenue * (revShareRate / 100)).toFixed(2);
 
-  const steps = [
-    { icon: Rocket, title: "Register", desc: "Open your free partner account in 2 minutes. Instant approval for everyone." },
-    { icon: Target, title: "Promote", desc: "Use your unique link on social media, blogs, or YouTube channels." },
-    { icon: Users, title: "Refer", desc: "Invite traders from 150+ countries. Our platform converts traffic at 15% rate." },
-    { icon: DollarSign, title: "Earn", desc: "Get paid instantly for every trade. Lifetime commission with no expiry." }
+  const faqs = [
+    {
+      q: "What is Bivaax Partners and how does it work?",
+      a: "Bivaax Partners is our official affiliate marketing program. It enables content creators, community leaders, digital marketers, and trading experts to monetize their traffic. By promoting Bivaax with your unique tracking link, you earn a substantial lifetime commission of up to 80% of platform revenue generated from every trade your referrals make."
+    },
+    {
+      q: "How high is the commission rate?",
+      a: "We offer an escalating hybrid Revenue Share structure. You start at 50% flat commission rate of platform revenue, which scales automatically up to 80% based on active referral count. We also support sub-affiliate tiers, allowing you to earn an extra 10% from partners you refer."
+    },
+    {
+      q: "When and how are payouts processed?",
+      a: "Affiliate commissions are synchronized instantly in your partner vault. Payout requests are processed every hour with a low minimum threshold of only $10. We support fast withdrawals to verified USDT (TRC-20) addresses as well as other global fiat integrations inside your portal with zero platform charges."
+    },
+    {
+      q: "Do I get dedicated marketing support?",
+      a: "Standard, Silver, and VIP affiliates all gain access to our custom promotional hub. This includes landing page builders, interactive analytics dashboards, custom campaign tracking (Sub-IDs), localized brand kits, high-converting banner ads, and a highly responsive 24/7 dedicated partner support team."
+    },
+    {
+      q: "Is there any cost to join?",
+      a: "None whatsoever. Bivaax Partners is a completely free program. Registration takes less than 2 minutes, and your partner tracking credentials are generated instantly so you can start converting your audience immediately."
+    }
   ];
 
-  const tiers = [
-    { label: "Starter", range: "0-10", rate: "50%", color: "bg-gray-500/10 text-gray-400", perk: "Basic Tracking" },
-    { label: "Silver", range: "11-50", rate: "60%", color: "bg-blue-500/10 text-blue-400", perk: "Sub-ID Tracking" },
-    { label: "Gold", range: "51-100", rate: "70%", color: "bg-orange-500/10 text-orange-400", perk: "Personal Manager" },
-    { label: "Elite", range: "100+", rate: "80%", color: "bg-[#ffcf00]/10 text-[#ffcf00]", perk: "Custom CPA Available" }
-  ];
-
-  const benefits = [
-    { icon: Zap, title: "Instant Payouts", desc: "Request your earnings anytime. We process withdrawals within 60 minutes via Crypto, Bank, or MFS." },
-    { icon: BarChart3, title: "Precision Tracking", desc: "Real-time analytics and Sub-ID tracking for advanced marketers. Monitor clicks, registrations, and FTDs live." },
-    { icon: ShieldCheck, title: "No Negative Carryover", desc: "Your monthly balance starts fresh. We never charge for user wins. Pure profit-sharing only." },
-    { icon: Globe, title: "Global Conversion", desc: "Localized landing pages in 20+ languages. Our funnel is optimized for high-conversion in Asia and Africa." },
-    { icon: ShieldCheck, title: "Marketing Assets", desc: "Access 500+ high-quality banners, videos, and educational content to help you promote effectively." },
-    { icon: Award, title: "Partner Contests", desc: "Participate in monthly partner tournaments with up to $50,000 in additional cash prizes." }
-  ];
-
-  const partnerTypes = [
-    { title: "Social Influencers", desc: "Perfect for Telegram signal providers, YouTube creators, and Facebook group owners." },
-    { title: "Professional IBs", desc: "Ideal for financial consultants and institutional brokers looking for high retention." },
-    { title: "Webmasters", desc: "Great for review sites, comparison blogs, and high-traffic fintech portals." }
-  ];
+  const filteredFaqs = faqs.filter(faq => 
+    faq.q.toLowerCase().includes(faqSearch.toLowerCase()) || 
+    faq.a.toLowerCase().includes(faqSearch.toLowerCase())
+  );
 
   return (
-    <div className="min-h-screen bg-[#060709] text-white font-sans selection:bg-[#ffcf00]/30 overflow-x-hidden">
+    <div className="min-h-screen bg-[#0b0c10] text-white font-sans selection:bg-[#ffcf00]/30 overflow-x-hidden">
       <SEO 
-        title="Partnership | Bivaax Global Network"
-        description="Join the elite Bivaax Partner Network. Up to 80% RevShare, instant payouts, and premium marketing tools."
+        title="Bivaax Partners | The Elite Trading Affiliate Network"
+        description="Join the Bivaax Partner Network and earn industry-leading commissions. Lifetime recurring income, high conversion rates, and dedicated support."
+        keywords="Bivaax affiliate, Bivaax partner, trading affiliate program, binary options affiliate, earn money trading"
       />
-      
-      {/* GLOW BACKGROUND */}
-      <div className="fixed inset-0 pointer-events-none">
-        <div className="absolute top-[-10%] right-[-10%] w-[60%] h-[60%] bg-[#ffcf00]/5 blur-[120px] rounded-full" />
-        <div className="absolute bottom-[-10%] left-[-10%] w-[50%] h-[50%] bg-blue-500/[0.03] blur-[100px] rounded-full" />
-      </div>
-
-      {/* HEADER */}
-      <header className="fixed top-0 left-0 right-0 h-16 md:h-20 bg-[#060709]/80 backdrop-blur-2xl border-b border-white/5 z-[100] px-4 md:px-12">
+      {/* HEADER (Simplified) */}
+      <header className="fixed top-0 left-0 right-0 h-20 bg-[#0b0c10]/70 backdrop-blur-2xl border-b border-white/5 z-50 px-6 md:px-12 transition-all duration-300">
         <div className="max-w-7xl mx-auto h-full flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-2 md:gap-3 group">
-            <Logo size={20} color="#ffcf00" />
+          <Link to="/" className="flex items-center gap-3 group">
+            <div className="p-2 bg-gradient-to-br from-[#ffcf00] to-[#ff9100] rounded-xl shadow-lg shadow-[#ffcf00]/20 group-hover:scale-110 transition-transform">
+              <Logo size={24} color="black" />
+            </div>
             <div className="flex flex-col">
-              <span className="text-base md:text-xl font-black tracking-tighter leading-none mb-0.5">Bivaax</span>
-              <span className="text-[8px] md:text-[9px] text-[#ffcf00] font-black uppercase tracking-[0.2em] leading-none">PARTNERS</span>
+              <span className="text-[18px] font-black tracking-tighter leading-none mb-0.5">Bivaax</span>
+              <span className="text-[9px] text-[#ffcf00] font-black uppercase tracking-[0.2em] leading-none">PARTNERS</span>
             </div>
           </Link>
-          <div className="flex items-center gap-2 md:gap-4">
-            <Link to="/login" className="hidden sm:block text-[11px] font-black text-gray-400 hover:text-white transition-colors uppercase tracking-widest px-4 py-2">Sign In</Link>
-            <Link to="/register" className="bg-[#ffcf00] text-black px-5 md:px-8 py-2 md:py-3 rounded-2xl text-[10px] md:text-[12px] font-black transition-all active:scale-95 uppercase tracking-widest shadow-lg shadow-[#ffcf00]/10 flex items-center gap-2">Join Elite <ArrowRight size={14} strokeWidth={3} /></Link>
+          <div className="flex items-center gap-3">
+            <Link to="/login" className="px-5 py-2.5 rounded-xl text-[13px] font-black text-gray-300 hover:text-white transition-colors uppercase tracking-widest border border-white/5 hover:border-white/20 bg-white/5">Sign In</Link>
+            <Link to="/register" className="bg-[#ffcf00] hover:bg-[#ffcf00]/90 text-black px-6 py-2.5 rounded-xl text-[13px] font-black transition-all shadow-xl shadow-[#ffcf00]/10 hover:shadow-[#ffcf00]/30 flex items-center gap-2 group active:scale-95 uppercase tracking-widest">Join Elite<ArrowRight size={14} strokeWidth={3} /></Link>
           </div>
         </div>
       </header>
 
-      {/* HERO */}
-      <section className="pt-36 md:pt-56 pb-20 md:pb-32 px-4 md:px-12 relative text-center">
-        <motion.div 
-          initial={{ opacity: 0, y: 30 }} 
-          animate={{ opacity: 1, y: 0 }} 
-          className="max-w-5xl mx-auto space-y-8 md:space-y-12"
-        >
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-white/10 backdrop-blur-xl">
-            <div className="w-2 h-2 rounded-full bg-[#ffcf00] animate-ping" />
-            <span className="text-[9px] md:text-[11px] font-black uppercase tracking-[0.2em] text-gray-400">Elite Partnership Ecosystem</span>
-          </div>
-          
-          <h1 className="text-5xl md:text-8xl lg:text-[10rem] font-black tracking-tighter leading-[0.9] text-white">
-            Monetize <br />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#ffcf00] via-[#ffcf00] to-white/40">Your Vision.</span>
-          </h1>
-
-          <p className="text-gray-500 text-base md:text-2xl max-w-2xl mx-auto font-medium leading-relaxed">
-            The world's most rewarding fintech partner network. Scale your audience into wealth with up to <span className="text-white font-black underline decoration-[#ffcf00] decoration-4 underline-offset-8">80% RevShare.</span>
-          </p>
-
-          <div className="pt-6 flex flex-col sm:flex-row items-center justify-center gap-5">
-            <Link to="/register" className="w-full sm:w-auto px-12 py-6 bg-white text-black rounded-3xl font-black text-lg hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-3 shadow-2xl">
-              Start Earning Now <ArrowUpRight size={22} />
-            </Link>
-            <div className="flex items-center gap-4 px-8 py-6 rounded-3xl bg-white/5 border border-white/10">
-              <div className="flex -space-x-3">
-                {[1, 2, 3].map(i => <div key={i} className="w-10 h-10 rounded-full bg-gray-800 border-2 border-[#060709] flex items-center justify-center text-xs text-gray-500">U</div>)}
-              </div>
-              <div className="text-left">
-                <div className="flex items-center gap-1">
-                  {[1, 2, 3, 4, 5].map(i => <Star key={i} size={10} fill="#ffcf00" className="text-[#ffcf00]" />)}
-                </div>
-                <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">15,000+ Active Partners</span>
-              </div>
-            </div>
-          </div>
-        </motion.div>
-      </section>
-
-      {/* HOW IT WORKS */}
-      <section className="py-20 md:py-32 px-4 md:px-12 max-w-7xl mx-auto">
-        <div className="text-center mb-16 md:mb-24 space-y-4">
-          <h2 className="text-4xl md:text-7xl font-black tracking-tighter">Your Path to <span className="text-[#ffcf00]">Elite.</span></h2>
-          <p className="text-gray-500 font-black uppercase tracking-[0.3em] text-[10px] md:text-xs">Zero Friction Onboarding</p>
-        </div>
-
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-8">
-          {steps.map((step, i) => (
-            <div key={i} className="p-10 rounded-[3rem] bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] hover:border-[#ffcf00]/20 transition-all space-y-8 group">
-              <div className="w-16 h-16 rounded-2xl bg-[#ffcf00]/10 flex items-center justify-center text-[#ffcf00] group-hover:scale-110 transition-transform">
-                <step.icon size={32} />
-              </div>
-              <div className="space-y-3">
-                <h3 className="text-2xl font-black tracking-tight">{step.title}</h3>
-                <p className="text-gray-500 font-medium leading-relaxed text-sm">{step.desc}</p>
-              </div>
-            </div>
-          ))}
+      {/* HERO SECTION */}
+      <section className="pt-48 pb-32 px-6 md:px-12 relative">
+        <div className="max-w-6xl mx-auto text-center space-y-10">
+          <h1 className="text-5xl md:text-8xl font-sans font-black tracking-tighter leading-[0.9] text-white">Earn Up To <span className="text-[#ffcf00]">80% Shares</span> Every Month For Life</h1>
+          <p className="text-gray-400 text-lg md:text-2xl max-w-3xl mx-auto font-medium leading-relaxed">Transform your traffic into a reliable income stream with the industry's most advanced partner tools.</p>
         </div>
       </section>
 
-      {/* CALCULATOR */}
-      <section className="py-20 md:py-32 px-4 md:px-12">
-        <div className="max-w-7xl mx-auto bg-gradient-to-br from-[#111318] to-[#060709] border border-white/5 rounded-[3rem] md:rounded-[5rem] overflow-hidden">
-          <div className="grid lg:grid-cols-12 gap-0">
-            <div className="lg:col-span-7 p-10 md:p-20 space-y-16">
-              <div className="space-y-4">
-                <h2 className="text-4xl md:text-7xl font-black tracking-tight">Earnings <br /><span className="text-[#ffcf00]">Simulator.</span></h2>
-                <p className="text-gray-500 font-bold uppercase tracking-widest text-[10px]">Calculate your passive income</p>
-              </div>
-
-              <div className="space-y-12">
-                <div className="space-y-6">
-                  <div className="flex justify-between items-end">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Monthly Referrals</span>
-                    <span className="text-2xl font-black text-[#ffcf00]">{tradersCount} Traders</span>
-                  </div>
-                  <input type="range" min="1" max="1000" value={tradersCount} onChange={(e) => setTradersCount(Number(e.target.value))} className="w-full h-2 bg-white/5 rounded-full appearance-none cursor-pointer accent-[#ffcf00]" />
-                </div>
-                <div className="space-y-6">
-                  <div className="flex justify-between items-end">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Average Volume (USD)</span>
-                    <span className="text-2xl font-black text-[#ffcf00]">${avgTradeVolume.toLocaleString()}</span>
-                  </div>
-                  <input type="range" min="1000" max="100000" step="1000" value={avgTradeVolume} onChange={(e) => setAvgTradeVolume(Number(e.target.value))} className="w-full h-2 bg-white/5 rounded-full appearance-none cursor-pointer accent-[#ffcf00]" />
-                </div>
-              </div>
+      {/* INTERACTIVE CALCULATOR SECTION */}
+      <section className="py-24 px-6 md:px-12 max-w-7xl mx-auto">
+        <div className="bg-gradient-to-br from-[#15171e] to-[#0b0c10] border border-white/5 rounded-[48px] p-8 md:p-20 grid grid-cols-1 lg:grid-cols-12 gap-16 items-center">
+          <div className="lg:col-span-7 space-y-10">
+            <h2 className="text-4xl md:text-6xl font-black tracking-tighter text-white">Estimate Your Monthly Earnings</h2>
+            <div className="space-y-10">
+              <input type="range" min="1" max="1000" value={tradersCount} onChange={(e) => setTradersCount(Number(e.target.value))} className="w-full h-2 bg-[#0b0c10] rounded-full appearance-none cursor-pointer accent-[#ffcf00]" />
+              <input type="range" min="1000" max="100000" step="1000" value={avgTradeVolume} onChange={(e) => setAvgTradeVolume(Number(e.target.value))} className="w-full h-2 bg-[#0b0c10] rounded-full appearance-none cursor-pointer accent-indigo-500" />
             </div>
-
-            <div className="lg:col-span-5 bg-white/[0.02] border-t lg:border-t-0 lg:border-l border-white/5 p-10 md:p-20 flex flex-col justify-between space-y-16">
-              <div className="space-y-12">
-                <div className="space-y-2">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-gray-600">Dynamic RevShare Rate</span>
-                  <div className="text-7xl md:text-8xl font-black text-[#ffcf00]">{revShareRate}%</div>
-                </div>
-                <div className="space-y-2">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-gray-600">Est. Monthly Payout</span>
-                  <div className="text-5xl md:text-7xl font-black text-white">
-                    <span className="text-white/20">$</span>{Number(estimatedMonthlyCommission).toLocaleString()}
-                  </div>
-                </div>
-              </div>
-              <button onClick={() => navigate('/register')} className="w-full py-8 bg-[#ffcf00] text-black font-black text-xl rounded-3xl hover:scale-[1.02] active:scale-[0.98] transition-all shadow-[0_20px_50px_rgba(255,207,0,0.15)] flex items-center justify-center gap-4">
-                Start Scaling Now <ArrowRight size={24} />
-              </button>
+          </div>
+          <div className="lg:col-span-5 bg-[#0b0c10]/50 border border-white/10 rounded-[40px] p-10 md:p-14 flex flex-col justify-between min-h-[450px]">
+             <div className="text-center">
+              <div className="text-7xl font-black text-[#ffcf00]">{revShareRate}%</div>
+              <span className="text-gray-400 font-bold uppercase text-xs">RevShare Rate</span>
+            </div>
+            <div className="py-10 border-y border-white/5 text-center">
+              <div className="text-5xl font-black text-white">${Number(estimatedMonthlyCommission).toLocaleString()}</div>
+              <span className="text-emerald-500 font-black uppercase text-xs">PER MONTH (USD)</span>
             </div>
           </div>
         </div>
       </section>
 
-      {/* TIERS */}
-      <section id="tiers" className="py-20 md:py-32 px-4 md:px-12 max-w-7xl mx-auto space-y-16">
-        <div className="text-center md:text-left space-y-4">
-          <h2 className="text-4xl md:text-6xl font-black tracking-tight">Commission <br /><span className="text-[#ffcf00]">Levels.</span></h2>
-          <p className="text-gray-500 font-bold max-w-xl">Scale your volume and unlock industry-leading percentages automatically. Reach the top 1% of partners.</p>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 md:gap-6">
-          {tiers.map((tier, i) => (
-            <div key={i} className={`p-10 rounded-[3rem] bg-white/[0.02] border border-white/5 flex flex-col items-center text-center space-y-6 hover:border-white/20 transition-all ${i === 3 ? 'border-[#ffcf00]/40 bg-[#ffcf00]/5 ring-1 ring-[#ffcf00]/20' : ''}`}>
-              <div className={`px-5 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${tier.color}`}>{tier.label}</div>
-              <div className="text-6xl font-black tracking-tight">{tier.rate}</div>
-              <div className="space-y-1">
-                <div className="text-[11px] font-bold text-gray-600 uppercase tracking-widest">{tier.range} Active Traders</div>
-                <div className="text-[10px] font-black text-[#ffcf00] uppercase tracking-[0.1em]">{tier.perk}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* PARTNER TYPES */}
-      <section className="py-20 md:py-32 px-4 md:px-12 max-w-7xl mx-auto space-y-16">
+      {/* DETAILED FAQ ACCORDION */}
+      <section className="py-32 px-6 md:px-12 max-w-4xl mx-auto space-y-16">
         <div className="text-center space-y-4">
-          <h2 className="text-4xl md:text-6xl font-black tracking-tight">Who Can <span className="text-[#ffcf00]">Join?</span></h2>
-          <p className="text-gray-500 font-bold">Multiple entry points for every type of traffic provider.</p>
+          <h2 className="text-4xl md:text-6xl font-black tracking-tighter text-white">Common Questions</h2>
+          <input type="text" placeholder="Search questions..." value={faqSearch} onChange={(e) => setFaqSearch(e.target.value)} className="w-full max-w-lg bg-[#15171e] border border-white/10 rounded-xl px-6 py-4 text-white placeholder-gray-500 focus:outline-none focus:border-[#ffcf00] transition-colors" />
         </div>
-
-        <div className="grid md:grid-cols-3 gap-6">
-          {partnerTypes.map((type, i) => (
-            <div key={i} className="p-10 rounded-[3rem] bg-white/[0.01] border border-white/5 space-y-6 hover:bg-white/[0.03] transition-all">
-              <div className="text-2xl font-black text-white">{type.title}</div>
-              <p className="text-gray-500 font-medium leading-relaxed">{type.desc}</p>
-              <div className="h-px w-full bg-white/5" />
-              <Link to="/register" className="text-[10px] font-black uppercase tracking-widest text-[#ffcf00] flex items-center gap-2 group">
-                Become a Partner <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
-              </Link>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* BENEFITS BENTO */}
-      <section className="py-20 md:py-32 px-4 md:px-12 max-w-7xl mx-auto">
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {benefits.map((benefit, i) => (
-            <div key={i} className="p-10 md:p-14 rounded-[3rem] bg-white/[0.01] border border-white/5 flex flex-col items-start gap-8 group hover:bg-white/[0.03] transition-all">
-              <div className="w-16 h-16 shrink-0 rounded-2xl bg-[#ffcf00]/10 flex items-center justify-center text-[#ffcf00] group-hover:scale-110 transition-transform">
-                <benefit.icon size={32} />
-              </div>
-              <div className="space-y-4">
-                <h3 className="text-2xl md:text-3xl font-black tracking-tight">{benefit.title}</h3>
-                <p className="text-gray-500 font-medium leading-relaxed text-sm">{benefit.desc}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* FAQ */}
-      <section className="py-20 md:py-32 px-4 md:px-12 max-w-3xl mx-auto space-y-16">
-        <div className="text-center space-y-4">
-          <h2 className="text-4xl md:text-6xl font-black tracking-tight">Need Help?</h2>
-          <p className="text-gray-500 font-bold uppercase tracking-widest text-[10px]">Partner Support Desk</p>
-        </div>
-
         <div className="space-y-4">
-          {[
-            { q: "How are RevShares calculated?", a: "We calculate your commission based on the net platform revenue generated from each trade made by your referred users." },
-            { q: "When can I withdraw my earnings?", a: "You can request a withdrawal anytime. Payouts are processed 24/7 with a minimum of just $10." },
-            { q: "Is there a limit on referrals?", a: "Absolutely not. You can refer an unlimited number of traders and earn from them for the lifetime of their account." }
-          ].map((item, i) => (
-            <div key={i} className="bg-white/[0.02] border border-white/5 rounded-3xl overflow-hidden group">
-              <button onClick={() => setOpenFaq(openFaq === i ? null : i)} className="w-full flex justify-between p-8 text-left font-black text-sm md:text-lg items-center">
-                {item.q} <ChevronDown className={`transition-transform duration-300 ${openFaq === i ? 'rotate-180' : ''}`} size={20} />
-              </button>
+          {filteredFaqs.map((faq, idx) => (
+            <div key={idx} className="bg-[#15171e]/50 border border-white/5 rounded-3xl overflow-hidden">
+              <button onClick={() => setOpenFaq(openFaq === idx ? null : idx)} className="w-full flex justify-between p-8 text-left">{faq.q}</button>
               <AnimatePresence>
-                {openFaq === i && (
-                  <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="px-8 pb-8 text-gray-500 font-medium leading-relaxed overflow-hidden">
-                    {item.a}
-                  </motion.div>
-                )}
+                {openFaq === idx && <motion.div className="px-8 pb-8 text-gray-400">{faq.a}</motion.div>}
               </AnimatePresence>
             </div>
           ))}
         </div>
       </section>
 
-      {/* FINAL CTA */}
-      <section className="py-24 md:py-44 px-4 md:px-12 max-w-7xl mx-auto">
-        <div className="bg-[#ffcf00] rounded-[4rem] md:rounded-[6rem] p-12 md:p-32 text-center space-y-10 text-black relative overflow-hidden group shadow-[0_50px_100px_-20px_rgba(255,207,0,0.3)]">
-          <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent group-hover:scale-110 transition-transform duration-1000" />
-          <h2 className="text-5xl md:text-9xl font-black tracking-tighter leading-[0.85] relative z-10">
-            JOIN THE <br />ELITE 1%.
-          </h2>
-          <div className="flex justify-center relative z-10 pt-6">
-            <button onClick={() => navigate('/register')} className="px-16 py-8 bg-black text-[#ffcf00] rounded-3xl font-black text-2xl hover:scale-110 transition-transform shadow-2xl flex items-center gap-4">
-              Get Your Elite Account <ArrowRight size={32} />
-            </button>
-          </div>
-          <div className="pt-12 flex flex-wrap justify-center gap-10 text-[10px] md:text-xs font-black uppercase tracking-[0.3em] opacity-40 relative z-10">
-            <span>Instant Payouts</span>
-            <span>80% Max Commission</span>
-            <span>Lifetime Revenue</span>
-          </div>
-        </div>
-      </section>
-
       {/* FOOTER */}
-      <footer className="py-20 px-4 md:px-12 border-t border-white/5 bg-[#060709] relative z-10">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-10">
-          <div className="flex items-center gap-3">
-            <Logo size={24} color="#ffcf00" />
-            <span className="font-black text-xl tracking-tighter uppercase">Bivaax PARTNERS</span>
+      <footer className="bg-[#0b0c10] border-t border-white/5 py-20 px-6 md:px-12">
+        <div className="max-w-7xl mx-auto space-y-16">
+          <div className="flex flex-col md:flex-row justify-between items-start gap-12">
+            <div className="space-y-6 max-w-sm">
+              <Link to="/" className="flex items-center gap-3">
+                <div className="p-2 bg-[#ffcf00] rounded-xl">
+                  <Logo size={20} color="black" />
+                </div>
+                <span className="font-black text-white text-xl tracking-tighter">Bivaax PARTNERS</span>
+              </Link>
+              <p className="text-gray-500 font-medium leading-relaxed">
+                The leading fintech partnership network for traders and influencers. We provide the most advanced tools to monetize your audience.
+              </p>
+            </div>
+            
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-12 md:gap-24">
+              <div className="space-y-6">
+                <h4 className="text-[11px] font-black text-white uppercase tracking-[0.3em]">Platform</h4>
+                <ul className="space-y-4 text-gray-500 font-bold text-xs uppercase tracking-widest">
+                  <li><Link to="/trade" className="hover:text-[#ffcf00] transition-colors">Trade App</Link></li>
+                  <li><Link to="/about-us" className="hover:text-[#ffcf00] transition-colors">About Us</Link></li>
+                  <li><Link to="/help-center" className="hover:text-[#ffcf00] transition-colors">Help Center</Link></li>
+                </ul>
+              </div>
+              <div className="space-y-6">
+                <h4 className="text-[11px] font-black text-white uppercase tracking-[0.3em]">Resources</h4>
+                <ul className="space-y-4 text-gray-500 font-bold text-xs uppercase tracking-widest">
+                  <li><Link to="/login" className="hover:text-[#ffcf00] transition-colors">Sign In</Link></li>
+                  <li><Link to="/register" className="hover:text-[#ffcf00] transition-colors">Registration</Link></li>
+                  <li><button className="hover:text-[#ffcf00] transition-colors">Media Kit</button></li>
+                </ul>
+              </div>
+            </div>
           </div>
-          <p className="text-[10px] text-gray-600 font-black uppercase tracking-[0.2em] text-center md:text-left">
-            © {new Date().getFullYear()} Bivaax Global Network • Elite Tier Partnership Program
-          </p>
-          <div className="flex gap-8 text-[10px] font-black uppercase tracking-widest text-gray-600">
-            <button className="hover:text-white transition-colors">Terms</button>
-            <button className="hover:text-white transition-colors">Privacy</button>
+
+          <div className="pt-16 border-t border-white/5 space-y-8 text-center md:text-left">
+            <p className="text-[11px] text-gray-600 leading-relaxed font-bold uppercase tracking-widest max-w-4xl">
+              Risk Disclaimer: Trading involves high financial risk. Bivaax Partners is a marketing program and does not provide financial advice. Ensure your users understand the risks before trading.
+            </p>
+            <div className="flex flex-col md:flex-row justify-between items-center gap-6">
+              <p className="text-[11px] text-gray-600 font-black tracking-[0.2em] uppercase">
+                © {new Date().getFullYear()} Bivaax PARTNERS INC. ALL RIGHTS RESERVED.
+              </p>
+              <div className="flex gap-8 text-[11px] text-gray-600 font-black tracking-[0.2em] uppercase">
+                <button className="hover:text-white transition-colors">Terms of Service</button>
+                <button className="hover:text-white transition-colors">Privacy Policy</button>
+              </div>
+            </div>
           </div>
         </div>
       </footer>
+
     </div>
   );
 }
+

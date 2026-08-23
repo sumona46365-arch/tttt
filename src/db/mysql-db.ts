@@ -658,7 +658,12 @@ function initSqliteTables(db: Database.Database) {
   CREATE TABLE IF NOT EXISTS audit_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT,
-    action TEXT NOT NULL,
+    action TEXT,
+    type TEXT,
+    amount NUMERIC DEFAULT 0,
+    old_balance NUMERIC DEFAULT 0,
+    new_balance NUMERIC DEFAULT 0,
+    reference_id TEXT,
     entity_type TEXT,
     entity_id TEXT,
     details TEXT,
@@ -847,6 +852,11 @@ function initSqliteTables(db: Database.Database) {
   };
 
   addIndexIfMissing('trades_user_id_idx', 'trades', 'user_id');
+  addColIfMissing('audit_logs', 'type TEXT');
+  addColIfMissing('audit_logs', 'amount NUMERIC DEFAULT 0');
+  addColIfMissing('audit_logs', 'old_balance NUMERIC DEFAULT 0');
+  addColIfMissing('audit_logs', 'new_balance NUMERIC DEFAULT 0');
+  addColIfMissing('audit_logs', 'reference_id TEXT');
   addColIfMissing('tickets', 'user_name TEXT');
   addColIfMissing('tickets', 'user_email TEXT');
   addColIfMissing('tickets', "category TEXT DEFAULT 'General'");
@@ -1269,7 +1279,7 @@ async function legacyTransaction<T>(fn: (connection: any) => Promise<T>): Promis
   const sqlite = ensureSqliteDb();
   const unlock = await dbMutex.lock();
   const isNested = sqlite.inTransaction;
-  if (!isNested) sqlite.prepare('BEGIN IMMEDIATE').run();
+  if (!isNested) sqlite.prepare('BEGIN').run();
   try {
     const result = await fn(sqlite);
     if (!isNested) sqlite.prepare('COMMIT').run();

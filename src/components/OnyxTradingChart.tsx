@@ -104,7 +104,7 @@ export const OnyxTradingChart: React.FC = () => {
       const candleTime = Math.floor(now / (timeframeSeconds * 1000)) * timeframeSeconds;
       
       // Simulate price movement
-      const volatility = 0.00025;
+      const volatility = 0.00035;
       currentPrice += (Math.random() - 0.5) * volatility;
 
       let updatedCandle;
