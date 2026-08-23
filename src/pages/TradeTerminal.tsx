@@ -14925,9 +14925,12 @@ const PROMOTED_ARTICLES = [
               <div className="flex-1 overflow-y-auto px-4 pb-[80px] custom-scrollbar flex flex-col pt-2">
                 <div className="flex items-center justify-between mb-6 px-1">
                    <h2 className="text-white font-bold text-[19px]">Transaction History</h2>
-                   <button className="text-gray-400 hover:text-white transition-colors p-2 bg-[#2A2B31] rounded-xl border border-white/5">
-                      <Icons.SlidersHorizontal size={18} />
-                   </button>
+                   <div className="flex items-center gap-2">
+                     <span className="text-gray-400 font-semibold text-[14px]">Filters</span>
+                     <button className="text-gray-400 hover:text-white transition-colors p-1.5 bg-[#2A2B31] rounded-lg border border-white/5">
+                        <Icons.ChevronDown size={16} />
+                     </button>
+                   </div>
                 </div>
 
                 {userTransactions.length === 0 ? (
@@ -14938,7 +14941,7 @@ const PROMOTED_ARTICLES = [
                       <p className="text-gray-400 font-medium text-[15px]">No history recorded yet</p>
                    </div>
                 ) : (
-                    <div className="flex flex-col divider-y divider-white/5">
+                   <div className="flex flex-col gap-4">
                       {userTransactions.map((tx, idx) => {
                         const isDeposit = tx.type === 'Deposit';
                         const isCompleted = tx.status === 'Completed';
@@ -14949,94 +14952,146 @@ const PROMOTED_ARTICLES = [
                         return (
                           <div 
                             key={`cashier-tx-${tx.id || idx}`}
-                            className="border-b border-white/[0.04] py-4 flex flex-col gap-2 cursor-pointer transition-colors hover:bg-white/[0.01] px-1"
+                            className="bg-[#1c1d21] rounded-[24px] border border-white/5 p-5 flex flex-col transition-all duration-300 shadow-md cursor-pointer hover:bg-[#222328]"
                             onClick={() => setExpandedTx(isExpanded ? null : tx.id)}
                           >
-                            {/* Top row: Date & Status */}
+                            {/* Card Header (Collapsed or Expanded) */}
                             <div className="flex items-center justify-between">
-                              <span className="text-gray-500 text-[13px] font-medium">
-                                {tx.dateStr}
-                              </span>
-                              <div className="flex items-center gap-1.5">
-                                {isCompleted && (
-                                  <div className="flex items-center gap-1 text-[#00C980] text-[13px] font-bold">
-                                    <span>Completed</span>
-                                    <Icons.CheckCircle size={14} className="text-[#00C980]" />
-                                  </div>
-                                )}
-                                {isPending && (
-                                  <div className="flex items-center gap-1 text-gray-400 text-[13px] font-bold">
-                                    <span>Pending</span>
-                                    <Icons.Clock size={14} className="text-gray-400" />
-                                  </div>
-                                )}
-                                {isRejected && (
-                                  <div className="flex items-center gap-1 text-[#FF4D4F] text-[13px] font-bold">
-                                    <span>Rejected</span>
-                                    <Icons.XCircle size={14} className="text-[#FF4D4F]" />
-                                  </div>
-                                )}
-                                <div className="text-gray-500">
-                                  {isExpanded ? (
-                                    <Icons.ChevronUp size={16} strokeWidth={2.5} />
+                              <div className="flex items-center gap-4">
+                                <div className="w-11 h-11 rounded-full bg-white/[0.04] border border-white/[0.06] flex items-center justify-center text-gray-400">
+                                  {isDeposit ? (
+                                    <Icons.ChevronsRight size={18} className="text-gray-400" />
                                   ) : (
-                                    <Icons.ChevronDown size={16} strokeWidth={2.5} />
+                                    <Icons.ChevronsLeft size={18} className="text-gray-400" />
+                                  )}
+                                </div>
+                                <div>
+                                  <h4 className="font-bold text-white text-[16px] tracking-tight">{tx.type}</h4>
+                                  {!isExpanded && (
+                                    <p className="text-gray-500 text-[13px] font-medium mt-0.5">{tx.dateStr}</p>
                                   )}
                                 </div>
                               </div>
+                              <div className="text-right flex items-center gap-2">
+                                <div className="flex flex-col items-end">
+                                  <span className={`font-bold text-[16px] tracking-tight ${
+                                    isDeposit ? 'text-[#00C980]' : 'text-white'
+                                  }`}>
+                                    {isDeposit ? '+' : '-'}{formatWithCurrency(tx.amount, userCurrency)}
+                                  </span>
+                                  {!isExpanded && (
+                                    <span className="text-gray-500 text-[12px] font-medium mt-0.5">{tx.timeStr}</span>
+                                  )}
+                                </div>
+                                <div className="flex items-center justify-center">
+                                  {isCompleted && <Icons.CheckCircle size={16} className="text-[#00C980]" />}
+                                  {isPending && <Icons.Clock size={16} className="text-gray-400 animate-pulse" />}
+                                  {isRejected && <Icons.XCircle size={16} className="text-[#FF4D4F]" />}
+                                </div>
+                              </div>
                             </div>
 
-                            {/* Bottom row: Type/Method & Amount */}
-                            <div className="flex items-end justify-between">
-                              <div className="flex flex-col">
-                                <span className="font-bold text-white text-[16px] tracking-tight leading-snug">
-                                  {tx.type}
-                                </span>
-                                <span className="text-gray-500 text-[13px] font-medium">
-                                  {tx.method}
-                                </span>
-                              </div>
-                              <div className="text-right">
-                                <span className="font-bold text-white text-[16px] tracking-tight">
-                                  {isDeposit ? '+' : '-'}{formatWithCurrency(tx.amount, userCurrency)}
-                                </span>
-                              </div>
-                            </div>
-
-                            {/* Expanded Details section */}
+                            {/* Card Expanded Details */}
                             {isExpanded && (
                               <div 
-                                className="mt-3 pt-3 border-t border-white/[0.04] grid grid-cols-2 gap-4 animate-in slide-in-from-top-2 duration-200"
-                                onClick={(e) => e.stopPropagation()} // Prevent closing when clicking inner details
+                                className="mt-5 pt-5 border-t border-white/[0.04] flex flex-col gap-5 animate-in slide-in-from-top-2 duration-200"
+                                onClick={(e) => e.stopPropagation()} // Prevent collapse when clicking details
                               >
-                                <div className="flex flex-col gap-0.5">
-                                  <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Gateway Protocol</span>
-                                  <span className="text-white text-[13px] font-semibold">{tx.method}</span>
-                                </div>
-                                <div className="flex flex-col gap-0.5">
-                                  <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Time</span>
-                                  <span className="text-white text-[13px] font-semibold">{tx.timeStr}</span>
-                                </div>
-                                <div className="col-span-2 flex flex-col gap-1 bg-black/20 p-3 rounded-xl border border-white/5">
-                                  <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wider">Transaction Reference</span>
-                                  <span className="text-gray-400 text-[11px] font-mono break-all leading-relaxed">{tx.id}</span>
-                                </div>
-                                {tx.errorMsg && (
-                                  <div className="col-span-2 bg-[#FF4D4F]/10 border border-[#FF4D4F]/20 rounded-xl p-3">
-                                    <p className="text-[#FF4D4F] text-[12px] font-semibold leading-relaxed">{tx.errorMsg}</p>
+                                {/* Stepper Progress Bar */}
+                                <div className="w-full">
+                                  {/* Three Segment Lines */}
+                                  <div className="grid grid-cols-3 gap-2">
+                                    <div className="h-[6px] rounded-full bg-[#00C980]" />
+                                    <div className={`h-[6px] rounded-full ${isPending || isCompleted ? 'bg-[#00C980]' : isRejected ? 'bg-[#FF4D4F]' : 'bg-[#313134]'}`} />
+                                    <div className={`h-[6px] rounded-full ${isCompleted ? 'bg-[#00C980]' : isRejected ? 'bg-[#FF4D4F]' : 'bg-[#313134]'}`} />
                                   </div>
-                                )}
-                                {tx.successMsg && (
-                                  <div className="col-span-2 bg-[#00C980]/10 border border-[#00C980]/20 rounded-xl p-3">
-                                    <p className="text-[#00C980] text-[12px] font-semibold leading-relaxed">{tx.successMsg}</p>
+
+                                  {/* Stepper Labels */}
+                                  <div className="grid grid-cols-3 gap-1 mt-3">
+                                    <div className="flex flex-col text-left">
+                                      <span className="text-[13px] font-bold text-white">Created</span>
+                                      <span className="text-[11px] text-gray-500 font-medium mt-0.5 leading-tight">{tx.dateStr}<br/>{tx.timeStr}</span>
+                                    </div>
+                                    <div className="flex flex-col text-center">
+                                      <span className={`text-[13px] font-bold ${(isPending || isCompleted || isRejected) ? 'text-white' : 'text-gray-500'}`}>Pending</span>
+                                      <span className="text-[11px] text-gray-500 font-medium mt-0.5 leading-tight">{tx.dateStr}<br/>{tx.timeStr}</span>
+                                    </div>
+                                    <div className="flex flex-col text-right">
+                                      <span className={`text-[13px] font-bold ${
+                                        isCompleted ? 'text-white' :
+                                        isRejected ? 'text-[#FF4D4F]' :
+                                        'text-gray-500'
+                                      }`}>
+                                        {isRejected ? 'Rejected' : 'Completed'}
+                                      </span>
+                                      {isCompleted && (
+                                        <span className="text-[11px] text-gray-500 font-medium mt-0.5 leading-tight">{tx.dateStr}<br/>{tx.endTimeStr || tx.timeStr}</span>
+                                      )}
+                                      {isRejected && (
+                                        <span className="text-[11px] text-gray-500 font-medium mt-0.5 leading-tight">{tx.dateStr}<br/>{tx.endTimeStr || tx.timeStr}</span>
+                                      )}
+                                    </div>
                                   </div>
-                                )}
+                                </div>
+
+                                {/* Table Key-Value details */}
+                                <div className="flex flex-col">
+                                  <div className="flex justify-between items-center py-2.5">
+                                    <span className="text-gray-500 font-semibold text-[14px]">Method</span>
+                                    <span className="text-white font-bold text-[14px]">{tx.method}</span>
+                                  </div>
+                                  <div className="border-t border-white/[0.04]" />
+                                  <div className="flex justify-between items-center py-2.5">
+                                    <span className="text-gray-500 font-semibold text-[14px]">{tx.type}</span>
+                                    <span className="text-[#a0a0a5] font-semibold text-[14px]">{formatWithCurrency(tx.amount, userCurrency)}</span>
+                                  </div>
+                                  <div className="border-t border-white/[0.04]" />
+                                  <div className="flex justify-between items-center py-2.5">
+                                    <span className="text-white font-bold text-[14px]">Total</span>
+                                    <span className="text-white font-bold text-[14px]">{formatWithCurrency(tx.amount, userCurrency)}</span>
+                                  </div>
+                                </div>
+
+                                {/* Status Information Alert Box */}
+                                <div className="bg-[#17181c] rounded-2xl p-4 border border-white/[0.03] flex flex-col gap-2">
+                                  {isDeposit ? (
+                                    <>
+                                      <p className="text-gray-400 text-[13px] leading-relaxed">
+                                        Waiting for {tx.method} reply. If you have completed all the steps, the processing by the provider will take, in average, 1 day(s). In some cases it can reach up to 1 day(s).
+                                      </p>
+                                      <button className="text-[#FFE24C] hover:underline text-[12px] font-bold text-left flex items-center gap-1.5 mt-1">
+                                        Waiting for more than 1 day(s)? <Icons.ChevronRight size={12} />
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <p className="text-gray-400 text-[13px] leading-relaxed">
+                                      {tx.status === 'Pending' 
+                                        ? "Your withdrawal request is currently being processed by the finance department. Under normal conditions, processing takes from 5 minutes up to 24 hours." 
+                                        : tx.status === 'Completed' 
+                                          ? "The withdrawal was successfully approved and processed to your payment method. Please check your payment destination provider." 
+                                          : tx.errorMsg || "This transaction has been rejected. Please verify the credentials or contact support."}
+                                    </p>
+                                  )}
+                                </div>
+
+                                {/* Action Buttons */}
+                                <div className="flex flex-col gap-2 mt-2">
+                                  <button 
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(tx.id);
+                                      toast.success("Transaction ID copied!");
+                                    }}
+                                    className="w-full bg-[#2A2B31] hover:bg-[#35363e] border border-white/5 text-white font-bold py-3.5 rounded-xl transition-all flex items-center justify-center gap-2 text-[14px]"
+                                  >
+                                    <Icons.Copy size={16} /> Copy ID
+                                  </button>
+                                </div>
                               </div>
                             )}
                           </div>
                         );
                       })}
-                    </div>
+                   </div>
                 )}
               </div>
            )}
