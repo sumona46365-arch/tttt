@@ -26,6 +26,7 @@ export default function CryptoDepositPage() {
   // States for verification
   const [txHash, setTxHash] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
+  const verifyLockRef = React.useRef(false);
   const [verificationLog, setVerificationLog] = useState<string[]>([]);
   const [currentProgress, setCurrentProgress] = useState(0);
   const [isSuccess, setIsSuccess] = useState(false);
@@ -205,6 +206,7 @@ export default function CryptoDepositPage() {
   const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
   const handleVerifyBlockchainTx = async () => {
+    if (verifyLockRef.current) return;
     if (!txHash.trim()) {
       toast.error("Please enter a valid Transaction Hash / TxID");
       return;
@@ -217,6 +219,7 @@ export default function CryptoDepositPage() {
     }
 
     setIsVerifying(true);
+    verifyLockRef.current = true;
     setVerificationLog([]);
     setCurrentProgress(0);
 
@@ -289,6 +292,7 @@ export default function CryptoDepositPage() {
       toast.error(err.message || "Ledger syncing failed. Please contact live support.");
     } finally {
       setIsVerifying(false);
+      verifyLockRef.current = false;
     }
   };
 

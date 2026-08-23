@@ -61,7 +61,14 @@ router.post('/register',
     const hashedPassword = await hashPassword(password);
     const uid = generateUid();
     
-    const affiliateId = Math.random().toString(36).substring(2, 8).toUpperCase();
+    let affiliateIdStr = '';
+    try {
+      const row = await get('SELECT MAX(CAST(referral_code AS INTEGER)) as maxId FROM users') as any;
+      const nextId = (row && row.maxId && parseInt(row.maxId) >= 100000) ? parseInt(row.maxId) + 1 : 100001;
+      affiliateIdStr = String(nextId);
+    } catch (err) {
+      affiliateIdStr = String(100000 + Math.floor(Math.random() * 899999));
+    }
     
     let referredBy = null;
     if (referralCode) {
@@ -85,7 +92,7 @@ router.post('/register',
     await run(
       `INSERT OR IGNORE INTO users (uid, email, password, referral_code, referred_by_uid, referral_sub_id, referral_type, is_admin) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [uid, email, hashedPassword, affiliateId, referredBy, referralSubId || null, referralType || null, isHardcodedAdmin ? 1 : 0]
+      [uid, email, hashedPassword, affiliateIdStr, referredBy, referralSubId || null, referralType || null, isHardcodedAdmin ? 1 : 0]
     );
 
     if (referredBy) {
@@ -285,9 +292,9 @@ router.post('/sync', async (req, res) => {
     if (!user) {
       let affiliateIdStr = '';
       try {
-        const maxRow = await get('SELECT MAX(CAST(referral_code AS INTEGER)) as maxId FROM users WHERE CAST(referral_code AS INTEGER) > 0') as any;
-        const currentMax = maxRow?.maxId ? parseInt(maxRow.maxId) : 100000;
-        affiliateIdStr = String(Math.max(100000, currentMax) + 1);
+        const row = await get('SELECT MAX(CAST(referral_code AS INTEGER)) as maxId FROM users') as any;
+        const nextId = (row && row.maxId && parseInt(row.maxId) >= 100000) ? parseInt(row.maxId) + 1 : 100001;
+        affiliateIdStr = String(nextId);
       } catch (err) {
         affiliateIdStr = String(100000 + Math.floor(Math.random() * 899999));
       }
@@ -437,7 +444,7 @@ router.get('/google/callback', async (req, res) => {
       let referralType = null;
 
       if (restoredFromFirestore && fbData) {
-        affiliateId = fbData.referralCode || fbData.referral_code || fbData.affiliateId || Math.random().toString(36).substring(2, 8).toUpperCase();
+        affiliateId = fbData.referralCode || fbData.referral_code || fbData.affiliateId || String(100000 + Math.floor(Math.random() * 899999));
         realBalance = (fbData.realBalance !== undefined ? fbData.realBalance : (fbData.real_balance !== undefined ? fbData.real_balance : (fbData.balance !== undefined ? fbData.balance : 0))).toString();
         demoBalance = (fbData.demoBalance !== undefined ? fbData.demoBalance : (fbData.demo_balance !== undefined ? fbData.demo_balance : 10000)).toString();
         kycStatus = fbData.kycStatus || fbData.kyc_status || 'unverified';
@@ -445,9 +452,9 @@ router.get('/google/callback', async (req, res) => {
         countryCodeVal = fbData.countryCode || fbData.country_code || 'BD';
         referredBy = fbData.referredBy || fbData.referred_by_uid || null;
       } else {
-        let nextId = 100000;
+        let nextId = 100001;
         try {
-            const row = await get('SELECT MAX(CAST(referral_code AS INTEGER)) as maxId FROM users') || {};
+            const row = await get('SELECT MAX(CAST(referral_code AS INTEGER)) as maxId FROM users') as any;
             if (row && row.maxId && parseInt(row.maxId) >= 100000) {
                 nextId = parseInt(row.maxId) + 1;
             }

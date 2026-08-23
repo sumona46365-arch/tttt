@@ -62,24 +62,32 @@ export default function AffiliateLandingPage() {
   const estimatedMonthlyCommission = (estimatedPlatformRevenue * (revShareRate / 100)).toFixed(2);
 
   const steps = [
-    { icon: Rocket, title: "Register", desc: "Open your free partner account in 2 minutes." },
-    { icon: Target, title: "Promote", desc: "Use your unique link on social media or blogs." },
-    { icon: Users, title: "Refer", desc: "Invite traders and watch them start trading." },
-    { icon: DollarSign, title: "Earn", desc: "Get paid instantly for every trade they make." }
+    { icon: Rocket, title: "Register", desc: "Open your free partner account in 2 minutes. Instant approval for everyone." },
+    { icon: Target, title: "Promote", desc: "Use your unique link on social media, blogs, or YouTube channels." },
+    { icon: Users, title: "Refer", desc: "Invite traders from 150+ countries. Our platform converts traffic at 15% rate." },
+    { icon: DollarSign, title: "Earn", desc: "Get paid instantly for every trade. Lifetime commission with no expiry." }
   ];
 
   const tiers = [
-    { label: "Starter", range: "0-10", rate: "50%", color: "bg-gray-500/10 text-gray-400" },
-    { label: "Silver", range: "11-50", rate: "60%", color: "bg-blue-500/10 text-blue-400" },
-    { label: "Gold", range: "51-100", rate: "70%", color: "bg-orange-500/10 text-orange-400" },
-    { label: "Elite", range: "100+", rate: "80%", color: "bg-[#ffcf00]/10 text-[#ffcf00]" }
+    { label: "Starter", range: "0-10", rate: "50%", color: "bg-gray-500/10 text-gray-400", perk: "Basic Tracking" },
+    { label: "Silver", range: "11-50", rate: "60%", color: "bg-blue-500/10 text-blue-400", perk: "Sub-ID Tracking" },
+    { label: "Gold", range: "51-100", rate: "70%", color: "bg-orange-500/10 text-orange-400", perk: "Personal Manager" },
+    { label: "Elite", range: "100+", rate: "80%", color: "bg-[#ffcf00]/10 text-[#ffcf00]", perk: "Custom CPA Available" }
   ];
 
   const benefits = [
-    { icon: Zap, title: "Instant Payouts", desc: "Request your earnings anytime. We process withdrawals within 60 minutes." },
-    { icon: BarChart3, title: "Precision Tracking", desc: "Real-time analytics and Sub-ID tracking for advanced marketers." },
-    { icon: ShieldCheck, title: "No Negative Carryover", desc: "Your monthly balance starts fresh. We never charge for user wins." },
-    { icon: Globe, title: "Global Conversion", desc: "Localized landing pages in 20+ languages for maximum traffic ROI." }
+    { icon: Zap, title: "Instant Payouts", desc: "Request your earnings anytime. We process withdrawals within 60 minutes via Crypto, Bank, or MFS." },
+    { icon: BarChart3, title: "Precision Tracking", desc: "Real-time analytics and Sub-ID tracking for advanced marketers. Monitor clicks, registrations, and FTDs live." },
+    { icon: ShieldCheck, title: "No Negative Carryover", desc: "Your monthly balance starts fresh. We never charge for user wins. Pure profit-sharing only." },
+    { icon: Globe, title: "Global Conversion", desc: "Localized landing pages in 20+ languages. Our funnel is optimized for high-conversion in Asia and Africa." },
+    { icon: ShieldCheck, title: "Marketing Assets", desc: "Access 500+ high-quality banners, videos, and educational content to help you promote effectively." },
+    { icon: Award, title: "Partner Contests", desc: "Participate in monthly partner tournaments with up to $50,000 in additional cash prizes." }
+  ];
+
+  const partnerTypes = [
+    { title: "Social Influencers", desc: "Perfect for Telegram signal providers, YouTube creators, and Facebook group owners." },
+    { title: "Professional IBs", desc: "Ideal for financial consultants and institutional brokers looking for high retention." },
+    { title: "Webmasters", desc: "Great for review sites, comparison blogs, and high-traffic fintech portals." }
   ];
 
   return (
@@ -227,7 +235,7 @@ export default function AffiliateLandingPage() {
       <section id="tiers" className="py-20 md:py-32 px-4 md:px-12 max-w-7xl mx-auto space-y-16">
         <div className="text-center md:text-left space-y-4">
           <h2 className="text-4xl md:text-6xl font-black tracking-tight">Commission <br /><span className="text-[#ffcf00]">Levels.</span></h2>
-          <p className="text-gray-500 font-bold max-w-xl">Scale your volume and unlock industry-leading percentages automatically.</p>
+          <p className="text-gray-500 font-bold max-w-xl">Scale your volume and unlock industry-leading percentages automatically. Reach the top 1% of partners.</p>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 md:gap-6">
@@ -235,7 +243,31 @@ export default function AffiliateLandingPage() {
             <div key={i} className={`p-10 rounded-[3rem] bg-white/[0.02] border border-white/5 flex flex-col items-center text-center space-y-6 hover:border-white/20 transition-all ${i === 3 ? 'border-[#ffcf00]/40 bg-[#ffcf00]/5 ring-1 ring-[#ffcf00]/20' : ''}`}>
               <div className={`px-5 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${tier.color}`}>{tier.label}</div>
               <div className="text-6xl font-black tracking-tight">{tier.rate}</div>
-              <div className="text-[11px] font-bold text-gray-600 uppercase tracking-widest">{tier.range} Active Traders</div>
+              <div className="space-y-1">
+                <div className="text-[11px] font-bold text-gray-600 uppercase tracking-widest">{tier.range} Active Traders</div>
+                <div className="text-[10px] font-black text-[#ffcf00] uppercase tracking-[0.1em]">{tier.perk}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* PARTNER TYPES */}
+      <section className="py-20 md:py-32 px-4 md:px-12 max-w-7xl mx-auto space-y-16">
+        <div className="text-center space-y-4">
+          <h2 className="text-4xl md:text-6xl font-black tracking-tight">Who Can <span className="text-[#ffcf00]">Join?</span></h2>
+          <p className="text-gray-500 font-bold">Multiple entry points for every type of traffic provider.</p>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-6">
+          {partnerTypes.map((type, i) => (
+            <div key={i} className="p-10 rounded-[3rem] bg-white/[0.01] border border-white/5 space-y-6 hover:bg-white/[0.03] transition-all">
+              <div className="text-2xl font-black text-white">{type.title}</div>
+              <p className="text-gray-500 font-medium leading-relaxed">{type.desc}</p>
+              <div className="h-px w-full bg-white/5" />
+              <Link to="/register" className="text-[10px] font-black uppercase tracking-widest text-[#ffcf00] flex items-center gap-2 group">
+                Become a Partner <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
+              </Link>
             </div>
           ))}
         </div>
@@ -243,15 +275,15 @@ export default function AffiliateLandingPage() {
 
       {/* BENEFITS BENTO */}
       <section className="py-20 md:py-32 px-4 md:px-12 max-w-7xl mx-auto">
-        <div className="grid md:grid-cols-2 gap-6">
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
           {benefits.map((benefit, i) => (
-            <div key={i} className="p-10 md:p-14 rounded-[3rem] bg-white/[0.01] border border-white/5 flex flex-col sm:flex-row items-start gap-10 group hover:bg-white/[0.03] transition-all">
+            <div key={i} className="p-10 md:p-14 rounded-[3rem] bg-white/[0.01] border border-white/5 flex flex-col items-start gap-8 group hover:bg-white/[0.03] transition-all">
               <div className="w-16 h-16 shrink-0 rounded-2xl bg-[#ffcf00]/10 flex items-center justify-center text-[#ffcf00] group-hover:scale-110 transition-transform">
                 <benefit.icon size={32} />
               </div>
               <div className="space-y-4">
                 <h3 className="text-2xl md:text-3xl font-black tracking-tight">{benefit.title}</h3>
-                <p className="text-gray-500 font-medium leading-relaxed">{benefit.desc}</p>
+                <p className="text-gray-500 font-medium leading-relaxed text-sm">{benefit.desc}</p>
               </div>
             </div>
           ))}

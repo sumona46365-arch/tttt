@@ -166,9 +166,9 @@ router.post('/admin/market/update', (req, res) => {
 
 router.post('/affiliate/next-id', async (req, res) => {
     try {
-        let nextId = 10001;
+        let nextId = 100001;
         const row = await get('SELECT MAX(CAST(referral_code AS INTEGER)) as maxId FROM users') as any;
-        if (row && row.maxId && row.maxId >= 10000) {
+        if (row && row.maxId && parseInt(row.maxId) >= 100000) {
             nextId = parseInt(row.maxId) + 1;
         }
         res.json({ nextId });

@@ -14653,24 +14653,29 @@ const PROMOTED_ARTICLES = [
                                        try {
                                            const baseWithdrawAmount = convertToBase(amount, userCurrency);
                                            const numAmount = Number(baseWithdrawAmount);
-                                           await addDoc(collection(db, 'withdrawals'), {
-                                               userId: auth.currentUser.uid,
-                                               userEmail: auth.currentUser.email || '',
-                                               amount: numAmount,
-                                               method: selectedMethod?.name || 'Local Bank',
-                                               walletNumber: withdrawAccountNumber,
-                                               accountHolder: withdrawAccountHolder,
-                                               currency: userCurrency || 'USD',
-                                               status: 'pending',
-                                               timestamp: Date.now(),
-                                               createdAt: Date.now(),
-                                               details: {
-                                                   userId: auth.currentUser.uid,
-                                                   accountHolder: withdrawAccountHolder,
-                                                   walletNumber: withdrawAccountNumber,
-                                                   userCurrency
-                                               }
+                                           const idToken = await auth.currentUser.getIdToken();
+                                           const response = await fetch('/api/wallet/withdraw', {
+                                               method: 'POST',
+                                               headers: {
+                                                   'Content-Type': 'application/json',
+                                                   'Authorization': `Bearer ${idToken}`
+                                               },
+                                               body: JSON.stringify({
+                                                   amount: numAmount,
+                                                   method: selectedMethod?.name || 'Local Bank',
+                                                   details: {
+                                                       userId: auth.currentUser.uid,
+                                                       accountHolder: withdrawAccountHolder,
+                                                       walletNumber: withdrawAccountNumber,
+                                                       userCurrency
+                                                   }
+                                               })
                                            });
+
+                                           const data = await response.json();
+                                           if (!response.ok || !data.success) {
+                                               throw new Error(data.error || 'Withdrawal request failed');
+                                           }
                                            toast.success('Withdrawal requested successfully!');
                                            setWithdrawStep("methods");
                                            setWithdrawAmount("");
