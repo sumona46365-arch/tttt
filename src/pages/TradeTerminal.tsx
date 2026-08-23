@@ -14938,58 +14938,105 @@ const PROMOTED_ARTICLES = [
                       <p className="text-gray-400 font-medium text-[15px]">No history recorded yet</p>
                    </div>
                 ) : (
-                   <div className="flex flex-col gap-3">
+                    <div className="flex flex-col divider-y divider-white/5">
                       {userTransactions.map((tx, idx) => {
                         const isDeposit = tx.type === 'Deposit';
                         const isCompleted = tx.status === 'Completed';
                         const isRejected = tx.status === 'Rejected' || tx.status === 'Failed';
                         const isPending = tx.status === 'Pending';
+                        const isExpanded = expandedTx === tx.id;
                         
                         return (
                           <div 
                             key={`cashier-tx-${tx.id || idx}`}
-                            className="bg-[#212124] rounded-[16px] border border-white/5 p-4 flex flex-col gap-3 animate-in fade-in-50 duration-200"
+                            className="border-b border-white/[0.04] py-4 flex flex-col gap-2 cursor-pointer transition-colors hover:bg-white/[0.01] px-1"
+                            onClick={() => setExpandedTx(isExpanded ? null : tx.id)}
                           >
+                            {/* Top row: Date & Status */}
                             <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-3">
-                                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                                  isDeposit 
-                                    ? 'bg-[#00C980]/10 text-[#00C980]' 
-                                    : 'bg-[#FF4D4F]/10 text-[#FF4D4F]'
-                                }`}>
-                                  {isDeposit ? <Icons.ArrowUpRight size={20} /> : <Icons.ArrowDownLeft size={20} />}
-                                </div>
-                                <div>
-                                  <h4 className="font-bold text-white text-[15px]">{tx.type} via {tx.method}</h4>
-                                  <p className="text-gray-500 text-[12px]">{tx.dateStr} • {tx.timeStr}</p>
-                                </div>
-                              </div>
-                              <div className="text-right">
-                                <p className={`font-bold text-[16px] ${
-                                  isDeposit ? 'text-[#00C980]' : 'text-white'
-                                }`}>
-                                  {isDeposit ? '+' : '-'}{formatWithCurrency(tx.amount, userCurrency)}
-                                </p>
-                                <div className="flex items-center justify-end gap-1.5 mt-1">
-                                  <span className={`w-1.5 h-1.5 rounded-full ${
-                                    isCompleted ? 'bg-[#00C980]' :
-                                    isRejected ? 'bg-[#FF4D4F]' :
-                                    'bg-yellow-500 animate-pulse'
-                                  }`} />
-                                  <span className={`text-[11px] font-bold uppercase tracking-wider ${
-                                    isCompleted ? 'text-[#00C980]' :
-                                    isRejected ? 'text-[#FF4D4F]' :
-                                    'text-yellow-500'
-                                  }`}>
-                                    {tx.status}
-                                  </span>
+                              <span className="text-gray-500 text-[13px] font-medium">
+                                {tx.dateStr}
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                {isCompleted && (
+                                  <div className="flex items-center gap-1 text-[#00C980] text-[13px] font-bold">
+                                    <span>Completed</span>
+                                    <Icons.CheckCircle size={14} className="text-[#00C980]" />
+                                  </div>
+                                )}
+                                {isPending && (
+                                  <div className="flex items-center gap-1 text-gray-400 text-[13px] font-bold">
+                                    <span>Pending</span>
+                                    <Icons.Clock size={14} className="text-gray-400" />
+                                  </div>
+                                )}
+                                {isRejected && (
+                                  <div className="flex items-center gap-1 text-[#FF4D4F] text-[13px] font-bold">
+                                    <span>Rejected</span>
+                                    <Icons.XCircle size={14} className="text-[#FF4D4F]" />
+                                  </div>
+                                )}
+                                <div className="text-gray-500">
+                                  {isExpanded ? (
+                                    <Icons.ChevronUp size={16} strokeWidth={2.5} />
+                                  ) : (
+                                    <Icons.ChevronDown size={16} strokeWidth={2.5} />
+                                  )}
                                 </div>
                               </div>
                             </div>
+
+                            {/* Bottom row: Type/Method & Amount */}
+                            <div className="flex items-end justify-between">
+                              <div className="flex flex-col">
+                                <span className="font-bold text-white text-[16px] tracking-tight leading-snug">
+                                  {tx.type}
+                                </span>
+                                <span className="text-gray-500 text-[13px] font-medium">
+                                  {tx.method}
+                                </span>
+                              </div>
+                              <div className="text-right">
+                                <span className="font-bold text-white text-[16px] tracking-tight">
+                                  {isDeposit ? '+' : '-'}{formatWithCurrency(tx.amount, userCurrency)}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Expanded Details section */}
+                            {isExpanded && (
+                              <div 
+                                className="mt-3 pt-3 border-t border-white/[0.04] grid grid-cols-2 gap-4 animate-in slide-in-from-top-2 duration-200"
+                                onClick={(e) => e.stopPropagation()} // Prevent closing when clicking inner details
+                              >
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Gateway Protocol</span>
+                                  <span className="text-white text-[13px] font-semibold">{tx.method}</span>
+                                </div>
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Time</span>
+                                  <span className="text-white text-[13px] font-semibold">{tx.timeStr}</span>
+                                </div>
+                                <div className="col-span-2 flex flex-col gap-1 bg-black/20 p-3 rounded-xl border border-white/5">
+                                  <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wider">Transaction Reference</span>
+                                  <span className="text-gray-400 text-[11px] font-mono break-all leading-relaxed">{tx.id}</span>
+                                </div>
+                                {tx.errorMsg && (
+                                  <div className="col-span-2 bg-[#FF4D4F]/10 border border-[#FF4D4F]/20 rounded-xl p-3">
+                                    <p className="text-[#FF4D4F] text-[12px] font-semibold leading-relaxed">{tx.errorMsg}</p>
+                                  </div>
+                                )}
+                                {tx.successMsg && (
+                                  <div className="col-span-2 bg-[#00C980]/10 border border-[#00C980]/20 rounded-xl p-3">
+                                    <p className="text-[#00C980] text-[12px] font-semibold leading-relaxed">{tx.successMsg}</p>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
-                   </div>
+                    </div>
                 )}
               </div>
            )}
