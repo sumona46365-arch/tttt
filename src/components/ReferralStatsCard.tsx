@@ -28,12 +28,14 @@ const ReferralStatsCard: React.FC = () => {
             <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Growth Statistics</p>
           </div>
         </div>
-        <Link 
-          to="/affiliate" 
+        <a 
+          href="https://partner.bivaax.com" 
+          target="_blank"
+          rel="noopener noreferrer"
           className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center hover:bg-yellow-500 hover:text-black transition-all group/btn"
         >
           <ArrowRight className="w-4 h-4 transition-transform group-hover/btn:translate-x-0.5" />
-        </Link>
+        </a>
       </div>
 
       <div className="grid grid-cols-2 gap-4">

@@ -120,26 +120,26 @@ export function generateSingleCandleOHLC(
 
   switch (pattern) {
     case 'BULLISH_MARUBOZU': {
-      const body = rangeVol * (1.8 + Math.random() * 2.8);
+      const body = rangeVol * (1.6 + Math.random() * 1.8);
       close = actualOpen + body;
-      const tinyUpper = body * (Math.random() * 0.05);
-      const tinyLower = body * (Math.random() * 0.05);
+      const tinyUpper = body * (0.02 + Math.random() * 0.08);
+      const tinyLower = body * (0.02 + Math.random() * 0.08);
       high = close + tinyUpper;
       low = actualOpen - tinyLower;
       break;
     }
     case 'BEARISH_MARUBOZU': {
-      const body = rangeVol * (1.8 + Math.random() * 2.8);
+      const body = rangeVol * (1.6 + Math.random() * 1.8);
       close = actualOpen - body;
-      const tinyUpper = body * (Math.random() * 0.05);
-      const tinyLower = body * (Math.random() * 0.05);
+      const tinyUpper = body * (0.02 + Math.random() * 0.08);
+      const tinyLower = body * (0.02 + Math.random() * 0.08);
       high = actualOpen + tinyUpper;
       low = close - tinyLower;
       break;
     }
     case 'DOJI': {
-      const totalRange = rangeVol * (1.8 + Math.random() * 2.2);
-      const body = totalRange * (Math.random() * 0.04);
+      const totalRange = rangeVol * (1.4 + Math.random() * 1.8);
+      const body = totalRange * (Math.random() * 0.03); // Razor thin body
       const isUp = Math.random() > 0.5;
       close = isUp ? actualOpen + body : actualOpen - body;
       
@@ -153,54 +153,54 @@ export function generateSingleCandleOHLC(
       break;
     }
     case 'SPINNING_TOP': {
-      const totalRange = rangeVol * (1.8 + Math.random() * 2.2);
-      const body = totalRange * (0.12 + Math.random() * 0.12);
+      const totalRange = rangeVol * (1.3 + Math.random() * 1.7);
+      const body = totalRange * (0.12 + Math.random() * 0.14);
       const isUp = Math.random() > 0.5;
       close = isUp ? actualOpen + body : actualOpen - body;
 
       const maxBodyPrice = Math.max(actualOpen, close);
       const minBodyPrice = Math.min(actualOpen, close);
 
-      const upperWick = (totalRange - body) * (0.42 + Math.random() * 0.16);
+      const upperWick = (totalRange - body) * (0.38 + Math.random() * 0.24);
       const lowerWick = (totalRange - body) - upperWick;
       high = maxBodyPrice + upperWick;
       low = minBodyPrice - lowerWick;
       break;
     }
     case 'HAMMER': {
-      const totalRange = rangeVol * (2.2 + Math.random() * 2.0);
-      const body = totalRange * (0.12 + Math.random() * 0.08);
-      const isUp = Math.random() > 0.3;
+      const totalRange = rangeVol * (1.6 + Math.random() * 1.8);
+      const body = totalRange * (0.15 + Math.random() * 0.12);
+      const isUp = Math.random() > 0.35;
       close = isUp ? actualOpen + body : actualOpen - body;
 
       const maxBodyPrice = Math.max(actualOpen, close);
       const minBodyPrice = Math.min(actualOpen, close);
 
       const upperWick = totalRange * (Math.random() * 0.08);
-      const lowerWick = Math.max(0, totalRange - body - upperWick);
+      const lowerWick = Math.max(totalRange * 0.45, totalRange - body - upperWick);
       high = maxBodyPrice + upperWick;
       low = minBodyPrice - lowerWick;
       break;
     }
     case 'INVERTED_HAMMER':
     case 'SHOOTING_STAR': {
-      const totalRange = rangeVol * (2.2 + Math.random() * 2.0);
-      const body = totalRange * (0.12 + Math.random() * 0.08);
-      const isUp = pattern === 'SHOOTING_STAR' ? (Math.random() > 0.8) : (Math.random() > 0.3);
+      const totalRange = rangeVol * (1.6 + Math.random() * 1.8);
+      const body = totalRange * (0.15 + Math.random() * 0.12);
+      const isUp = pattern === 'SHOOTING_STAR' ? (Math.random() > 0.7) : (Math.random() > 0.35);
       close = isUp ? actualOpen + body : actualOpen - body;
 
       const maxBodyPrice = Math.max(actualOpen, close);
       const minBodyPrice = Math.min(actualOpen, close);
 
       const lowerWick = totalRange * (Math.random() * 0.08);
-      const upperWick = Math.max(0, totalRange - body - lowerWick);
+      const upperWick = Math.max(totalRange * 0.45, totalRange - body - lowerWick);
       high = maxBodyPrice + upperWick;
       low = minBodyPrice - lowerWick;
       break;
     }
     case 'LONG_WICK_REJECTION': {
-      const totalRange = rangeVol * (3.0 + Math.random() * 2.5);
-      const body = totalRange * (0.08 + Math.random() * 0.10);
+      const totalRange = rangeVol * (2.2 + Math.random() * 2.0);
+      const body = totalRange * (0.10 + Math.random() * 0.12);
       const isUpper = Math.random() > 0.5;
       const isUp = Math.random() > 0.5;
       close = isUp ? actualOpen + body : actualOpen - body;
@@ -209,13 +209,13 @@ export function generateSingleCandleOHLC(
       const minBodyPrice = Math.min(actualOpen, close);
 
       if (isUpper) {
-        const upperWick = totalRange * (0.65 + Math.random() * 0.20);
-        const lowerWick = Math.max(0, totalRange - body - upperWick);
+        const upperWick = totalRange * (0.60 + Math.random() * 0.25);
+        const lowerWick = Math.max(totalRange * 0.05, totalRange - body - upperWick);
         high = maxBodyPrice + upperWick;
         low = minBodyPrice - lowerWick;
       } else {
-        const lowerWick = totalRange * (0.65 + Math.random() * 0.20);
-        const upperWick = Math.max(0, totalRange - body - lowerWick);
+        const lowerWick = totalRange * (0.60 + Math.random() * 0.25);
+        const upperWick = Math.max(totalRange * 0.05, totalRange - body - lowerWick);
         high = maxBodyPrice + upperWick;
         low = minBodyPrice - lowerWick;
       }
@@ -224,11 +224,16 @@ export function generateSingleCandleOHLC(
     case 'STANDARD_BULL':
     default: {
       const isUp = patternHint === 'STANDARD_BULL' || Math.random() > 0.5;
-      const body = rangeVol * (0.3 + Math.random() * 2.0);
+      const totalRange = rangeVol * (1.2 + Math.random() * 1.6);
+      const bodyRatio = 0.35 + Math.random() * 0.35; // 35% to 70% body
+      const body = totalRange * bodyRatio;
       close = isUp ? actualOpen + body : actualOpen - body;
 
-      const upperWick = rangeVol * (0.1 + Math.random() * 1.2);
-      const lowerWick = rangeVol * (0.1 + Math.random() * 1.2);
+      const remainingWick = Math.max(totalRange * 0.15, totalRange - body);
+      const upperRatio = 0.3 + Math.random() * 0.4;
+      const upperWick = remainingWick * upperRatio;
+      const lowerWick = remainingWick - upperWick;
+
       high = Math.max(actualOpen, close) + upperWick;
       low = Math.min(actualOpen, close) - lowerWick;
       break;
@@ -244,19 +249,18 @@ export function generateSingleCandleOHLC(
 
 export function pickRandomPattern(): PatternType {
   const r = Math.random();
-  // 10% chance of "indecision" candles (Doji/Spinning Top)
-  if (r < 0.05) return 'DOJI';
-  if (r < 0.10) return 'SPINNING_TOP';
-  
-  // 20% chance of rejection patterns
-  if (r < 0.20) return 'HAMMER';
-  if (r < 0.25) return 'SHOOTING_STAR';
-  if (r < 0.30) return 'LONG_WICK_REJECTION';
-  
-  // 40% chance of explosive moves (Marubozu)
-  if (r < 0.50) return 'BULLISH_MARUBOZU';
-  if (r < 0.70) return 'BEARISH_MARUBOZU';
-  
-  // 30% standard candles
-  return Math.random() > 0.5 ? 'STANDARD_BULL' : 'STANDARD_BEAR';
+  // 15% Doji (Razor thin body, dynamic wicks)
+  if (r < 0.15) return 'DOJI';
+  // 18% Spinning Top (Small centered body with balanced wicks)
+  if (r < 0.33) return 'SPINNING_TOP';
+  // 15% Hammer (Rejection from below)
+  if (r < 0.48) return 'HAMMER';
+  // 15% Shooting Star / Inverted Hammer (Rejection from above)
+  if (r < 0.63) return 'SHOOTING_STAR';
+  // 12% Long Wick Rejections
+  if (r < 0.75) return 'LONG_WICK_REJECTION';
+  // 20% Standard Candlestick with realistic wicks
+  if (r < 0.95) return Math.random() > 0.5 ? 'STANDARD_BULL' : 'STANDARD_BEAR';
+  // 5% Momentum / Strong Breakout
+  return Math.random() > 0.5 ? 'BULLISH_MARUBOZU' : 'BEARISH_MARUBOZU';
 }

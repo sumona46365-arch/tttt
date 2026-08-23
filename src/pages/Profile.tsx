@@ -1409,7 +1409,7 @@ export default function ProfilePage() {
                       toast.error("Affiliate program is currently disabled by administrator.");
                       return;
                     }
-                    navigate('/affiliate');
+                    window.location.href = 'https://partner.bivaax.com';
                   }}
                   className="w-full py-4 text-base font-black text-gray-900 bg-[#f4f5f8] hover:bg-[#ebedf1] active:bg-[#e2e5ea] active:scale-[0.99] rounded-2xl transition-all text-center border border-gray-100"
                 >
@@ -1480,7 +1480,7 @@ export default function ProfilePage() {
                         toast.error("Affiliate program is currently disabled by administrator.");
                         return;
                       }
-                      navigate('/affiliate');
+                      window.location.href = 'https://partner.bivaax.com';
                     }}
                     className="text-[#3875df] hover:underline cursor-pointer font-bold text-sm tracking-wide inline-block transition-colors"
                   >

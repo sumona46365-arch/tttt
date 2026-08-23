@@ -52,17 +52,37 @@ export function initSocket(server: HttpServer) {
     // User-specific room for private updates (balance, trade results)
     socket.on('authenticate', (token: string) => {
       try {
-        const decoded = verifyToken(token) as any;
-        if (decoded) {
-          socket.data.userId = decoded.uid;
-          socket.join(`user_${decoded.uid}`);
-          if (decoded.is_admin || decoded.role === 'admin' || decoded.role === 'support' || decoded.role === 'supervisor') {
-            socket.join('agents_room');
+        if (!token) return;
+        let uid = '';
+        try {
+          const decoded = verifyToken(token) as any;
+          if (decoded && decoded.uid) {
+            uid = decoded.uid;
+            if (decoded.is_admin || decoded.role === 'admin' || decoded.role === 'support' || decoded.role === 'supervisor') {
+              socket.join('agents_room');
+            }
           }
-          console.log(`User/Agent ${decoded.uid} authenticated on socket ${socket.id}`);
+        } catch (jwtErr) {
+          // If not a JWT, it might be a raw uid
+          if (typeof token === 'string' && token.length > 5 && !token.includes('.')) {
+            uid = token;
+          }
+        }
+        if (uid) {
+          socket.data.userId = uid;
+          socket.join(`user_${uid}`);
+          console.log(`User/Agent ${uid} authenticated and joined user_${uid} on socket ${socket.id}`);
         }
       } catch (err) {
         console.error('Socket authentication failed:', err);
+      }
+    });
+
+    socket.on('join_user_room', (uid: string) => {
+      if (uid && typeof uid === 'string') {
+        socket.data.userId = uid;
+        socket.join(`user_${uid}`);
+        console.log(`User ${uid} joined private socket room user_${uid}`);
       }
     });
 
@@ -110,6 +130,11 @@ export function initSocket(server: HttpServer) {
       // Join the new market room and the account type room
       socket.join(`market_${asset}_${accountType}`);
       socket.join(accountType);
+
+      if (userId) {
+        socket.data.userId = userId;
+        socket.join(`user_${userId}`);
+      }
       
       const tf = timeframe || "1 minute";
       const history = accountType === 'real' ? history_real : history_demo;
@@ -121,7 +146,9 @@ export function initSocket(server: HttpServer) {
         if (!history[asset]) history[asset] = {};
         const tfSecs = getTimeSeconds(tf);
         let basePrice = Number(pool[asset].price) || 100.00;
-        let tTime = Math.floor(Date.now() / 1000) - (200 * tfSecs);
+        const nowSec = Math.floor(Date.now() / 1000);
+        const currentBucket = nowSec - (nowSec % tfSecs);
+        let tTime = currentBucket - (200 * tfSecs);
         const generated = [];
         
         for (let i = 0; i < 200; i++) {
@@ -236,43 +263,90 @@ export function initSocket(server: HttpServer) {
               const rawVol = assetConfig ? assetConfig.volatility : 0.0002;
               const assetPrice = assetConfig ? assetConfig.price : 100;
               const relativeVol = rawVol / assetPrice;
-              const stepVol = relativeVol * Math.sqrt(tfSecs) * 0.06;
-              const rangeVol = lastClose * stepVol * (0.8 + pr * 1.5);
               
-              // Determine candle type
+              // Dynamic volatility scaling for realistic, energetic candles across all timeframes
+              const tfMultiplier = tfSecs <= 10 ? 0.14 : tfSecs <= 60 ? 0.10 : tfSecs <= 300 ? 0.07 : tfSecs <= 3600 ? 0.035 : tfSecs <= 14400 ? 0.018 : 0.01;
+              const isOTC = asset.includes('(OTC)') || asset.includes('Crypto IDX');
+              const otcVolBoost = isOTC ? 1.6 : 1.2;
+              const stepVol = relativeVol * Math.sqrt(Math.min(tfSecs, 1800)) * tfMultiplier * otcVolBoost;
+              const rangeVol = lastClose * stepVol * (0.9 + pr * 1.4);
+              
+              // Determine candle type with full realistic variety (Doji, Hammer, Shooting Star, Spinning Top, Standard)
               const typeRand = getPseudoRandom(lastTime + 1000);
               const currentClose = lastClose;
               let currentOpen = lastClose;
               let high = lastClose;
               let low = lastClose;
 
-              if (typeRand < 0.12) {
-                 // Doji / Spinning Top
-                 const bodySize = rangeVol * (0.05 + getPseudoRandom(lastTime + 2) * 0.15);
+              if (typeRand < 0.16) {
+                 // Doji (Ultra-thin body with upper & lower shadow)
+                 const bodySize = rangeVol * (0.01 + getPseudoRandom(lastTime + 2) * 0.04);
                  const isUp = getPseudoRandom(lastTime + 3) > 0.5;
                  currentOpen = isUp ? currentClose - bodySize : currentClose + bodySize;
                  
-                 const upperWick = rangeVol * (0.1 + getPseudoRandom(lastTime + 4) * 0.4);
-                 const lowerWick = rangeVol * (0.1 + getPseudoRandom(lastTime + 5) * 0.4);
+                 const upperWick = rangeVol * (0.4 + getPseudoRandom(lastTime + 4) * 0.5);
+                 const lowerWick = rangeVol * (0.4 + getPseudoRandom(lastTime + 5) * 0.5);
                  high = Math.max(currentOpen, currentClose) + upperWick;
                  low = Math.min(currentOpen, currentClose) - lowerWick;
-              } else if (typeRand < 0.35) {
-                 // Strong Candle (Large body, small wicks)
-                 const bodySize = rangeVol * (1.2 + getPseudoRandom(lastTime + 2) * 1.8);
-                 const isUp = momentum > 0 || getPseudoRandom(lastTime + 3) > 0.65;
+              } else if (typeRand < 0.32) {
+                 // Spinning Top (Small body with balanced wicks)
+                 const bodySize = rangeVol * (0.12 + getPseudoRandom(lastTime + 2) * 0.12);
+                 const isUp = getPseudoRandom(lastTime + 3) > 0.5;
                  currentOpen = isUp ? currentClose - bodySize : currentClose + bodySize;
                  
-                 const tinyWick = bodySize * (getPseudoRandom(lastTime + 4) * 0.05);
-                 high = Math.max(currentOpen, currentClose) + tinyWick;
-                 low = Math.min(currentOpen, currentClose) - tinyWick;
+                 const upperWick = rangeVol * (0.35 + getPseudoRandom(lastTime + 4) * 0.35);
+                 const lowerWick = rangeVol * (0.35 + getPseudoRandom(lastTime + 5) * 0.35);
+                 high = Math.max(currentOpen, currentClose) + upperWick;
+                 low = Math.min(currentOpen, currentClose) - lowerWick;
+              } else if (typeRand < 0.48) {
+                 // Hammer (Small body at the top, long lower shadow rejection)
+                 const bodySize = rangeVol * (0.14 + getPseudoRandom(lastTime + 2) * 0.12);
+                 const isUp = getPseudoRandom(lastTime + 3) > 0.35;
+                 currentOpen = isUp ? currentClose - bodySize : currentClose + bodySize;
+                 
+                 const upperWick = rangeVol * (getPseudoRandom(lastTime + 4) * 0.08);
+                 const lowerWick = rangeVol * (0.60 + getPseudoRandom(lastTime + 5) * 0.40);
+                 high = Math.max(currentOpen, currentClose) + upperWick;
+                 low = Math.min(currentOpen, currentClose) - lowerWick;
+              } else if (typeRand < 0.64) {
+                 // Shooting Star / Inverted Hammer (Small body at bottom, long upper shadow)
+                 const bodySize = rangeVol * (0.14 + getPseudoRandom(lastTime + 2) * 0.12);
+                 const isUp = getPseudoRandom(lastTime + 3) > 0.65;
+                 currentOpen = isUp ? currentClose - bodySize : currentClose + bodySize;
+                 
+                 const lowerWick = rangeVol * (getPseudoRandom(lastTime + 4) * 0.08);
+                 const upperWick = rangeVol * (0.60 + getPseudoRandom(lastTime + 5) * 0.40);
+                 high = Math.max(currentOpen, currentClose) + upperWick;
+                 low = Math.min(currentOpen, currentClose) - lowerWick;
+              } else if (typeRand < 0.76) {
+                 // Long-wick Rejection Pin Bar
+                 const bodySize = rangeVol * (0.10 + getPseudoRandom(lastTime + 2) * 0.10);
+                 const isUp = getPseudoRandom(lastTime + 3) > 0.5;
+                 currentOpen = isUp ? currentClose - bodySize : currentClose + bodySize;
+                 
+                 const isUpperReject = getPseudoRandom(lastTime + 6) > 0.5;
+                 const mainWick = rangeVol * (0.70 + getPseudoRandom(lastTime + 4) * 0.50);
+                 const minorWick = rangeVol * (0.05 + getPseudoRandom(lastTime + 5) * 0.10);
+                 high = Math.max(currentOpen, currentClose) + (isUpperReject ? mainWick : minorWick);
+                 low = Math.min(currentOpen, currentClose) - (isUpperReject ? minorWick : mainWick);
+              } else if (typeRand < 0.94) {
+                 // Standard Candlestick (Balanced body with proper upper and lower wicks)
+                 const bodySize = rangeVol * (0.35 + getPseudoRandom(lastTime + 2) * 0.35);
+                 const isUp = momentum > 0.1 || (momentum > -0.1 && getPseudoRandom(lastTime + 3) > 0.5);
+                 currentOpen = isUp ? currentClose - bodySize : currentClose + bodySize;
+                 
+                 const upperWick = rangeVol * (0.15 + getPseudoRandom(lastTime + 4) * 0.30);
+                 const lowerWick = rangeVol * (0.15 + getPseudoRandom(lastTime + 5) * 0.30);
+                 high = Math.max(currentOpen, currentClose) + upperWick;
+                 low = Math.min(currentOpen, currentClose) - lowerWick;
               } else {
-                 // Standard Candle
-                 const bodySize = rangeVol * (0.5 + getPseudoRandom(lastTime + 2) * 1.0);
-                 const isUp = momentum > 0.15 || (momentum > -0.15 && getPseudoRandom(lastTime + 3) > 0.5);
+                 // Strong Momentum / Breakout Candle
+                 const bodySize = rangeVol * (0.80 + getPseudoRandom(lastTime + 2) * 0.50);
+                 const isUp = momentum > 0;
                  currentOpen = isUp ? currentClose - bodySize : currentClose + bodySize;
                  
-                 const upperWick = rangeVol * (0.2 + getPseudoRandom(lastTime + 4) * 0.4);
-                 const lowerWick = rangeVol * (0.2 + getPseudoRandom(lastTime + 5) * 0.4);
+                 const upperWick = bodySize * (0.04 + getPseudoRandom(lastTime + 4) * 0.08);
+                 const lowerWick = bodySize * (0.04 + getPseudoRandom(lastTime + 5) * 0.08);
                  high = Math.max(currentOpen, currentClose) + upperWick;
                  low = Math.min(currentOpen, currentClose) - lowerWick;
               }

@@ -913,11 +913,19 @@ export async function getUserTransactions(userId: string): Promise<any[]> {
   }
 }
 
-export async function syncGlobalTransactionsFromFirestore() {
+let lastTxSyncTime = 0;
+let isTxSyncing = false;
+
+export async function syncGlobalTransactionsFromFirestore(force = false) {
   if (!adminDb) return;
+  const now = Date.now();
+  if (isTxSyncing) return;
+  if (!force && (now - lastTxSyncTime < 45000)) return; // 45s cache throttle
+  isTxSyncing = true;
+  lastTxSyncTime = now;
   try {
     // 1. Sync Deposits
-    const depositsSnap = await adminDb.collection('deposits').limit(500).get();
+    const depositsSnap = await adminDb.collection('deposits').limit(200).get();
     let i = 0;
     const batchSize = 50;
     while (i < depositsSnap.docs.length) {
@@ -1026,6 +1034,8 @@ export async function syncGlobalTransactionsFromFirestore() {
     }
   } catch (err) {
     logger.error(`[syncGlobalTransactionsFromFirestore] Error: ${err}`);
+  } finally {
+    isTxSyncing = false;
   }
 }
 
@@ -1204,60 +1214,14 @@ export async function seedPromoServer() {
   if (!adminDb) return;
   try {
     const newsSnap = await adminDb.collection('news').where('title', '==', '50% Deposit Bonus').get();
-    
-    const promoContent = `Promo Code: BIVAAXFAST50
-
-Offer Details:
-• Get 50% Bonus on your Deposit
-• Fast Bonus Credit
-• Secure & Trusted Platform
-• Instant Deposit Processing
-• Limited Time Offer
-
-Trade Smart. Earn Big.`;
-
-    if (newsSnap.empty) {
-      await adminDb.collection('news').add({
-        title: "50% Deposit Bonus",
-        description: "Boost Your Trading with Every Deposit!",
-        content: promoContent,
-        imageUrl: "https://i.postimg.cc/FHrDvXtr/file-0000000087d081fabe530d525061bcac.png",
-        emoji: "🚀",
-        date: new Date().toLocaleDateString(),
-        ctaText: "DEPOSIT NOW",
-        actionType: "deposit",
-        actionValue: "BIVAAXFAST50",
-        isPlatformNews: true,
-        reactions: 100,
-        badReactions: 0
-      });
-      logger.info("News Promo seeded successfully on server");
-    } else {
-      const docId = newsSnap.docs[0].id;
-      await adminDb.collection('news').doc(docId).update({
-        description: "Boost Your Trading with Every Deposit!",
-        content: promoContent,
-        isPlatformNews: true,
-        actionType: "deposit",
-        actionValue: "BIVAAXFAST50",
-        ctaText: "DEPOSIT NOW",
-        imageUrl: "https://i.postimg.cc/FHrDvXtr/file-0000000087d081fabe530d525061bcac.png"
-      });
-    }
-
-    const promoSnap = await adminDb.collection('promos').where('code', '==', 'BIVAAXFAST50').get();
-    if (promoSnap.empty) {
-      await adminDb.collection('promos').add({
-        code: 'BIVAAXFAST50',
-        bonusPercentage: 50,
-        isActive: true,
-        isBonusActive: true,
-        expiryDate: new Date().getTime() + (1000 * 60 * 60 * 24 * 30) // 30 days
-      });
-      logger.info("Promo code seeded successfully on server");
+    if (!newsSnap.empty) {
+      for (const doc of newsSnap.docs) {
+        await adminDb.collection('news').doc(doc.id).delete();
+        logger.info(`Deleted unwanted news promo doc: ${doc.id}`);
+      }
     }
   } catch (err: any) {
-    logger.error(`Error seeding promo on server: ${err.message}`);
+    logger.error(`Error cleaning up news promo on server: ${err.message}`);
   }
 }
 
@@ -1277,11 +1241,19 @@ export async function syncDatabaseFromFirestore() {
   }
 }
 
-export async function syncAllUsersFromFirestore() {
+let lastUserSyncTime = 0;
+let isUserSyncing = false;
+
+export async function syncAllUsersFromFirestore(force = false) {
   if (!adminDb) return;
+  const now = Date.now();
+  if (isUserSyncing) return;
+  if (!force && (now - lastUserSyncTime < 60000)) return; // 60s cache throttle
+  isUserSyncing = true;
+  lastUserSyncTime = now;
   try {
-    // Limit to latest 1000 users to keep boot sync safe
-    const snapshot = await adminDb.collection('users').limit(1000).get();
+    // Limit to latest 300 users to keep sync super fast
+    const snapshot = await adminDb.collection('users').limit(300).get();
     if (snapshot.empty) return;
 
     let i = 0;
@@ -1395,6 +1367,8 @@ export async function syncAllUsersFromFirestore() {
     }
   } catch (err: any) {
     logger.error(`[syncAllUsersFromFirestore] Error: ${err.message}`);
+  } finally {
+    isUserSyncing = false;
   }
 }
 
@@ -2354,7 +2328,9 @@ router.post('/trade', async (req, res) => {
     });
 
     const insertedTrade = await get('SELECT * FROM trades WHERE user_id = ? ORDER BY id DESC LIMIT 1', [userId]);
-    res.json({ success: true, trade: mapTrade(insertedTrade) });
+    const updatedUser = await get('SELECT * FROM users WHERE uid = ?', [userId]);
+    const mapped = mapUserForFrontend(updatedUser);
+    res.json({ success: true, trade: mapTrade(insertedTrade), user: mapped });
   } catch (err: any) {
     logger.error(`Trade placement failed: ${err.message}`);
     res.status(400).json({ error: err.message });
@@ -2367,10 +2343,49 @@ router.post('/trade/settle-secure', async (req, res) => {
   
   try {
     const idToSettle = isNaN(Number(tradeId)) ? tradeId : Number(tradeId);
-    const result = await settleTrade(idToSettle, currentMarketPrice);
-    res.json({ success: true, trade: result });
+    let result = await settleTrade(idToSettle, currentMarketPrice);
+    let user = null;
+    let userId = result?.userId;
+    
+    if (!result) {
+      // Trade might have already been settled by background worker
+      let existingTrade = null;
+      if (typeof idToSettle === 'number') {
+        existingTrade = await get('SELECT * FROM trades WHERE id = ?', [idToSettle]);
+      }
+      if (!existingTrade && tradeId) {
+        existingTrade = await get('SELECT * FROM trades WHERE firebase_id = ? OR id = ?', [tradeId.toString(), tradeId.toString()]);
+      }
+      if (existingTrade) {
+        userId = existingTrade.user_id;
+        result = mapTrade(existingTrade);
+      }
+    }
+
+    if (userId) {
+      const userRow = await get('SELECT * FROM users WHERE uid = ?', [userId]);
+      user = mapUserForFrontend(userRow);
+    }
+    
+    res.json({ success: true, trade: result, user });
   } catch (error: any) {
     logger.error(`Manual settlement failed for trade ${tradeId}: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post('/wallet/recharge-demo', requireAuth, async (req: AuthRequest, res) => {
+  const uid = req.user!.uid;
+  try {
+    const rechargeAmount = 10000;
+    await run('UPDATE users SET demo_balance = ? WHERE uid = ?', [rechargeAmount, uid]);
+    const userRow = await get('SELECT * FROM users WHERE uid = ?', [uid]);
+    const mapped = mapUserForFrontend(userRow);
+    getIO().to(`user_${uid}`).emit('user_profile_update', mapped);
+    syncUserToFirestore(uid, mapped);
+    res.json({ success: true, user: mapped });
+  } catch (error: any) {
+    logger.error(`Recharge demo failed for ${uid}: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });

@@ -1394,6 +1394,7 @@ export const mapTimeframeToBinanceInterval = (tf: string): string => {
     case '15 minutes': return '15m';
     case '30 minutes': return '30m';
     case '1 hour': return '1h';
+    case '3 hours': return '4h';
     case '4 hours': return '4h';
     case '1 day': return '1d';
     default: return '1m';
@@ -1565,7 +1566,11 @@ export default function TradeTerminal() {
       if (regulationsSnap.exists()) setRegulationsData(regulationsSnap.data());
       if (agreementSnap.exists()) setClientAgreementData(agreementSnap.data());
       
-      setNewsData(newsSnap.docs.map((d: any) => ({id: d.id, ...d.data()})));
+      setNewsData(
+        newsSnap.docs
+          .map((d: any) => ({id: d.id, ...d.data()}))
+          .filter((item: any) => item.id !== 'deposit-bonus-50' && item.title !== '50% Deposit Bonus')
+      );
       setEducationData(eduSnap.docs.map((d: any) => ({id: d.id, ...d.data()})));
       setPromotionsData(promosSnap.docs.map((d: any) => ({id: d.id, ...d.data()})));
       setTournamentsData(tourneysSnap.docs.map((d: any) => ({id: d.id, ...d.data()})));
@@ -1712,21 +1717,30 @@ export default function TradeTerminal() {
                         setUserCurrency(userData.currency);
                         userCurrencyRef.current = userData.currency;
                     }
-                    if (userData.balance !== undefined && realBalanceRef.current !== userData.balance) {
-                        setRealBalance(userData.balance);
-                        realBalanceRef.current = userData.balance;
+                    if (userData.balance !== undefined) {
+                        const val = parseFloat(userData.balance?.toString());
+                        if (!isNaN(val) && Math.abs(realBalanceRef.current - val) > 0.0001) {
+                            setRealBalance(val);
+                            realBalanceRef.current = val;
+                        }
                     }
-                    if (userData.demoBalance !== undefined && demoBalanceRef.current !== userData.demoBalance) {
-                        setDemoBalance(userData.demoBalance);
-                        demoBalanceRef.current = userData.demoBalance;
+                    if (userData.demoBalance !== undefined) {
+                        const dval = parseFloat(userData.demoBalance?.toString());
+                        if (!isNaN(dval) && Math.abs(demoBalanceRef.current - dval) > 0.0001) {
+                            setDemoBalance(dval);
+                            demoBalanceRef.current = dval;
+                        }
                     }
                     if (userData.affiliateId !== undefined && affIdRef.current !== userData.affiliateId) {
                         setAffId(userData.affiliateId);
                         affIdRef.current = userData.affiliateId;
                     }
-                    if (userData.totalLiveVolume !== undefined && totalLiveVolumeRef.current !== userData.totalLiveVolume) {
-                        setTotalLiveVolume(userData.totalLiveVolume);
-                        totalLiveVolumeRef.current = userData.totalLiveVolume;
+                    if (userData.totalLiveVolume !== undefined) {
+                        const tval = parseFloat(userData.totalLiveVolume?.toString());
+                        if (!isNaN(tval)) {
+                            setTotalLiveVolume(tval);
+                            totalLiveVolumeRef.current = tval;
+                        }
                     }
 
                     if (userData.isVerified !== undefined && isVerifiedRef.current !== userData.isVerified) {
@@ -1843,8 +1857,7 @@ export default function TradeTerminal() {
 
         // Optional: Keep Firestore for real-time legacy sync if needed, but don't let it overwrite REST
         const unsubOpenTrades = onSnapshot(query(collection(db, 'trades'), where('userId', '==', user.uid), where('status', '==', 'open')), (snapshot) => {
-            if (snapshot.empty) return;
-            const open = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            const open = snapshot.empty ? [] : snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
             setActiveTrades(prev => {
                 const now = Date.now();
                 
@@ -4997,12 +5010,13 @@ const PROMOTED_ARTICLES = [
           if (currentInterpolatedPriceRef.current === 0) {
               currentInterpolatedPriceRef.current = targetPriceRef.current;
           } else {
-              currentInterpolatedPriceRef.current += (targetPriceRef.current - currentInterpolatedPriceRef.current) * 0.32;
+              currentInterpolatedPriceRef.current += (targetPriceRef.current - currentInterpolatedPriceRef.current) * 0.25;
           }
           newInterp = currentInterpolatedPriceRef.current;
       }
 
-      const hasPriceChanged = newInterp !== lastRenderedPriceRef.current;
+      const priceDiff = Math.abs(newInterp - (lastRenderedPriceRef.current || 0));
+      const hasPriceChanged = priceDiff >= 0.000005 || (Math.abs(targetPriceRef.current - newInterp) < 0.00001 && priceDiff > 0);
       const hasTimeChanged = rawLastCandleRef.current?.time !== lastRenderedTimeRef.current;
       const needsSeriesUpdate = hasPriceChanged || hasTimeChanged;
 
@@ -5011,22 +5025,28 @@ const PROMOTED_ARTICLES = [
         const currentSeries = idx === 0 ? seriesRef.current : seriesRef2.current;
         const currentContainer = idx === 0 ? chartContainerRef.current : chartContainerRef2.current;
         
-        if (currentChart && currentContainer) {
+        if (currentChart && currentContainer && currentSeries) {
            try {
-               if (currentSeries && rawLastCandleRef.current && newInterp > 0 && needsSeriesUpdate) {
+               if (rawLastCandleRef.current && typeof newInterp === 'number' && isFinite(newInterp) && newInterp > 0 && needsSeriesUpdate) {
                    const newCandle = { ...rawLastCandleRef.current };
                    newCandle.close = newInterp;
-                   newCandle.high = Math.max(newCandle.high, newInterp);
-                   newCandle.low = Math.min(newCandle.low, newInterp);
+                   newCandle.high = Math.max(newCandle.high || newInterp, newInterp);
+                   newCandle.low = Math.min(newCandle.low || newInterp, newInterp);
                    
                    try {
                        if (idx === 1) {
-                           currentSeries.update(newCandle);
+                           if (newCandle.time && isFinite(newCandle.time as number)) {
+                               currentSeries.update(newCandle);
+                           }
                        } else {
                            if (chartTypeRef.current === "Line" || chartTypeRef.current === "Mountain") {
-                               currentSeries.update({ time: newCandle.time, value: newInterp });
+                               if (newCandle.time && isFinite(newCandle.time as number)) {
+                                   currentSeries.update({ time: newCandle.time, value: newInterp });
+                               }
                            } else {
-                               currentSeries.update(newCandle);
+                               if (newCandle.time && isFinite(newCandle.time as number)) {
+                                   currentSeries.update(newCandle);
+                               }
                            }
                        }
                    } catch(updErr) {}
@@ -5039,27 +5059,36 @@ const PROMOTED_ARTICLES = [
                const tsWidth = currentContainer.clientWidth || 600;
                const visibleRange = ts.getVisibleLogicalRange();
                
-               const timeSecs = Math.floor(purchaseDeadlineTime / 1000);
-               const expSecs = Math.floor(exactExpirationTime / 1000);
+               const timeSecs = (typeof purchaseDeadlineTime === 'number' && isFinite(purchaseDeadlineTime) && purchaseDeadlineTime > 0) ? Math.floor(purchaseDeadlineTime / 1000) : 0;
+               const expSecs = (typeof exactExpirationTime === 'number' && isFinite(exactExpirationTime) && exactExpirationTime > 0) ? Math.floor(exactExpirationTime / 1000) : 0;
                
                const getX = (targetTimeSecs: number) => {
-                   let x = ts.timeToCoordinate(targetTimeSecs as Time);
-                   if (x === null && rawLastCandleRef.current) {
-                       const lastTime = rawLastCandleRef.current.time as number;
-                       const lastX = ts.timeToCoordinate(lastTime as Time);
-                       if (lastX !== null && visibleRange) {
-                           const secondsDiff = targetTimeSecs - lastTime;
-                           const timeframeSeconds = getTimeSeconds(timeframe);
-                           const candlesDiff = secondsDiff / timeframeSeconds;
-                           const barSpacing = tsWidth / (visibleRange.to - visibleRange.from);
-                           x = (lastX + candlesDiff * barSpacing) as any;
+                   if (!targetTimeSecs || !isFinite(targetTimeSecs) || targetTimeSecs <= 0) return null;
+                   try {
+                       let x = ts.timeToCoordinate(targetTimeSecs as Time);
+                       if (x === null && rawLastCandleRef.current) {
+                           const lastTime = rawLastCandleRef.current.time as number;
+                           if (lastTime && isFinite(lastTime) && lastTime > 0) {
+                               const lastX = ts.timeToCoordinate(lastTime as Time);
+                               if (lastX !== null && isFinite(lastX) && visibleRange && isFinite(visibleRange.to) && isFinite(visibleRange.from) && (visibleRange.to - visibleRange.from) > 0) {
+                                   const secondsDiff = targetTimeSecs - lastTime;
+                                   const timeframeSeconds = getTimeSeconds(timeframe);
+                                   if (timeframeSeconds > 0) {
+                                       const candlesDiff = secondsDiff / timeframeSeconds;
+                                       const barSpacing = tsWidth / (visibleRange.to - visibleRange.from);
+                                       x = (lastX + candlesDiff * barSpacing) as any;
+                                   }
+                               }
+                           }
                        }
+                       return (x !== null && isFinite(x)) ? x : null;
+                   } catch (e) {
+                       return null;
                    }
-                   return x;
                };
                
-               const pX = getX(timeSecs);
-               const eX = getX(expSecs);
+               const pX = timeSecs > 0 ? getX(timeSecs) : null;
+               const eX = expSecs > 0 ? getX(expSecs) : null;
 
                if (idx === 0) {
                   if (pX !== purchaseLineXRef.current) {
@@ -5074,13 +5103,18 @@ const PROMOTED_ARTICLES = [
                
                if (currentSeries && (lastCandleRef.current || rawLastCandleRef.current)) {
                    if (idx === 0) {
-                      const priceY = currentSeries.priceToCoordinate(currentInterpolatedPriceRef.current);
-                      if (timerOverlayRef.current && priceY !== null) {
+                      const interpP = currentInterpolatedPriceRef.current;
+                      let priceY: number | null = null;
+                      if (typeof interpP === 'number' && isFinite(interpP) && interpP > 0) {
+                          try { priceY = currentSeries.priceToCoordinate(interpP); } catch(e) {}
+                      }
+                      if (timerOverlayRef.current && priceY !== null && isFinite(priceY)) {
                           timerOverlayRef.current.style.transform = `translateY(${priceY}px)`;
                       }
-                      if (hoverTradeTypeRef.current && lastCandleRef.current) {
-                          const y = currentSeries.priceToCoordinate(lastCandleRef.current.close);
-                          setHoverLineY(y);
+                      if (hoverTradeTypeRef.current && lastCandleRef.current && typeof lastCandleRef.current.close === 'number' && isFinite(lastCandleRef.current.close)) {
+                          let y: number | null = null;
+                          try { y = currentSeries.priceToCoordinate(lastCandleRef.current.close); } catch(e) {}
+                          setHoverLineY((y !== null && isFinite(y)) ? y : null);
                       } else {
                           setHoverLineY(null);
                       }
@@ -5089,7 +5123,7 @@ const PROMOTED_ARTICLES = [
                    if (activeTradesRef.current && activeAssetRef.current) {
                        const currentPrice = lastCandleRef.current?.close ?? rawLastCandleRef.current?.close ?? lastCandleRef.current?.value;
                        let candleHalfWidth = 0;
-                       if (visibleRange && (visibleRange.to - visibleRange.from) > 0) {
+                       if (visibleRange && isFinite(visibleRange.to) && isFinite(visibleRange.from) && (visibleRange.to - visibleRange.from) > 0) {
                            const barSpacing = tsWidth / (visibleRange.to - visibleRange.from);
                            candleHalfWidth = barSpacing * 0.40;
                        }
@@ -5104,18 +5138,26 @@ const PROMOTED_ARTICLES = [
                                }
                                
                                if (el) {
-                                   const y = currentSeries.priceToCoordinate(Number(trade.entryPrice));
+                                   const entryPriceNum = Number(trade.entryPrice);
+                                   let y: number | null = null;
+                                   if (typeof entryPriceNum === 'number' && isFinite(entryPriceNum) && entryPriceNum > 0) {
+                                       try { y = currentSeries.priceToCoordinate(entryPriceNum); } catch(e) {}
+                                   }
+                                   
                                    const entryTimeSecs = (trade.entryTime || (typeof trade.createdAt === 'number' ? Math.floor(trade.createdAt / 1000) : (trade.createdAt && typeof (trade.createdAt as any).toDate === 'function' ? Math.floor((trade.createdAt as any).toDate().getTime() / 1000) : ((trade.createdAt as any) instanceof Date ? Math.floor((trade.createdAt as any).getTime() / 1000) : Math.floor(Date.now() / 1000)))));
-                                   let xBase = getX(entryTimeSecs as number);
+                                   let xBase = (typeof entryTimeSecs === 'number' && isFinite(entryTimeSecs) && entryTimeSecs > 0) ? getX(entryTimeSecs) : null;
                                    if (xBase === null && rawLastCandleRef.current) {
                                        const lastTime = rawLastCandleRef.current.time as number;
-                                       xBase = ts.timeToCoordinate(lastTime as Time);
+                                       if (lastTime && isFinite(lastTime) && lastTime > 0) {
+                                           try { xBase = ts.timeToCoordinate(lastTime as Time); } catch(e) {}
+                                       }
                                    }
-                                   const xExp = getX(Math.floor(trade.expirationTime / 1000));
+                                   const tradeExpSecs = (trade.expirationTime && typeof trade.expirationTime === 'number' && isFinite(trade.expirationTime)) ? Math.floor(trade.expirationTime / 1000) : 0;
+                                   const xExp = tradeExpSecs > 0 ? getX(tradeExpSecs) : null;
                                    
-                                   const adjXBase = xBase !== null ? xBase - candleHalfWidth : null;
+                                   const adjXBase = (xBase !== null && isFinite(xBase)) ? xBase - candleHalfWidth : null;
                                    
-                                   if (y !== null && adjXBase !== null) {
+                                   if (y !== null && isFinite(y) && adjXBase !== null && isFinite(adjXBase)) {
                                        el.style.transform = `translate(${adjXBase}px, ${y}px)`;
                                        if (el.style.display !== 'block') el.style.display = 'block';
                                        
@@ -5157,10 +5199,10 @@ const PROMOTED_ARTICLES = [
                                            }
                                        }
 
-                                       if (xExp !== null && xExp > adjXBase!) {
-                                           const newWidth = `${Math.max(1, xExp - adjXBase!)}px`;
+                                       if (xExp !== null && isFinite(xExp) && xExp > adjXBase) {
+                                           const newWidth = `${Math.max(1, xExp - adjXBase)}px`;
                                            if (el.style.width !== newWidth) el.style.width = newWidth;
-                                       } else if (xExp !== null) {
+                                       } else if (xExp !== null && isFinite(xExp)) {
                                            if (el.style.width !== '0px') el.style.width = '0px';
                                        } else {
                                             const newWidth = `calc(100% - ${adjXBase}px)`;
@@ -5508,6 +5550,11 @@ const PROMOTED_ARTICLES = [
             lastRechargeRef.current = now;
             const rechargeAmount = 10000;
             setDemoBalance(rechargeAmount);
+            demoBalanceRef.current = rechargeAmount;
+            fetch('/api/wallet/recharge-demo', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            }).catch(() => {});
             updateDoc(doc(db, "users", auth.currentUser.uid), {
                 demoBalance: rechargeAmount
             }).catch((err) => console.error("Error recharging demo balance:", err));
@@ -6062,6 +6109,9 @@ const PROMOTED_ARTICLES = [
       if (token) {
         socket.emit('authenticate', token);
       }
+      if (auth.currentUser?.uid) {
+        socket.emit('join_user_room', auth.currentUser.uid);
+      }
       
       socket.emit('request_initial_data', { asset: activeAssetRef.current, timeframe: timeframeRef.current, accountType: accountTypeRef.current, userId: auth.currentUser?.uid });
     });
@@ -6091,25 +6141,34 @@ const PROMOTED_ARTICLES = [
             amount: notifAmount
         });
 
+        const tId = String(trade.id || '');
+        const tFbId = String((trade as any).firebaseId || (trade as any).firebase_id || '');
 
+        setActiveTrades(prev => prev.filter(t => {
+            const pId = String(t.id || '');
+            const pFbId = String((t as any).firebaseId || (t as any).firebase_id || '');
+            const matches = (tId && pId === tId) || (tFbId && pId === tFbId) || (tId && pFbId === tId) || (tFbId && pFbId && pFbId === tFbId);
+            return !matches;
+        }));
 
-        setActiveTrades(prev => prev.filter(t => t.id !== trade.id));
         setUserTrades(prev => {
-            const updated = prev.map(t => t.id === trade.id ? { ...t, ...trade } : t);
-            if (!updated.find(t => t.id === trade.id)) {
-                updated.unshift(trade);
+            const isMatch = (t: any) => {
+                const pId = String(t.id || '');
+                const pFbId = String(t.firebaseId || t.firebase_id || '');
+                return (tId && pId === tId) || (tFbId && pId === tFbId) || (tId && pFbId === tId) || (tFbId && pFbId && pFbId === tFbId);
+            };
+            const updated = prev.map(t => isMatch(t) ? { ...t, ...trade, status: notifStatus } : t);
+            if (!updated.some(isMatch)) {
+                updated.unshift({ ...trade, status: notifStatus });
             }
             updated.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
             return updated.slice(0, 100);
         });
         
-        // Balance is updated in real-time authoritatively and instantly via Firestore onSnapshot / socket user_profile_update.
-        // We do not modify the client balance state manually here to prevent any double-addition race conditions.
-        if (!processedTradesRef.current.has(trade.id)) {
-            if (processedTradesRef.current.size > 1000) {
-              processedTradesRef.current.clear();
-            }
-            processedTradesRef.current.add(trade.id);
+        if (tId) processedTradesRef.current.add(tId);
+        if (tFbId) processedTradesRef.current.add(tFbId);
+        if (processedTradesRef.current.size > 1000) {
+            processedTradesRef.current.clear();
         }
     });
 
@@ -6372,6 +6431,25 @@ const PROMOTED_ARTICLES = [
         }
     });
 
+    socket.on('balance_update', (data: any) => {
+        if (data.real_balance !== undefined || data.balance !== undefined || data.realBalance !== undefined) {
+            const raw = data.real_balance ?? data.balance ?? data.realBalance;
+            const val = parseFloat(raw?.toString());
+            if (!isNaN(val)) {
+                setRealBalance(val);
+                realBalanceRef.current = val;
+            }
+        }
+        if (data.demo_balance !== undefined || data.demoBalance !== undefined) {
+            const raw = data.demo_balance ?? data.demoBalance;
+            const val = parseFloat(raw?.toString());
+            if (!isNaN(val)) {
+                setDemoBalance(val);
+                demoBalanceRef.current = val;
+            }
+        }
+    });
+
     socket.on('system_status', (active: boolean) => setSystemActive(active));
     socket.on("market_settings_updated", (updatedMarkets: any) => setMarkets(updatedMarkets));
     socket.on("activities_updated", (activities: any) => setActivitiesBanners(activities));
@@ -6586,14 +6664,20 @@ const PROMOTED_ARTICLES = [
         if (trade.timeLeft <= 0) {
           if (!currentPriceForAsset) return true;
           
-          if (processedTradesRef.current.has(trade.id)) return false;
+          const tId = String(trade.id || '');
+          const tFbId = String((trade as any).firebaseId || (trade as any).firebase_id || '');
+
+          if ((tId && processedTradesRef.current.has(tId)) || (tFbId && processedTradesRef.current.has(tFbId))) {
+            return false;
+          }
           
           // Prevent Set from growing indefinitely in long sessions
           if (processedTradesRef.current.size > 1000) {
             processedTradesRef.current.clear();
           }
           
-          processedTradesRef.current.add(trade.id);
+          if (tId) processedTradesRef.current.add(tId);
+          if (tFbId) processedTradesRef.current.add(tFbId);
           tradesUpdated = true;
 
           const settlePrice = currentPriceForAsset;
@@ -6616,13 +6700,31 @@ const PROMOTED_ARTICLES = [
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ tradeId: trade.id, currentMarketPrice: settlePrice, tradeData: trade })
+          }).then(async (res) => {
+            if (res.ok) {
+              const data = await res.json().catch(() => null);
+              if (data?.user) {
+                if (data.user.balance !== undefined && (trade.accountType === 'real' || (!trade.isDemo && !trade.is_demo))) {
+                  const b = parseFloat(data.user.balance);
+                  if (!isNaN(b)) {
+                    setRealBalance(b);
+                    realBalanceRef.current = b;
+                  }
+                }
+                if (data.user.demoBalance !== undefined && (trade.accountType === 'demo' || trade.isDemo || trade.is_demo)) {
+                  const db = parseFloat(data.user.demoBalance);
+                  if (!isNaN(db)) {
+                    setDemoBalance(db);
+                    demoBalanceRef.current = db;
+                  }
+                }
+              }
+            }
           }).catch(err => console.error("Settlement request failed:", err));
 
           if (won) {
-            updateBalance(returnAmt);
             updateTournamentScore(returnAmt - trade.amount, true);
           } else if (isDraw) {
-            updateBalance(trade.amount);
             updateTournamentScore(0, false);
           } else {
             updateTournamentScore(-trade.amount, false);
@@ -6638,11 +6740,19 @@ const PROMOTED_ARTICLES = [
               amount: notifAmount
           });
 
-
-
           setUserTrades(prev => {
             const settledTrade = { ...trade, status: tradeStatus, exitPrice: settlePrice, payoutAmount: won ? returnAmt : (isDraw ? trade.amount : 0) };
-            return [settledTrade, ...prev.filter(t => t.id !== trade.id)].slice(0, 100);
+            const isMatch = (t: any) => {
+              const pId = String(t.id || '');
+              const pFbId = String(t.firebaseId || t.firebase_id || '');
+              return (tId && pId === tId) || (tFbId && pId === tFbId) || (tId && pFbId === tId) || (tFbId && pFbId && pFbId === tFbId);
+            };
+            const updated = prev.map(t => isMatch(t) ? { ...t, ...settledTrade } : t);
+            if (!updated.some(isMatch)) {
+              updated.unshift(settledTrade);
+            }
+            updated.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+            return updated.slice(0, 100);
           });
           
           return false;
@@ -7598,10 +7708,23 @@ const PROMOTED_ARTICLES = [
           setActiveTrades(finalTrades);
         }
 
-        // We rely on the server API to handle the actual database balance deduction 
-        // to avoid double deductions. We still sync the trade document locally for immediate UI response.
-        // Trade is persisted and balance is deducted securely on the server.
-        // Local UI state is already updated optimistically above.
+        // Apply authoritative balance from server response
+        if (resData.user) {
+          if (resData.user.balance !== undefined && accountType === 'real') {
+            const b = parseFloat(resData.user.balance);
+            if (!isNaN(b)) {
+              setRealBalance(b);
+              realBalanceRef.current = b;
+            }
+          }
+          if (resData.user.demoBalance !== undefined && accountType === 'demo') {
+            const db = parseFloat(resData.user.demoBalance);
+            if (!isNaN(db)) {
+              setDemoBalance(db);
+              demoBalanceRef.current = db;
+            }
+          }
+        }
 
         toast.success(`Trade opened ${type === 'up' ? 'UP' : 'DOWN'} at ${currentPrice.toFixed(5)}`);
       } catch (err: any) {
@@ -9770,7 +9893,23 @@ const PROMOTED_ARTICLES = [
             
             <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 scrollbar-hide pb-20">
               {(() => {
-                const eduList = educationData;
+                const eduList = educationData || [];
+                if (eduList.length === 0) {
+                  return (
+                    <div className="py-20 px-6 text-center flex flex-col items-center justify-center space-y-4 bg-[#212124]/40 border border-white/5 rounded-2xl my-6">
+                      <div className="w-16 h-16 rounded-2xl bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center text-yellow-500">
+                        <GraduationCap size={32} />
+                      </div>
+                      <div className="space-y-1.5 max-w-xs">
+                        <h3 className="text-lg font-bold text-white">No Videos Available</h3>
+                        <p className="text-gray-400 text-xs leading-relaxed">
+                          Educational tutorials and trading lessons will be published here by the administrator soon.
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
+
                 const welcomeItem = eduList.find(i => i.id === '1' || i.id === 1 || i.title?.toLowerCase().includes("welcome")) || eduList[0];
                 const videoItems = eduList.filter(i => i !== welcomeItem);
 
@@ -14967,7 +15106,7 @@ const PROMOTED_ARTICLES = [
                 {[
                   "5 seconds", "10 seconds", "15 seconds", "30 seconds", "1 minute", 
                   "5 minutes", "15 minutes", "30 minutes", "1 hour", 
-                  "3 hours", "1 day"
+                  "3 hours", "4 hours", "1 day"
                 ].map((tf) => (
                   <button
                     key={tf}

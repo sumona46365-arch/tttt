@@ -1,6 +1,6 @@
 import React, { useEffect, useState, Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { auth, db, onAuthStateChanged, signOut, getDoc, doc, getDocs, query, collection, where, setDoc, updateDoc, limit } from './firebase';
+import { auth, db, onAuthStateChanged, signOut, getDoc, doc, getDocs, deleteDoc, query, collection, where, setDoc, updateDoc, limit } from './firebase';
 import { User } from './lib/auth-client.ts';
 import { Lock, LogOut } from 'lucide-react';
 import * as OTPAuth from 'otpauth';
@@ -451,66 +451,33 @@ export default function App() {
           console.log("Seeded Litecoin (LTC) in depositMethods collection");
         } 
 
-        // 9. Ensure education collection contains default items if empty
-        const eduCol = collection(db, 'education');
-        const eduSnap = await getDocs(eduCol);
-        
-        if (eduSnap.empty) {
-          const defaultEducation = [
-            {
-              title: "Welcome to Bivaax Trade",
-              description: "Start your journey with our platform overview and core trading concepts.",
-              videoUrl: "https://www.youtube.com/embed/dQw4w9WgXcQ",
-              thumbnailUrl: "https://images.unsplash.com/photo-1642543492481-44e81e391452?w=800&auto=format&fit=crop&q=80",
-              duration: "2:45",
-              order: 1
-            },
-            {
-              title: "Trading Basics: Part 1",
-              description: "Learn about market analysis, candles, and trend identification.",
-              videoUrl: "https://www.youtube.com/embed/dQw4w9WgXcQ",
-              thumbnailUrl: "https://images.unsplash.com/photo-1611974714851-48206138d73e?w=800&auto=format&fit=crop&q=80",
-              duration: "5:12",
-              order: 2
-            },
-            {
-              title: "Risk Management Strategies",
-              description: "How to protect your capital and manage your trade sizes effectively.",
-              videoUrl: "https://www.youtube.com/embed/dQw4w9WgXcQ",
-              thumbnailUrl: "https://images.unsplash.com/photo-1590283603385-17ffb3a7f29f?w=800&auto=format&fit=crop&q=80",
-              duration: "4:30",
-              order: 3
-            },
-            {
-              title: "Technical Indicators: RSI & MACD",
-              description: "Master the most powerful indicators to find perfect entry points.",
-              videoUrl: "https://www.youtube.com/embed/dQw4w9WgXcQ",
-              thumbnailUrl: "https://images.unsplash.com/photo-1611974714131-419b67484411?w=800&auto=format&fit=crop&q=80",
-              duration: "6:20",
-              order: 4
-            },
-            {
-              title: "Money Management Mastery",
-              description: "Advanced techniques to grow small accounts into large ones safely.",
-              videoUrl: "https://www.youtube.com/embed/dQw4w9WgXcQ",
-              thumbnailUrl: "https://images.unsplash.com/photo-1579621970795-87faff2f9160?w=800&auto=format&fit=crop&q=80",
-              duration: "8:15",
-              order: 5
-            },
-            {
-              title: "The Psychology of Trading",
-              description: "Control your emotions and maintain a professional trader's mindset.",
-              videoUrl: "https://www.youtube.com/embed/dQw4w9WgXcQ",
-              thumbnailUrl: "https://images.unsplash.com/photo-1518186285589-2f7649de83e0?w=800&auto=format&fit=crop&q=80",
-              duration: "7:40",
-              order: 6
+        // 9. Clear default education videos as requested by admin
+        try {
+          const eduCol = collection(db, 'education');
+          const eduSnap = await getDocs(eduCol);
+          if (!eduSnap.empty) {
+            for (const itemDoc of eduSnap.docs) {
+              const d = itemDoc.data();
+              // Delete default placeholder videos or if clearing is requested
+              if (
+                d.title?.includes("Welcome to Bivaax") ||
+                d.title?.includes("Trading Basics") ||
+                d.title?.includes("Risk Management") ||
+                d.title?.includes("Technical Indicators") ||
+                d.title?.includes("Money Management") ||
+                d.title?.includes("Psychology of Trading") ||
+                d.title?.includes("Economic calendar") ||
+                d.videoUrl?.includes("dQw4w9WgXcQ") ||
+                localStorage.getItem('education_initial_cleared_v1') !== 'true'
+              ) {
+                await deleteDoc(doc(db, 'education', itemDoc.id));
+              }
             }
-          ];
-          
-          for (const item of defaultEducation) {
-            await setDoc(doc(eduCol), item);
+            localStorage.setItem('education_initial_cleared_v1', 'true');
+            console.log("Education collection cleaned of dummy videos");
           }
-          console.log("Seeded default items in education collection");
+        } catch (eduErr) {
+          console.warn("Education cleanup error:", eduErr);
         }
 
       } catch (err) {
@@ -829,8 +796,15 @@ export default function App() {
     );
   }
 
-  const isAffiliateSubdomain = window.location.hostname.startsWith('affiliate.') || window.location.hostname.includes('affiliate');
-  const isMarketSubdomain = window.location.hostname.startsWith('market.') || window.location.hostname.includes('market');
+  const hostname = window.location.hostname;
+  const isAffiliateSubdomain = hostname.startsWith('affiliate.') || hostname.includes('affiliate') || hostname.startsWith('partner.') || hostname.includes('partner.bivaax');
+  const isAppSubdomain = hostname.startsWith('app.') || hostname.includes('app.bivaax') || hostname.startsWith('market.') || hostname.includes('market.bivaax');
+  const isNewsSubdomain = hostname.startsWith('news.') || hostname.includes('news.bivaax');
+  const isInsightsSubdomain = hostname.startsWith('insights.') || hostname.includes('insights.bivaax');
+  const isSignalsSubdomain = hostname.startsWith('signals.') || hostname.includes('signals.bivaax');
+  const isSupportDomain = hostname.includes('support-bivaax');
+  const isSignUpDomain = hostname.includes('sign-up-bivaax');
+  const isSignInDomain = hostname.includes('sign-in-bivaax');
 
   return (
     <>
@@ -849,9 +823,20 @@ export default function App() {
               <Routes>
               <Route path="/" element={
                 user ? (
-                  <Navigate to={isAffiliateSubdomain ? "/affiliate" : "/trade"} replace />
+                  <Navigate to={
+                    isAffiliateSubdomain ? "/affiliate" : 
+                    isSignalsSubdomain || isInsightsSubdomain ? "/signals" :
+                    isNewsSubdomain ? "/news" :
+                    isSupportDomain ? "/support" :
+                    "/trade"
+                  } replace />
                 ) : (
-                  isAffiliateSubdomain ? <AffiliateLandingPage /> : (isMarketSubdomain ? <TradeTerminal /> : <Homepage />)
+                  isAffiliateSubdomain ? <AffiliateLandingPage /> : 
+                  isSignUpDomain || isSignInDomain || isAppSubdomain ? <AuthPage /> :
+                  isNewsSubdomain ? <NewsPage /> :
+                  isSignalsSubdomain || isInsightsSubdomain ? <SignalsPage /> :
+                  isSupportDomain ? <ClientSupportCenter /> :
+                  <Homepage />
                 )
               } />
               <Route path="/login" element={user ? <Navigate to={isAffiliateSubdomain ? "/affiliate" : "/trade"} replace /> : <AuthPage />} />

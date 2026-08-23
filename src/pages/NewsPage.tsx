@@ -14,17 +14,78 @@ export default function NewsPage() {
     window.scrollTo(0, 0);
   }, []);
 
-  if (!news) {
+  // News Index / List View
+  if (!slug || !news) {
+    const newsList = Object.values(NEWS_DATA).sort((a, b) => {
+      return new Date(b.date).getTime() - new Date(a.date).getTime();
+    });
+
+    if (newsList.length === 0) {
+      return (
+        <div className="min-h-screen bg-[#101115] flex flex-col items-center justify-center text-white p-4">
+          <h1 className="text-4xl font-black mb-4">404</h1>
+          <p className="text-gray-400 mb-8">No articles found.</p>
+          <button 
+            onClick={() => navigate('/')}
+            className="px-8 py-3 bg-[#FFE24C] text-black font-bold rounded-xl hover:bg-[#F0D544] transition-all"
+          >
+            Back to Home
+          </button>
+        </div>
+      );
+    }
+
     return (
-      <div className="min-h-screen bg-[#101115] flex flex-col items-center justify-center text-white p-4">
-        <h1 className="text-4xl font-black mb-4">404</h1>
-        <p className="text-gray-400 mb-8">Article not found.</p>
-        <button 
-          onClick={() => navigate('/')}
-          className="px-8 py-3 bg-[#FFE24C] text-black font-bold rounded-xl hover:bg-[#F0D544] transition-all"
-        >
-          Back to Home
-        </button>
+      <div className="min-h-screen bg-[#101115] text-white py-20 px-6">
+        <SEO 
+          title="Bivaax News - Global Market Insights"
+          description="Get the latest market news, crypto trends, and trading insights from Bivaax experts."
+        />
+        <div className="max-w-6xl mx-auto">
+          <header className="mb-16">
+            <h1 className="text-5xl md:text-7xl font-black mb-6 tracking-tight">Market News</h1>
+            <p className="text-xl text-gray-400 max-w-2xl font-medium">Daily updates on global financial markets, technical analysis, and platform announcements.</p>
+          </header>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            {newsList.map((item, idx) => (
+              <motion.div
+                key={item.id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: idx * 0.1 }}
+                onClick={() => navigate(`/news/${item.id}`)}
+                className="group cursor-pointer"
+              >
+                <div className="relative aspect-[16/10] rounded-[2rem] overflow-hidden mb-6 border border-white/5">
+                  <img 
+                    src={item.imageUrl} 
+                    className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" 
+                    alt={item.title}
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                  <div className="absolute top-4 left-4">
+                    <span className="px-3 py-1 bg-[#FFE24C] text-black text-[10px] font-black uppercase rounded-md shadow-lg">
+                      {item.category}
+                    </span>
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-gray-500 text-xs font-bold uppercase tracking-wider">
+                    <Calendar size={12} />
+                    {item.date}
+                  </div>
+                  <h3 className="text-2xl font-black group-hover:text-[#FFE24C] transition-colors line-clamp-2 leading-tight">
+                    {item.title}
+                  </h3>
+                  <p className="text-gray-400 font-medium line-clamp-3 text-sm leading-relaxed">
+                    {item.subtitle}
+                  </p>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
       </div>
     );
   }

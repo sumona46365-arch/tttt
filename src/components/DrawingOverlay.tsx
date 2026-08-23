@@ -84,51 +84,66 @@ export const DrawingOverlay = React.memo(({
     const x = clientX - rect.left;
     const y = clientY - rect.top;
 
-    let price = series.coordinateToPrice(y);
-    let time = chart.timeScale().coordinateToTime(x);
+    if (!isFinite(x) || !isFinite(y)) return null;
+
+    let price: number | null = null;
+    let time: any = null;
+
+    try {
+        price = series.coordinateToPrice(y);
+        time = chart.timeScale().coordinateToTime(x);
+    } catch (e) {
+        return null;
+    }
 
     if (price === null || time === null) return null;
 
     // Magnet feature: Find nearest candle if close
     if (data && data.length > 0) {
-        const timeNum = typeof time === 'number' ? time : (time as any).timestamp;
-        // Find nearest candle by time
-        let nearest = data[0];
-        let minDist = Math.abs((data[0].time as number) - timeNum);
-        
-        // Binary search would be faster but let's do a simple find for now or optimization
-        // Since it's a small array usually
-        for (let i = 1; i < data.length; i++) {
-            const dist = Math.abs((data[i].time as number) - timeNum);
-            if (dist < minDist) {
-                minDist = dist;
-                nearest = data[i];
-            }
-        }
-
-        // If we are close enough to this candle (e.g. within 2 bars)
-        if (minDist < (data[1]?.time - data[0]?.time) * 1.5) {
-            const candlePrices = [nearest.open, nearest.high, nearest.low, nearest.close];
-            let nearestPrice = candlePrices[0];
-            let minPriceDist = Math.abs(candlePrices[0] - price);
-
-            for (let i = 1; i < candlePrices.length; i++) {
-                const pDist = Math.abs(candlePrices[i] - price);
-                if (pDist < minPriceDist) {
-                    minPriceDist = pDist;
-                    nearestPrice = candlePrices[i];
+        const timeNum = typeof time === 'number' ? time : (time as any)?.timestamp;
+        if (typeof timeNum === 'number' && isFinite(timeNum)) {
+            // Find nearest candle by time
+            let nearest = data[0];
+            let minDist = Math.abs((data[0].time as number) - timeNum);
+            
+            for (let i = 1; i < data.length; i++) {
+                const dist = Math.abs((data[i].time as number) - timeNum);
+                if (dist < minDist) {
+                    minDist = dist;
+                    nearest = data[i];
                 }
             }
 
-            // Snap if within reasonable pixel distance
-            const coordOfNearest = series.priceToCoordinate(nearestPrice);
-            if (coordOfNearest !== null && Math.abs(coordOfNearest - y) < 20) {
-                price = nearestPrice;
-                time = nearest.time;
-                // Update screen coords for visual feedback
-                const snapX = chart.timeScale().timeToCoordinate(time as any);
-                if (snapX !== null) {
-                   return { x: snapX, y: coordOfNearest, price, time: (time as any) };
+            // If we are close enough to this candle (e.g. within 2 bars)
+            if (data[1] && data[0] && minDist < (data[1].time - data[0].time) * 1.5) {
+                const candlePrices = [nearest.open, nearest.high, nearest.low, nearest.close];
+                let nearestPrice = candlePrices[0];
+                let minPriceDist = Math.abs(candlePrices[0] - price);
+
+                for (let i = 1; i < candlePrices.length; i++) {
+                    const pDist = Math.abs(candlePrices[i] - price);
+                    if (pDist < minPriceDist) {
+                        minPriceDist = pDist;
+                        nearestPrice = candlePrices[i];
+                    }
+                }
+
+                // Snap if within reasonable pixel distance
+                if (typeof nearestPrice === 'number' && isFinite(nearestPrice)) {
+                    let coordOfNearest: number | null = null;
+                    try { coordOfNearest = series.priceToCoordinate(nearestPrice); } catch (e) {}
+                    if (coordOfNearest !== null && Math.abs(coordOfNearest - y) < 20) {
+                        price = nearestPrice;
+                        time = nearest.time;
+                        // Update screen coords for visual feedback
+                        let snapX: number | null = null;
+                        if (time && isFinite(time as number)) {
+                            try { snapX = chart.timeScale().timeToCoordinate(time as any); } catch (e) {}
+                        }
+                        if (snapX !== null) {
+                           return { x: snapX, y: coordOfNearest, price, time: (time as any) };
+                        }
+                    }
                 }
             }
         }
@@ -257,12 +272,18 @@ export const DrawingOverlay = React.memo(({
     if (!chart || !series || !containerRef.current) return null;
 
     const points = drawing.points.map(p => {
-        const x = chart.timeScale().timeToCoordinate(p.time as any);
-        const y = series.priceToCoordinate(p.price);
+        let x: number | null = null;
+        let y: number | null = null;
+        if (p.time && isFinite(p.time as number)) {
+            try { x = chart.timeScale().timeToCoordinate(p.time as any); } catch (e) {}
+        }
+        if (typeof p.price === 'number' && isFinite(p.price)) {
+            try { y = series.priceToCoordinate(p.price); } catch (e) {}
+        }
         return { x, y };
     });
 
-    if (points.length === 0 || points.some(p => p.x === null || p.y === null)) return null;
+    if (points.length === 0 || points.some(p => p.x === null || p.y === null || !isFinite(p.x) || !isFinite(p.y))) return null;
 
     const style = {
         stroke: drawing.color,
@@ -364,8 +385,11 @@ export const DrawingOverlay = React.memo(({
                     const price = drawing.points[1].price > drawing.points[0].price 
                         ? maxPrice - (diff * level)
                         : minPrice + (diff * level);
-                    const y = series.priceToCoordinate(price);
-                    if (y === null) return null;
+                    let y: number | null = null;
+                    if (typeof price === 'number' && isFinite(price)) {
+                        try { y = series.priceToCoordinate(price); } catch (e) {}
+                    }
+                    if (y === null || !isFinite(y)) return null;
                     return (
                         <g key={level}>
                             <line x1="0" y1={y} x2="100%" y2={y} {...style} strokeWidth={1} opacity={0.3} />
