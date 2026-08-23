@@ -66,6 +66,18 @@ export default function ProfilePage() {
   const userRefCode = user?.referralCode || user?.affiliateId || user?.referral_code || user?.affiliate_id || (user?.uid ? localStorage.getItem('bivaax_aff_code_' + user.uid) : null);
   const [activeRefCode, setActiveRefCode] = useState<string>(userRefCode ? String(userRefCode) : '');
 
+  // Ensure permanent affiliate ID is generated if missing
+  useEffect(() => {
+    if (!user?.uid) return;
+    if (!userRefCode) {
+      import('../lib/affiliate').then(({ ensureUserAffiliateId }) => {
+        ensureUserAffiliateId(user.uid, user).then(code => {
+          if (code) setActiveRefCode(code);
+        });
+      });
+    }
+  }, [user?.uid, userRefCode]);
+
   useEffect(() => {
     const cached = user?.uid ? localStorage.getItem('bivaax_aff_code_' + user.uid) : null;
     const code = user?.referralCode || user?.affiliateId || user?.referral_code || user?.affiliate_id || cached;
@@ -1420,7 +1432,10 @@ export default function ProfilePage() {
                 {(() => {
                   const cachedCode = user?.uid ? localStorage.getItem('bivaax_aff_code_' + user.uid) : null;
                   const displayRefCode = activeRefCode || user?.referralCode || user?.affiliateId || user?.referral_code || user?.affiliate_id || cachedCode || '100000';
-                  const fullRefLink = `${window.location.origin}/register?ref=${displayRefCode}`;
+                  
+                  // Ensure link points to main app's register page even if on partner subdomain
+                  const mainOrigin = window.location.origin.replace('partner.', '');
+                  const fullRefLink = `${mainOrigin}/register?ref=${displayRefCode}`;
 
                   return (
                     <>
