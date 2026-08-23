@@ -57,60 +57,15 @@ export default function UsdtTrc20Deposit() {
   }, []);
 
   const walletAddress = appConfig.usdtTrc20Address || "TCT8YFWr74eDmW rDwpG8JwpD2yVPy cebKU";
-
-  // Automatically submit request as pending when the page is viewed
-  useEffect(() => {
-    if (currentUser && walletAddress && !hasAutoSubmitted.current) {
-      hasAutoSubmitted.current = true;
-      const autoSubmit = async () => {
-        try {
-          // 1. Log transaction as Pending
-          const tDoc = await addDoc(collection(db, `users/${currentUser.uid}/transactions`), {
-              type: 'Deposit',
-              amount: Number(amountUsd.replace(',', '')),
-              method: 'USDT (TRC-20)',
-              currency: 'USDT',
-              status: 'Pending',
-              trxId: 'Pending/USDT',
-              orderId: orderId,
-              timestamp: Date.now(),
-              category: 'Crypto'
-          });
-          setTransactionDocId(tDoc.id);
-  
-          // 2. Add to global deposits as pending
-          const dDoc = await addDoc(collection(db, 'deposits'), {
-              userId: currentUser.uid,
-              userEmail: currentUser.email || '',
-              amount: Number(amountUsd.replace(',', '')),
-              currency: 'USDT',
-              method: 'USDT (TRC-20)',
-              walletNumber: walletAddress,
-              trxId: 'Pending/USDT',
-              status: 'pending',
-              timestamp: Date.now(),
-              orderId: orderId
-          });
-          setDepositDocId(dDoc.id);
-          
-          console.log("Auto-submitted pending deposit request:", dDoc.id);
-        } catch (err) {
-          console.error("Auto deposit failed:", err);
-        }
-      };
-      autoSubmit();
-    }
-  }, [currentUser, walletAddress, amountUsd]);
-
   const formatTime = (seconds: number) => {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = seconds % 60;
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
-
   const qrCodeUrl = appConfig.usdtTrc20QrCode || "https://i.postimg.cc/ZKN9zFGL/IMG-20260804-151047.png";
 
+  const [trxId, setTrxId] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
 
@@ -119,24 +74,22 @@ export default function UsdtTrc20Deposit() {
          toast.error("You must be logged in.");
          return;
      }
+     
+     if (isSubmitting) return;
 
      setIsSubmitting(true);
-     setIsSuccess(true);
-     toast.success("Deposit request confirmed!");
-     setTimeout(() => { navigate('/trade'); }, 5000);
-     return;
      try {
-         const baseOrderId = Math.floor(Math.random() * 100000000).toString();
+         const cleanAmount = Number(amountUsd.replace(/[^0-9.]/g, ''));
          
          // 1. Log transaction as Pending
          await addDoc(collection(db, `users/${currentUser.uid}/transactions`), {
              type: 'Deposit',
-             amount: Number(amountUsd.replace(',', '')),
+             amount: cleanAmount,
              method: 'USDT (TRC-20)',
              currency: 'USDT',
              status: 'Pending',
-             trxId: 'Pending/USDT',
-             orderId: baseOrderId,
+             trxId: trxId || 'Pending/USDT',
+             orderId: orderId,
              timestamp: Date.now(),
              category: 'Crypto'
          });
@@ -145,14 +98,14 @@ export default function UsdtTrc20Deposit() {
          await addDoc(collection(db, 'deposits'), {
              userId: currentUser.uid,
              userEmail: currentUser.email || '',
-             amount: Number(amountUsd.replace(',', '')),
+             amount: cleanAmount,
              currency: 'USDT',
              method: 'USDT (TRC-20)',
              walletNumber: walletAddress,
-             trxId: 'Pending/USDT',
+             trxId: trxId || 'Pending/USDT',
              status: 'pending',
              timestamp: Date.now(),
-             orderId: baseOrderId
+             orderId: orderId
          });
  
          setIsSuccess(true);
@@ -279,6 +232,18 @@ export default function UsdtTrc20Deposit() {
                             {walletAddress}
                          </p>
                       </div>
+                   </div>
+
+                   {/* TxID Input Field */}
+                   <div className="w-full space-y-2 mt-4 px-2">
+                      <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest ml-1">Transaction Hash / TxID (Required)</label>
+                      <input 
+                        type="text"
+                        placeholder="Enter your USDT TRC-20 Transaction Hash"
+                        value={trxId}
+                        onChange={(e) => setTrxId(e.target.value)}
+                        className="w-full bg-black/30 border border-white/10 rounded-xl p-4 text-sm font-bold text-white transition-all outline-none placeholder:text-gray-600 focus:border-[#3b82f6]"
+                      />
                    </div>
 
                    {/* Copy Buttons */}

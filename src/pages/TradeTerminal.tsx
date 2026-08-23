@@ -1403,6 +1403,7 @@ export const mapTimeframeToBinanceInterval = (tf: string): string => {
 
 export default function TradeTerminal() {
   const { openSupport } = useSupport();
+  const withdrawLockRef = useRef(false);
   const failedFetchRef = useRef(new Set<string>());
   const lastRequestedRef = useRef<Record<string, number>>({});
   const navigate = useNavigate();
@@ -14620,6 +14621,8 @@ const PROMOTED_ARTICLES = [
                    </div>
                     <button 
                       onClick={() => {
+                        if (withdrawLockRef.current) return;
+                        if (isRequestingOtp) return;
                         setWithdrawSubmitAttempted(true);
                         if (withdrawAccountHolder && withdrawAccountNumber) {
                            const amount = Number(withdrawAmount);
@@ -14638,6 +14641,7 @@ const PROMOTED_ARTICLES = [
                               return;
                            }
 
+                           withdrawLockRef.current = true;
                            setIsRequestingOtp(true);
                            setWithdrawalLoadingText("Authenticating withdrawal request...");
                            
@@ -14675,11 +14679,13 @@ const PROMOTED_ARTICLES = [
                                            setWithdrawSubmitAttempted(false);
                                            setIsRequestingOtp(false);
                                            setWithdrawalLoadingText("");
+                                           withdrawLockRef.current = false;
                                            return;
                                        } catch (e: any) {
                                            toast.error(e.message || 'Processing failed');
                                            setIsRequestingOtp(false);
                                            setWithdrawalLoadingText("");
+                                           withdrawLockRef.current = false;
                                            return;
                                        }
                                    }

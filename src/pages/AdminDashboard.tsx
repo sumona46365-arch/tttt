@@ -1034,22 +1034,6 @@ export default function AdminDashboard() {
               console.warn("Direct Firestore update fallback error:", fsErr);
           }
 
-          // If rejected, also refund the user balance directly in Firestore as instant UI sync
-          if (status === 'rejected' && userId && amount && amount > 0) {
-              try {
-                  const userDocRef = doc(db, 'users', userId);
-                  const userSnap = await getDoc(userDocRef);
-                  if (userSnap.exists()) {
-                      const curBal = Number(userSnap.data().balance || 0);
-                      await updateDoc(userDocRef, {
-                          balance: Number((curBal + amount).toFixed(2))
-                      });
-                  }
-              } catch (balErr) {
-                  console.warn("Direct Firestore user refund sync error:", balErr);
-              }
-          }
-
           if (userId) {
               try {
                   const txQuery = orderId 

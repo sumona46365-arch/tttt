@@ -114,6 +114,7 @@ const RocketDeposit: React.FC = () => {
   };
 
   const handleConfirm = async () => {
+    if (isSubmitting) return;
     if (!trxId || trxId.length < 6) {
       toast.error(lang === 'BN' ? "দয়া করে সঠিক লেনদেন আইডি দিন" : "Please enter a valid Transaction ID");
       return;

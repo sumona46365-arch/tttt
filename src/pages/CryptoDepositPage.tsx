@@ -83,48 +83,6 @@ export default function CryptoDepositPage() {
   }, []);
 
   useEffect(() => {
-    if (currentUser && activeAddress && !hasAutoSubmitted.current) {
-      hasAutoSubmitted.current = true;
-      const autoSubmit = async () => {
-        try {
-          const method = methodConfig.name || 'USDT (TRC-20)';
-          const tDoc = await addDoc(collection(db, `users/${currentUser.uid}/transactions`), {
-              type: 'Deposit',
-              amount: Number(amount),
-              method: method,
-              currency: currency,
-              status: 'pending',
-              trxId: 'Pending/Crypto',
-              orderId: baseOrderId,
-              timestamp: Date.now(),
-              category: 'Crypto'
-          });
-          setTransactionDocId(tDoc.id);
-  
-          const dDoc = await addDoc(collection(db, 'deposits'), {
-              userId: currentUser.uid,
-              userEmail: currentUser.email || '',
-              amount: Number(amount),
-              currency: currency,
-              method: method,
-              walletNumber: activeAddress,
-              trxId: 'Pending/Crypto',
-              status: 'pending',
-              timestamp: Date.now(),
-              orderId: baseOrderId
-          });
-          setDepositDocId(dDoc.id);
-          
-          console.log("Auto-submitted pending crypto deposit request:", dDoc.id);
-        } catch (err) {
-          console.error("Auto crypto deposit failed:", err);
-        }
-      };
-      autoSubmit();
-    }
-  }, [currentUser, activeAddress, amount, methodConfig]);
-
-  useEffect(() => {
     const fetchConfig = async () => {
       try {
         if (methodId && methodId !== "undefined") {
