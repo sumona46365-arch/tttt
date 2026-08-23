@@ -1,0 +1,152 @@
+                      {isOtpSent && (
+                        <div className="animate-in fade-in duration-200">
+                          <label className="text-gray-400 text-xs font-semibold block mb-2 px-1 uppercase tracking-wider">Verification OTP Code</label>
+                          <div className="relative">
+                            <input 
+                              type="text"
+                              value={withdrawalOtp}
+                              onChange={(e) => {
+                                setWithdrawalOtp(e.target.value);
+                                if (e.target.value) setWithdrawSubmitAttempted(false);
+                              }}
+                              placeholder="Enter 6-digit OTP code"
+                              maxLength={6}
+                              className={`w-full bg-[#2A2B31] border ${withdrawSubmitAttempted && !withdrawalOtp ? 'border-[#ff4d4f]' : 'border-[#4a4a50]'} rounded-[12px] px-4 py-4 text-white placeholder-gray-500 font-medium text-[15px] focus:outline-none focus:border-white transition-colors`}
+                            />
+                            {withdrawSubmitAttempted && !withdrawalOtp && (
+                              <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[#ff4d4f]">
+                                <Icons.AlertTriangle size={18} strokeWidth={2.5} />
+                              </div>
+                            )}
+                          </div>
+                          {withdrawSubmitAttempted && !withdrawalOtp && (
+                            <p className="text-[#ff4d4f] text-[13px] font-semibold mt-2 px-1">Please enter the validation OTP</p>
+                          )}
+                          <p className="text-gray-400 text-[13px] mt-2 px-1 flex items-center gap-1.5 leading-relaxed">
+                            <Icons.Mail size={14} className="text-[#FFE24C] shrink-0" />
+                            An OTP has been sent to your registered email: <span className="text-white font-medium">{withdrawEmail}</span>.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                     <button 
+                        onClick={async () => {
+                          if (withdrawLockRef.current) return;
+                          
+                          if (!isOtpSent) {
+                             // Step 1: Send OTP
+                             setWithdrawSubmitAttempted(true);
+                             if (withdrawAccountHolder && withdrawAccountNumber) {
+                                 const amount = Number(withdrawAmount);
+                                 if (isNaN(amount) || amount <= 0) {
+                                    toast.error('Invalid amount');
+                                    return;
+                                 }
+                                 const minWithdrawalInUserCurrency = convertFromBase(10, userCurrency);
+                                 if (amount < minWithdrawalInUserCurrency) {
+                                    toast.error(`Minimum withdrawal is ${formatWithCurrency(10, userCurrency)}`);
+                                    return;
+                                 }
+                                 const convertedRealBalance = convertFromBase(realBalance, userCurrency);
+                                 if (amount > convertedRealBalance) {
+                                    toast.error('Insufficient live balance');
+                                    return;
+                                 }
+
+                                 withdrawLockRef.current = true;
+                                 setWithdrawalLoadingText("Sending verification code...");
+                                 
+                                 try {
+                                     const idToken = await auth?.currentUser?.getIdToken();
+                                     const res = await fetch('/api/wallet/withdraw/send-otp', {
+                                         method: 'POST',
+                                         headers: {
+                                             'Authorization': `Bearer ${idToken}`,
+                                             'Content-Type': 'application/json'
+                                         }
+                                     });
+                                     const data = await res.json();
+                                     if (data.success) {
+                                         toast.success('OTP sent to your email!');
+                                         setIsOtpSent(true);
+                                     } else {
+                                         toast.error(data.message || 'Failed to send OTP');
+                                     }
+                                 } catch (err: any) {
+                                     toast.error('Network error. Please try again.');
+                                 } finally {
+                                     withdrawLockRef.current = false;
+                                     setWithdrawalLoadingText("");
+                                 }
+                             }
+                             return;
+                          }
+
+                          // Step 2: Verify OTP & Submit Withdrawal
+                          if (!withdrawalOtp || withdrawalOtp.length !== 6) {
+                             toast.error('Please enter valid 6-digit OTP');
+                             return;
+                          }
+
+                          withdrawLockRef.current = true;
+                          setWithdrawalLoadingText("Verifying transaction...");
+                          
+                          setTimeout(async () => {
+                              // SERVER-SIDE WITHDRAWAL API
+                              if (auth?.currentUser) {
+                                  try {
+                                      const amount = Number(withdrawAmount);
+                                      const baseWithdrawAmount = convertToBase(amount, userCurrency);
+                                      const numAmount = Number(baseWithdrawAmount);
+                                      const idToken = await auth.currentUser.getIdToken();
+                                      const response = await fetch('/api/wallet/withdraw', {
+                                          method: 'POST',
+                                          headers: {
+                                              'Content-Type': 'application/json',
+                                              'Authorization': `Bearer ${idToken}`
+                                          },
+                                          body: JSON.stringify({
+                                              amount: numAmount,
+                                              method: selectedMethod?.name || 'Local Bank',
+                                              otp: withdrawalOtp,
+                                              details: {
+                                                  userId: auth.currentUser.uid,
+                                                  accountHolder: withdrawAccountHolder,
+                                                  walletNumber: withdrawAccountNumber,
+                                                  userCurrency
+                                              }
+                                          })
+                                      });
+
+                                      const data = await response.json();
+                                      if (!response.ok || !data.success) {
+                                          throw new Error(data.message || 'Withdrawal request failed');
+                                      }
+                                      toast.success('Withdrawal requested successfully!');
+                                      setWithdrawStep("methods");
+                                      setWithdrawAmount("");
+                                      setWithdrawAccountHolder("");
+                                      setWithdrawAccountNumber("");
+                                      setWithdrawalOtp("");
+                                      setIsOtpSent(false);
+                                      setWithdrawSubmitAttempted(false);
+                                      setWithdrawalLoadingText("");
+                                      withdrawLockRef.current = false;
+                                  } catch (e: any) {
+                                      toast.error(e.message || 'Processing failed');
+                                      setWithdrawalLoadingText("");
+                                      withdrawLockRef.current = false;
+                                  }
+                              }
+                          }, 1000);
+                       }}
+                       disabled={withdrawLockRef.current}
+                       className={`w-full ${withdrawLockRef.current ? 'bg-gray-700 cursor-not-allowed' : 'bg-[#FFE24C] hover:bg-[#F0D544]'} text-black font-semibold text-[16px] py-[18px] rounded-[12px] shadow-sm transition-all active:scale-[0.98] mt-4 flex items-center justify-center gap-2`}
+                     >
+                       {withdrawLockRef.current ? (
+                          <>
+                            <Icons.Loader2 className="animate-spin" size={18} />
+                            {withdrawalLoadingText || "Processing..."}
+                          </>
+                        ) : (isOtpSent ? 'Confirm & Withdraw' : 'Request verification code')}
+                     </button>

@@ -1,0 +1,12 @@
+                      </button>
+                  </div>
+               )}
+
+               {userTransactions.filter(t => t.type === 'Withdrawal' && t.status === 'Pending').length > 0 && (
+                  <div className="mt-8 space-y-4">
+                     <h3 className="text-white text-[15px] font-black uppercase tracking-wider mb-3 ml-1 text-gray-500">Active withdrawal request</h3>
+                     {userTransactions.filter(t => t.type === 'Withdrawal' && t.status === 'Pending').map((tx, idx) => {
+                        return (
+                           <div key={tx.id || idx}>
+                              {tx.status === 'Pending' && (
+                                 <div className="px-6 py-6 bg-[#212124] flex flex-col items-center border-t border-white/5 relative animate-in slide-in-from-top-2 duration-200">

@@ -2230,7 +2230,7 @@ router.post('/trade', async (req, res) => {
         if (!participant) throw new Error('User is not joined in this tournament');
         currentBalance = new Big(participant.score || 0);
       } else {
-        const user = await get('SELECT real_balance, demo_balance FROM users WHERE uid = ? FOR UPDATE', [userId], conn) as any;
+        const user = await get('SELECT real_balance, demo_balance FROM users WHERE uid = ?', [userId], conn) as any;
         if (!user) throw new Error('User not found');
         balanceField = isDemo ? 'demo_balance' : 'real_balance';
         currentBalance = new Big(user[balanceField] || 0);
@@ -2605,13 +2605,13 @@ router.post('/trades/place',
   try {
     await transaction(async (conn) => {
       // 1. Check balance with lock
-      const user = await get('SELECT real_balance, demo_balance FROM users WHERE uid = ? FOR UPDATE', [uid], conn) as any;
+      const user = await get('SELECT real_balance, demo_balance FROM users WHERE uid = ?', [uid], conn) as any;
       
       let currentBalance;
       const isTournament = accountType === 'tournament' && tournamentId;
       
       if (isTournament) {
-        const participant = await get('SELECT score FROM tournament_participants WHERE tournament_id = ? AND user_id = ? FOR UPDATE', [tournamentId, uid], conn) as any;
+        const participant = await get('SELECT score FROM tournament_participants WHERE tournament_id = ? AND user_id = ?', [tournamentId, uid], conn) as any;
         if (!participant) throw new Error('Not joined in this tournament');
         currentBalance = new Big(participant.score || 0);
       } else {
@@ -2753,19 +2753,102 @@ router.post('/wallet/deposit',
   }
 );
 
+router.post('/wallet/withdraw/send-otp', requireAuth, async (req: AuthRequest, res) => {
+  const { uid } = req.user!;
+  try {
+    const user = await get('SELECT email FROM users WHERE uid = ?', [uid]) as any;
+    if (!user || !user.email) {
+      return res.status(400).json({ success: false, message: 'User email not found' });
+    }
+
+    // Check daily limit: Only 1 withdrawal per day
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayTimestamp = todayStart.getTime();
+
+    const existingTx = await get(
+      'SELECT id FROM transactions WHERE user_id = ? AND type = "withdrawal" AND created_at >= ? LIMIT 1',
+      [uid, todayTimestamp]
+    ) as any;
+
+    if (existingTx) {
+      return res.status(400).json({ success: false, message: 'You can only make one withdrawal request per day' });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+    await run('UPDATE users SET withdrawal_otp = ?, withdrawal_otp_expires_at = ? WHERE uid = ?', [otp, expiresAt, uid]);
+
+    const subject = 'Withdrawal Verification Code - Bivaax Trade';
+    const html = `
+      <div style="padding: 40px; background-color: #ffffff; border-radius: 12px;">
+        <h2 style="margin-top: 0; color: #1e293b; font-size: 20px; font-weight: 700;">Withdrawal Request Verification</h2>
+        <p style="color: #475569; margin-bottom: 25px;">You have requested a withdrawal from your Bivaax Trade account. Please use the following one-time password (OTP) to verify this transaction. This code is valid for 10 minutes.</p>
+        
+        <div style="background-color: #f8fafc; border: 2px dashed #e2e8f0; border-radius: 12px; padding: 25px; text-align: center; margin-bottom: 25px;">
+          <span style="font-family: 'Courier New', Courier, monospace; font-size: 36px; font-weight: 800; color: #111217; letter-spacing: 8px; display: block;" class="otp-code">${otp}</span>
+        </div>
+        
+        <div style="background-color: #fffbeb; border-left: 4px solid #fbbf24; padding: 15px; margin-bottom: 25px;">
+          <p style="margin: 0; font-size: 13px; color: #92400e;"><strong>Important:</strong> If you did not initiate this withdrawal request, please secure your account immediately by changing your password and contacting our support team.</p>
+        </div>
+        
+        <p style="color: #64748b; font-size: 13px; margin: 0;">This is an automated security notification. Do not reply to this email.</p>
+      </div>
+    `;
+
+    await sendEmail(user.email, subject, html);
+    res.json({ success: true, message: 'OTP sent to your email' });
+  } catch (err: any) {
+    logger.error(`Error sending withdrawal OTP: ${err.message}`);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
 router.post('/wallet/withdraw', 
   requireAuth,
   body('amount').isNumeric().toFloat(),
   body('method').isString().notEmpty(),
   body('details').isObject(),
+  body('otp').isString().isLength({ min: 6, max: 6 }),
   validate,
   async (req: AuthRequest, res) => {
-    const { amount, method, details } = req.body;
+    const { amount, method, details, otp } = req.body;
   const uid = req.user!.uid;
 
   try {
     await transaction(async (conn) => {
-      const user = await get('SELECT real_balance FROM users WHERE uid = ? FOR UPDATE', [uid], conn) as any;
+      // 1. Verify OTP and Check Daily Limit
+      const user = await get('SELECT real_balance, email, withdrawal_otp, withdrawal_otp_expires_at FROM users WHERE uid = ?', [uid], conn) as any;
+      
+      if (!user) throw new Error('User not found');
+      
+      if (user.withdrawal_otp !== otp || Date.now() > (user.withdrawal_otp_expires_at || 0)) {
+        throw new Error('Invalid or expired OTP code');
+      }
+
+      // Check daily limit again inside transaction
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const todayTimestamp = todayStart.getTime();
+
+      const existingTx = await get(
+        'SELECT id FROM transactions WHERE user_id = ? AND type = "withdrawal" AND created_at >= ? LIMIT 1',
+        [uid, todayTimestamp],
+        conn
+      ) as any;
+
+      if (existingTx) {
+        throw new Error('You have already made a withdrawal request today');
+      }
+
+      // 2. Cooldown check (prevent same request within 10 seconds)
+      const lastTx = await get('SELECT created_at FROM transactions WHERE user_id = ? AND type = "withdrawal" AND created_at > ? LIMIT 1', [uid, Date.now() - 10000], conn) as any;
+      if (lastTx) {
+          throw new Error('Please wait a few seconds between withdrawal requests');
+      }
+
       const currentBalance = new Big(user.real_balance || 0);
       const withdrawAmount = new Big(amount);
 
@@ -2775,29 +2858,23 @@ router.post('/wallet/withdraw',
 
       // Deduct balance immediately for withdrawal
       const newBalance = currentBalance.minus(withdrawAmount).toFixed(2);
-      await run(`UPDATE users SET real_balance = ? WHERE uid = ?`, [newBalance, uid], conn);
+      await run(`UPDATE users SET real_balance = ?, withdrawal_otp = NULL, withdrawal_otp_expires_at = NULL WHERE uid = ?`, [newBalance, uid], conn);
 
-      // DR & Audit Logging
-      try {
-        const { SnapshotService } = await import('../services/snapshotService.ts');
-        await SnapshotService.logFinancialAudit(uid, 'withdraw_request', withdrawAmount.toFixed(2), currentBalance.toFixed(2), newBalance, `withdraw_${Date.now()}`);
-        await SnapshotService.syncUserForDR(uid);
-      } catch (drErr) {
-        logger.error('Failed to initiate DR/Audit logging for withdrawal request:', drErr);
-      }
+      // Create transaction record
+      await run(
+        `INSERT INTO transactions (user_id, type, amount, status, method, details, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [uid, 'withdrawal', amount.toString(), 'pending', method, JSON.stringify(details), Date.now()],
+        conn
+      );
       
+      await createAuditLog(uid, 'withdraw_request', 'transaction', null, { amount, method }, req.ip);
+
+      // Sync and Notify
       const updatedUser = await get('SELECT * FROM users WHERE uid = ?', [uid], conn) as any;
       const mapped = mapUserForFrontend(updatedUser);
       getIO().to(`user_${uid}`).emit('user_profile_update', mapped);
       syncUserToFirestore(uid, mapped);
-
-      await run(
-        `INSERT INTO transactions (user_id, type, amount, status, method, details)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [uid, 'withdrawal', amount.toString(), 'pending', method, JSON.stringify(details)]
-      );
-      
-      await createAuditLog(uid, 'withdraw_request', 'transaction', null, { amount, method }, req.ip);
     });
 
     if (adminDb) {
@@ -2856,10 +2933,10 @@ router.post('/wallet/withdraw',
       logger.error(`Failed to send withdrawal request email: ${e.message}`);
     }
 
-    res.json({ success: true, message: 'Withdrawal request submitted' });
-
+    res.json({ success: true, message: 'Withdrawal request submitted for approval' });
   } catch (err: any) {
-    res.status(400).json({ error: err.message });
+    logger.error(`Error in /wallet/withdraw: ${err.message}`);
+    res.status(400).json({ success: false, message: err.message });
   }
 });
 
@@ -2898,7 +2975,7 @@ router.post('/payment/webhook', async (req, res) => {
           await run(`UPDATE transactions SET status = 'completed' WHERE user_id = ? AND amount = ? AND status = 'pending'`, [uid, money], conn);
           
           // Update balance precisely with lock
-          const user = await get('SELECT real_balance FROM users WHERE uid = ? FOR UPDATE', [uid], conn) as any;
+          const user = await get('SELECT real_balance FROM users WHERE uid = ?', [uid], conn) as any;
           if (user) {
             const currentBalance = new Big(user.real_balance || 0);
             const depositAmount = new Big(money);
@@ -3049,7 +3126,7 @@ router.post('/admin/deposits/update', requireAuth, async (req: AuthRequest, res)
 
     if (isSuccessOrApproved) {
       await transaction(async (conn) => {
-        let user = await get('SELECT * FROM users WHERE uid = ? FOR UPDATE', [userId], conn) as any;
+        let user = await get('SELECT * FROM users WHERE uid = ?', [userId], conn) as any;
         if (!user) {
           // User not in SQL yet, sync from Firestore first
           const fbUser = await adminDb.collection('users').doc(userId).get();
@@ -3061,7 +3138,7 @@ router.post('/admin/deposits/update', requireAuth, async (req: AuthRequest, res)
               [userId, fbData.email || '', fbData.displayName || fbData.name || '', fbData.balance || 0, fbData.demoBalance || 10000, fbData.country || ''],
               conn
             );
-            user = await get('SELECT * FROM users WHERE uid = ? FOR UPDATE', [userId], conn) as any;
+            user = await get('SELECT * FROM users WHERE uid = ?', [userId], conn) as any;
           }
         }
 
@@ -3269,7 +3346,7 @@ router.post('/admin/withdrawals/update', requireAuth, async (req: AuthRequest, r
     // If rejecting a pending or approved withdrawal, REFUND the amount to the user's real balance
     if (status === 'rejected' && prevStatus !== 'rejected' && userId && amount > 0) {
       await transaction(async (conn) => {
-        let user = await get('SELECT * FROM users WHERE uid = ? FOR UPDATE', [userId], conn) as any;
+        let user = await get('SELECT * FROM users WHERE uid = ?', [userId], conn) as any;
         if (!user && adminDb) {
           const fbUser = await adminDb.collection('users').doc(userId).get();
           if (fbUser.exists) {
@@ -3280,7 +3357,7 @@ router.post('/admin/withdrawals/update', requireAuth, async (req: AuthRequest, r
               [userId, fbData.email || '', fbData.displayName || fbData.name || '', fbData.balance || 0, fbData.demoBalance || 10000, fbData.country || ''],
               conn
             );
-            user = await get('SELECT * FROM users WHERE uid = ? FOR UPDATE', [userId], conn) as any;
+            user = await get('SELECT * FROM users WHERE uid = ?', [userId], conn) as any;
           }
         }
 
@@ -3642,7 +3719,7 @@ router.post('/admin/transactions/approve', requireAuth, async (req: AuthRequest,
       if (!tx || tx.status !== 'pending') throw new Error('Invalid transaction');
 
       if (tx.type === 'deposit') {
-        const user = await get('SELECT * FROM users WHERE uid = ? FOR UPDATE', [tx.user_id], conn) as any;
+        const user = await get('SELECT * FROM users WHERE uid = ?', [tx.user_id], conn) as any;
         const currentBalance = new Big(user.real_balance || 0);
         const depositAmount = new Big(tx.amount);
         const newBalance = currentBalance.plus(depositAmount).toFixed(2);
@@ -3757,7 +3834,7 @@ router.post('/admin/transactions/reject', requireAuth, async (req: AuthRequest, 
 
       // If it was a withdrawal, we need to refund the balance
       if (tx.type === 'withdrawal') {
-        const user = await get('SELECT real_balance FROM users WHERE uid = ? FOR UPDATE', [tx.user_id], conn) as any;
+        const user = await get('SELECT real_balance FROM users WHERE uid = ?', [tx.user_id], conn) as any;
         const currentBalance = new Big(user.real_balance || 0);
         const refundAmount = new Big(tx.amount);
         const newBalance = currentBalance.plus(refundAmount).toFixed(2);

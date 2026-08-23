@@ -115,14 +115,14 @@ const NagadDeposit: React.FC = () => {
   };
 
   const handleConfirm = async () => {
-    if (isSubmitting || submitLockRef.current) return;
+    if (submitLockRef.current) return;
     if (!trxId || trxId.length < 6) {
       toast.error(lang === 'BN' ? "দয়া করে সঠিক লেনদেন আইডি দিন" : "Please enter a valid Transaction ID");
       return;
     }
 
-    setIsSubmitting(true);
     submitLockRef.current = true;
+    setIsSubmitting(true);
     try {
       if (auth.currentUser) {
         await addDoc(collection(db, `users/${auth.currentUser.uid}/transactions`), {

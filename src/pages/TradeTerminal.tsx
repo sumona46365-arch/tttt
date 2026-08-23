@@ -5386,6 +5386,8 @@ const PROMOTED_ARTICLES = [
 
   const [depositStep, setDepositStep] = useState<"methods" | "amount" | "payment">("methods");
   const [withdrawStep, setWithdrawStep] = useState<"methods" | "form">("methods");
+  const [withdrawalOtp, setWithdrawalOtp] = useState("");
+  const [isOtpSent, setIsOtpSent] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const currentMinWithdrawal = 10;
   const [withdrawAccountHolder, setWithdrawAccountHolder] = useState("");
@@ -14519,7 +14521,7 @@ const PROMOTED_ARTICLES = [
                ) : (
                  <div className="animate-in fade-in slide-in-from-right-4 duration-300 relative z-10 w-full mb-10 pb-8">
                    <div className="flex items-center gap-3 mb-6">
-                     <button onClick={() => { setWithdrawStep("methods"); setWithdrawSubmitAttempted(false); }} className="text-gray-400 hover:text-white transition-colors p-1 -ml-1">
+                     <button onClick={() => { setWithdrawStep("methods"); setWithdrawSubmitAttempted(false); setIsOtpSent(false); setWithdrawalOtp(""); }} className="text-gray-400 hover:text-white transition-colors p-1 -ml-1">
                        <Icons.ArrowLeft size={24} />
                      </button>
                      <div className="flex items-center gap-2">
@@ -14618,162 +14620,168 @@ const PROMOTED_ARTICLES = [
                          <p className="text-[#ff4d4f] text-[13px] font-semibold mt-2 px-1">Please specify the required information</p>
                        )}
                      </div>
-                   </div>
-                    <button 
-                      onClick={() => {
-                        if (withdrawLockRef.current) return;
-                        if (isRequestingOtp) return;
-                        setWithdrawSubmitAttempted(true);
-                        if (withdrawAccountHolder && withdrawAccountNumber) {
-                           const amount = Number(withdrawAmount);
-                           if (isNaN(amount) || amount <= 0) {
-                              toast.error('Invalid amount');
-                              return;
-                           }
-                           const minWithdrawalInUserCurrency = convertFromBase(10, userCurrency);
-                           if (amount < minWithdrawalInUserCurrency) {
-                              toast.error(`Minimum withdrawal is ${formatWithCurrency(10, userCurrency)}`);
-                              return;
-                           }
-                           const convertedRealBalance = convertFromBase(realBalance, userCurrency);
-                           if (amount > convertedRealBalance) {
-                              toast.error('Insufficient live balance');
-                              return;
-                           }
+                      {isOtpSent && (
+                        <div className="animate-in fade-in duration-200">
+                          <label className="text-gray-400 text-xs font-semibold block mb-2 px-1 uppercase tracking-wider">Verification OTP Code</label>
+                          <div className="relative">
+                            <input 
+                              type="text"
+                              value={withdrawalOtp}
+                              onChange={(e) => {
+                                setWithdrawalOtp(e.target.value);
+                                if (e.target.value) setWithdrawSubmitAttempted(false);
+                              }}
+                              placeholder="Enter 6-digit OTP code"
+                              maxLength={6}
+                              className={`w-full bg-[#2A2B31] border ${withdrawSubmitAttempted && !withdrawalOtp ? 'border-[#ff4d4f]' : 'border-[#4a4a50]'} rounded-[12px] px-4 py-4 text-white placeholder-gray-500 font-medium text-[15px] focus:outline-none focus:border-white transition-colors`}
+                            />
+                            {withdrawSubmitAttempted && !withdrawalOtp && (
+                              <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[#ff4d4f]">
+                                <Icons.AlertTriangle size={18} strokeWidth={2.5} />
+                              </div>
+                            )}
+                          </div>
+                          {withdrawSubmitAttempted && !withdrawalOtp && (
+                            <p className="text-[#ff4d4f] text-[13px] font-semibold mt-2 px-1">Please enter the validation OTP</p>
+                          )}
+                          <p className="text-gray-400 text-[13px] mt-2 px-1 flex items-center gap-1.5 leading-relaxed">
+                            <Icons.Mail size={14} className="text-[#FFE24C] shrink-0" />
+                            An OTP has been sent to your registered email: <span className="text-white font-medium">{withdrawEmail}</span>.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                     <button 
+                        onClick={async () => {
+                          if (withdrawLockRef.current) return;
+                          
+                          if (!isOtpSent) {
+                             // Step 1: Send OTP
+                             setWithdrawSubmitAttempted(true);
+                             if (withdrawAccountHolder && withdrawAccountNumber) {
+                                 const amount = Number(withdrawAmount);
+                                 if (isNaN(amount) || amount <= 0) {
+                                    toast.error('Invalid amount');
+                                    return;
+                                 }
+                                 const minWithdrawalInUserCurrency = convertFromBase(10, userCurrency);
+                                 if (amount < minWithdrawalInUserCurrency) {
+                                    toast.error(`Minimum withdrawal is ${formatWithCurrency(10, userCurrency)}`);
+                                    return;
+                                 }
+                                 const convertedRealBalance = convertFromBase(realBalance, userCurrency);
+                                 if (amount > convertedRealBalance) {
+                                    toast.error('Insufficient live balance');
+                                    return;
+                                 }
 
-                           withdrawLockRef.current = true;
-                           setIsRequestingOtp(true);
-                           setWithdrawalLoadingText("Authenticating withdrawal request...");
-                           
-                           setTimeout(() => {
-                               setWithdrawalLoadingText("Processing ledger balances...");
-                               setTimeout(async () => {
-                                   // SERVER-SIDE WITHDRAWAL API
-                                   if (auth?.currentUser) {
-                                       try {
-                                           const baseWithdrawAmount = convertToBase(amount, userCurrency);
-                                           const numAmount = Number(baseWithdrawAmount);
-                                           const idToken = await auth.currentUser.getIdToken();
-                                           const response = await fetch('/api/wallet/withdraw', {
-                                               method: 'POST',
-                                               headers: {
-                                                   'Content-Type': 'application/json',
-                                                   'Authorization': `Bearer ${idToken}`
-                                               },
-                                               body: JSON.stringify({
-                                                   amount: numAmount,
-                                                   method: selectedMethod?.name || 'Local Bank',
-                                                   details: {
-                                                       userId: auth.currentUser.uid,
-                                                       accountHolder: withdrawAccountHolder,
-                                                       walletNumber: withdrawAccountNumber,
-                                                       userCurrency
-                                                   }
-                                               })
-                                           });
+                                 withdrawLockRef.current = true;
+                                 setWithdrawalLoadingText("Sending verification code...");
+                                 
+                                 try {
+                                     const idToken = await auth?.currentUser?.getIdToken();
+                                     const res = await fetch('/api/wallet/withdraw/send-otp', {
+                                         method: 'POST',
+                                         headers: {
+                                             'Authorization': `Bearer ${idToken}`,
+                                             'Content-Type': 'application/json'
+                                         }
+                                     });
+                                     const data = await res.json();
+                                     if (data.success) {
+                                         toast.success('OTP sent to your email!');
+                                         setIsOtpSent(true);
+                                     } else {
+                                         toast.error(data.message || 'Failed to send OTP');
+                                     }
+                                 } catch (err: any) {
+                                     toast.error('Network error. Please try again.');
+                                 } finally {
+                                     withdrawLockRef.current = false;
+                                     setWithdrawalLoadingText("");
+                                 }
+                             }
+                             return;
+                          }
 
-                                           const data = await response.json();
-                                           if (!response.ok || !data.success) {
-                                               throw new Error(data.error || 'Withdrawal request failed');
-                                           }
-                                           toast.success('Withdrawal requested successfully!');
-                                           setWithdrawStep("methods");
-                                           setWithdrawAmount("");
-                                           setWithdrawAccountHolder("");
-                                           setWithdrawAccountNumber("");
-                                           setWithdrawSubmitAttempted(false);
-                                           setIsRequestingOtp(false);
-                                           setWithdrawalLoadingText("");
-                                           withdrawLockRef.current = false;
-                                           return;
-                                       } catch (e: any) {
-                                           toast.error(e.message || 'Processing failed');
-                                           setIsRequestingOtp(false);
-                                           setWithdrawalLoadingText("");
-                                           withdrawLockRef.current = false;
-                                           return;
-                                       }
-                                   }
-                               }, 1500);
-                           }, 800);
-                        }
-                     }}
-                     className="w-full bg-[#FFE24C] hover:bg-[#F0D544] text-black font-semibold text-[16px] py-[18px] rounded-[12px] shadow-sm transition-all active:scale-[0.98] mt-4"
-                     disabled={isRequestingOtp}
-                   >
-                     {isRequestingOtp ? (withdrawalLoadingText || 'Processing...') : 'Request withdrawal'}
-                    </button>
-                 </div>
+                          // Step 2: Verify OTP & Submit Withdrawal
+                          if (!withdrawalOtp || withdrawalOtp.length !== 6) {
+                             toast.error('Please enter valid 6-digit OTP');
+                             return;
+                          }
+
+                          withdrawLockRef.current = true;
+                          setWithdrawalLoadingText("Verifying transaction...");
+                          
+                          setTimeout(async () => {
+                              // SERVER-SIDE WITHDRAWAL API
+                              if (auth?.currentUser) {
+                                  try {
+                                      const amount = Number(withdrawAmount);
+                                      const baseWithdrawAmount = convertToBase(amount, userCurrency);
+                                      const numAmount = Number(baseWithdrawAmount);
+                                      const idToken = await auth.currentUser.getIdToken();
+                                      const response = await fetch('/api/wallet/withdraw', {
+                                          method: 'POST',
+                                          headers: {
+                                              'Content-Type': 'application/json',
+                                              'Authorization': `Bearer ${idToken}`
+                                          },
+                                          body: JSON.stringify({
+                                              amount: numAmount,
+                                              method: selectedMethod?.name || 'Local Bank',
+                                              otp: withdrawalOtp,
+                                              details: {
+                                                  userId: auth.currentUser.uid,
+                                                  accountHolder: withdrawAccountHolder,
+                                                  walletNumber: withdrawAccountNumber,
+                                                  userCurrency
+                                              }
+                                          })
+                                      });
+
+                                      const data = await response.json();
+                                      if (!response.ok || !data.success) {
+                                          throw new Error(data.message || 'Withdrawal request failed');
+                                      }
+                                      toast.success('Withdrawal requested successfully!');
+                                      setWithdrawStep("methods");
+                                      setWithdrawAmount("");
+                                      setWithdrawAccountHolder("");
+                                      setWithdrawAccountNumber("");
+                                      setWithdrawalOtp("");
+                                      setIsOtpSent(false);
+                                      setWithdrawSubmitAttempted(false);
+                                      setWithdrawalLoadingText("");
+                                      withdrawLockRef.current = false;
+                                  } catch (e: any) {
+                                      toast.error(e.message || 'Processing failed');
+                                      setWithdrawalLoadingText("");
+                                      withdrawLockRef.current = false;
+                                  }
+                              }
+                          }, 1000);
+                       }}
+                       disabled={withdrawLockRef.current}
+                       className={`w-full ${withdrawLockRef.current ? 'bg-gray-700 cursor-not-allowed' : 'bg-[#FFE24C] hover:bg-[#F0D544]'} text-black font-semibold text-[16px] py-[18px] rounded-[12px] shadow-sm transition-all active:scale-[0.98] mt-4 flex items-center justify-center gap-2`}
+                     >
+                       {withdrawLockRef.current ? (
+                          <>
+                            <Icons.Loader2 className="animate-spin" size={18} />
+                            {withdrawalLoadingText || "Processing..."}
+                          </>
+                        ) : (isOtpSent ? 'Confirm & Withdraw' : 'Request verification code')}
+                      </button>
+                  </div>
                )}
 
-             </div>
-           )}
-
-           {cashierTab === 'history' && (
-             <div className="flex-1 overflow-y-auto px-4 pb-[80px] custom-scrollbar flex flex-col pt-2">
-                 <div className="flex items-center justify-between mt-4 mb-4">
-                    <span className="text-white font-bold text-lg">Transaction History</span>
-                    <button className="text-gray-300 hover:text-white transition-colors">
-                       <Icons.SlidersHorizontal size={20} />
-                    </button>
-                 </div>
-
-                 {/* Transactions List */}
-                 <div className="flex flex-col">
-                    {userTransactions.length === 0 ? (
-                       <div className="p-12 text-center">
-                          <Icons.Clock size={48} className="text-gray-700 mx-auto mb-4" />
-                          <p className="text-gray-500 font-medium">No history recorded yet</p>
-                       </div>
-                    ) : (
-                       userTransactions.map((tx, idx) => {
-                       const splitDate = tx.dateStr?.split(' ') || [];
-                       const month = splitDate[0] || "";
-                       const day = splitDate[1] || "";
-                       const year = splitDate[2] || "";
-                      
-                      return (
-                      <div key={`tx-b-${idx}-${tx.id || tx.timestamp || `unknown-b-${idx}`}`} className="border-b border-white/5">
-                         <div 
-                           className="px-6 py-4 flex flex-col gap-2 cursor-pointer hover:bg-white/5 transition-colors"
-                           onClick={() => setExpandedTx(expandedTx === tx.id ? null : tx.id)}
-                         >
-                            <div className="flex items-center justify-between transition-all">
-                               <span className="text-gray-500 text-[13px]">{tx.dateStr}</span>
-                               <div className="flex items-center gap-2">
-                                  <span className={`text-[13px] font-medium ${tx.status === 'Completed' ? 'text-[#00C980]' : tx.status === 'Rejected' ? 'text-[#ff4d4f]' : 'text-gray-400'}`}>
-                                     {tx.status}
-                                  </span>
-                                  {tx.status === 'Completed' && <Icons.CheckCircle size={14} className="text-[#00C980]" />}
-                                  {tx.status === 'Rejected' && <Icons.XCircle size={14} className="text-[#ff4d4f]" />}
-                                  {tx.status === 'Pending' && <Icons.Clock size={14} className="text-gray-400" />}
-                                  {expandedTx === tx.id ? (
-                                     <Icons.ChevronUp size={18} className="text-gray-400 ml-1" />
-                                  ) : (
-                                     <Icons.ChevronDown size={18} className="text-gray-400 ml-1" />
-                                  )}
-                               </div>
-                            </div>
-                            
-                            <div className="flex items-center justify-between">
-                               <div className="flex flex-col">
-                                  <span className="text-white font-bold text-[15px]">{tx.type}</span>
-                                  <span className="text-gray-500 text-[13px]">{tx.method}</span>
-                               </div>
-                               <div className="flex flex-col items-end">
-                                 <span className="text-white font-bold text-[15px] tracking-tight">
-                                    {tx.type === 'Deposit' ? '+' : '-'} {formatWithCurrency(tx.amount, userCurrency)}
-                                 </span>
-                                 {tx.bonusAmount && (
-                                   <span className="text-gray-500 text-[12px]">+ {formatWithCurrency(tx.bonusAmount, userCurrency)}</span>
-                                 )}
-                               </div>
-                            </div>
-                         </div>
-
-                         {/* Expanded Details */}
-                         {expandedTx === tx.id && (
-                            <div className="px-6 py-6 bg-[#212124] flex flex-col items-center border-t border-white/5 relative animate-in slide-in-from-top-2 duration-200">
+               {userTransactions.filter(t => t.type === 'Withdrawal' && t.status === 'Pending').length > 0 && (
+                  <div className="mt-8 space-y-4">
+                     <h3 className="text-white text-[15px] font-black uppercase tracking-wider mb-3 ml-1 text-gray-500">Active withdrawal request</h3>
+                     {userTransactions.filter(t => t.type === 'Withdrawal' && t.status === 'Pending').map((tx, idx) => {
+                        return (
+                            <div key={tx.id || idx}>
+                                  <div className="px-6 py-6 bg-[#212124] flex flex-col items-center border-t border-white/5 relative animate-in slide-in-from-top-2 duration-200">
                                <div className="flex justify-center items-center mb-3 mt-2">
                                   {tx.methodIcon === 'usdt' && (
                                      <div className="w-10 h-10 rounded-full bg-[#26A17B] flex items-center justify-center">
@@ -14833,25 +14841,23 @@ const PROMOTED_ARTICLES = [
                                      </div>
                                   </div>
 
-                                  <div className="flex justify-between px-2 text-gray-500 text-[13px] font-medium opacity-80 mt-4">
-                                     <div className="flex flex-col text-center w-1/3">
-                                        <span>{month} {day}</span>
-                                        <span>{year}</span>
-                                        <span>{tx.timeStr}</span>
-                                     </div>
-                                     <div className="flex flex-col text-center w-1/3"></div>
-                                     <div className="flex flex-col text-center w-1/3">
-                                        {tx.endTimeStr ? (
-                                           <>
-                                             <span>{month} {day}</span>
-                                             <span>{year}</span>
-                                             <span>{tx.endTimeStr}</span>
-                                           </>
-                                        ) : (
-                                          <span className="text-[#3b3b3f]">-</span>
-                                        )}
-                                     </div>
-                                  </div>
+                                   <div className="flex justify-between px-2 text-gray-500 text-[13px] font-medium opacity-80 mt-4">
+                                      <div className="flex flex-col text-center w-1/3">
+                                         <span>{tx.dateStr}</span>
+                                         <span>{tx.timeStr}</span>
+                                      </div>
+                                      <div className="flex flex-col text-center w-1/3"></div>
+                                      <div className="flex flex-col text-center w-1/3">
+                                         {tx.endTimeStr ? (
+                                            <>
+                                              <span>{tx.dateStr}</span>
+                                              <span>{tx.endTimeStr}</span>
+                                            </>
+                                         ) : (
+                                           <span className="text-[#3b3b3f]">-</span>
+                                         )}
+                                      </div>
+                                   </div>
                                </div>
 
                                {/* Amounts */}
@@ -14905,15 +14911,87 @@ const PROMOTED_ARTICLES = [
                                   >
                                      <Icons.Headphones size={18} /> Contact Support
                                   </button>
-                               </div>
-                            </div>
-                         )}
-                      </div>
-                      );
-                   })
-                )}
-                </div>
+                                </div>
+                             </div>
+                          </div>
+                       );
+                    })}
+                 </div>
+              )}
              </div>
+           )}
+
+           {cashierTab === 'history' && (
+              <div className="flex-1 overflow-y-auto px-4 pb-[80px] custom-scrollbar flex flex-col pt-2">
+                <div className="flex items-center justify-between mb-6 px-1">
+                   <h2 className="text-white font-bold text-[19px]">Transaction History</h2>
+                   <button className="text-gray-400 hover:text-white transition-colors p-2 bg-[#2A2B31] rounded-xl border border-white/5">
+                      <Icons.SlidersHorizontal size={18} />
+                   </button>
+                </div>
+
+                {userTransactions.length === 0 ? (
+                   <div className="flex flex-col items-center justify-center py-20 text-center">
+                      <div className="w-16 h-16 rounded-full bg-white/[0.03] flex items-center justify-center mb-4 border border-white/5 shadow-inner">
+                         <Icons.Clock size={32} className="text-gray-500 opacity-60" />
+                      </div>
+                      <p className="text-gray-400 font-medium text-[15px]">No history recorded yet</p>
+                   </div>
+                ) : (
+                   <div className="flex flex-col gap-3">
+                      {userTransactions.map((tx, idx) => {
+                        const isDeposit = tx.type === 'Deposit';
+                        const isCompleted = tx.status === 'Completed';
+                        const isRejected = tx.status === 'Rejected' || tx.status === 'Failed';
+                        const isPending = tx.status === 'Pending';
+                        
+                        return (
+                          <div 
+                            key={`cashier-tx-${tx.id || idx}`}
+                            className="bg-[#212124] rounded-[16px] border border-white/5 p-4 flex flex-col gap-3 animate-in fade-in-50 duration-200"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                                  isDeposit 
+                                    ? 'bg-[#00C980]/10 text-[#00C980]' 
+                                    : 'bg-[#FF4D4F]/10 text-[#FF4D4F]'
+                                }`}>
+                                  {isDeposit ? <Icons.ArrowUpRight size={20} /> : <Icons.ArrowDownLeft size={20} />}
+                                </div>
+                                <div>
+                                  <h4 className="font-bold text-white text-[15px]">{tx.type} via {tx.method}</h4>
+                                  <p className="text-gray-500 text-[12px]">{tx.dateStr} • {tx.timeStr}</p>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <p className={`font-bold text-[16px] ${
+                                  isDeposit ? 'text-[#00C980]' : 'text-white'
+                                }`}>
+                                  {isDeposit ? '+' : '-'}{formatWithCurrency(tx.amount, userCurrency)}
+                                </p>
+                                <div className="flex items-center justify-end gap-1.5 mt-1">
+                                  <span className={`w-1.5 h-1.5 rounded-full ${
+                                    isCompleted ? 'bg-[#00C980]' :
+                                    isRejected ? 'bg-[#FF4D4F]' :
+                                    'bg-yellow-500 animate-pulse'
+                                  }`} />
+                                  <span className={`text-[11px] font-bold uppercase tracking-wider ${
+                                    isCompleted ? 'text-[#00C980]' :
+                                    isRejected ? 'text-[#FF4D4F]' :
+                                    'text-yellow-500'
+                                  }`}>
+                                    {tx.status}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                   </div>
+                )}
+              </div>
            )}
           </>
         )}
