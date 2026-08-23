@@ -1269,7 +1269,7 @@ async function legacyTransaction<T>(fn: (connection: any) => Promise<T>): Promis
   const sqlite = ensureSqliteDb();
   const unlock = await dbMutex.lock();
   const isNested = sqlite.inTransaction;
-  if (!isNested) sqlite.prepare('BEGIN').run();
+  if (!isNested) sqlite.prepare('BEGIN IMMEDIATE').run();
   try {
     const result = await fn(sqlite);
     if (!isNested) sqlite.prepare('COMMIT').run();

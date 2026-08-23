@@ -2230,7 +2230,7 @@ router.post('/trade', async (req, res) => {
         if (!participant) throw new Error('User is not joined in this tournament');
         currentBalance = new Big(participant.score || 0);
       } else {
-        const user = await get('SELECT real_balance, demo_balance FROM users WHERE uid = ?', [userId], conn) as any;
+        const user = await get('SELECT real_balance, demo_balance FROM users WHERE uid = ? FOR UPDATE', [userId], conn) as any;
         if (!user) throw new Error('User not found');
         balanceField = isDemo ? 'demo_balance' : 'real_balance';
         currentBalance = new Big(user[balanceField] || 0);
@@ -2605,13 +2605,13 @@ router.post('/trades/place',
   try {
     await transaction(async (conn) => {
       // 1. Check balance with lock
-      const user = await get('SELECT real_balance, demo_balance FROM users WHERE uid = ?', [uid], conn) as any;
+      const user = await get('SELECT real_balance, demo_balance FROM users WHERE uid = ? FOR UPDATE', [uid], conn) as any;
       
       let currentBalance;
       const isTournament = accountType === 'tournament' && tournamentId;
       
       if (isTournament) {
-        const participant = await get('SELECT score FROM tournament_participants WHERE tournament_id = ? AND user_id = ?', [tournamentId, uid], conn) as any;
+        const participant = await get('SELECT score FROM tournament_participants WHERE tournament_id = ? AND user_id = ? FOR UPDATE', [tournamentId, uid], conn) as any;
         if (!participant) throw new Error('Not joined in this tournament');
         currentBalance = new Big(participant.score || 0);
       } else {
@@ -2765,7 +2765,7 @@ router.post('/wallet/withdraw',
 
   try {
     await transaction(async (conn) => {
-      const user = await get('SELECT real_balance FROM users WHERE uid = ?', [uid], conn) as any;
+      const user = await get('SELECT real_balance FROM users WHERE uid = ? FOR UPDATE', [uid], conn) as any;
       const currentBalance = new Big(user.real_balance || 0);
       const withdrawAmount = new Big(amount);
 
@@ -2894,20 +2894,23 @@ router.post('/payment/webhook', async (req, res) => {
     
     if (status == 1) { // Assuming status 1 is success based on typical gateway patterns
         const uid = out_trade_no.split('_')[2];
-        await run(`UPDATE transactions SET status = 'completed' WHERE user_id = ? AND amount = ? AND status = 'pending'`, [uid, money]);
-        
-        // Update balance precisely
-        const user = await get('SELECT real_balance FROM users WHERE uid = ?', [uid]) as any;
-        if (user) {
-          const currentBalance = new Big(user.real_balance || 0);
-          const depositAmount = new Big(money);
-          const newBalance = currentBalance.plus(depositAmount).toFixed(2);
-          await run('UPDATE users SET real_balance = ? WHERE uid = ?', [newBalance, uid]);
+        await transaction(async (conn) => {
+          await run(`UPDATE transactions SET status = 'completed' WHERE user_id = ? AND amount = ? AND status = 'pending'`, [uid, money], conn);
           
-          const mapped = mapUserForFrontend(await get('SELECT * FROM users WHERE uid = ?', [uid]));
-          getIO().to(`user_${uid}`).emit('user_profile_update', mapped);
-          syncUserToFirestore(uid, mapped);
-        }
+          // Update balance precisely with lock
+          const user = await get('SELECT real_balance FROM users WHERE uid = ? FOR UPDATE', [uid], conn) as any;
+          if (user) {
+            const currentBalance = new Big(user.real_balance || 0);
+            const depositAmount = new Big(money);
+            const newBalance = currentBalance.plus(depositAmount).toFixed(2);
+            await run('UPDATE users SET real_balance = ? WHERE uid = ?', [newBalance, uid], conn);
+            
+            const updated = await get('SELECT * FROM users WHERE uid = ?', [uid], conn);
+            const mapped = mapUserForFrontend(updated);
+            getIO().to(`user_${uid}`).emit('user_profile_update', mapped);
+            syncUserToFirestore(uid, mapped);
+          }
+        });
     }
     
     res.status(200).send('success');
@@ -3045,68 +3048,72 @@ router.post('/admin/deposits/update', requireAuth, async (req: AuthRequest, res)
     }
 
     if (isSuccessOrApproved) {
-      let user = await get('SELECT * FROM users WHERE uid = ?', [userId]) as any;
-      if (!user) {
-        // User not in SQL yet, sync from Firestore first
-        const fbUser = await adminDb.collection('users').doc(userId).get();
-        if (fbUser.exists) {
-          const fbData = fbUser.data() || {};
-          await run(
-            `INSERT OR IGNORE INTO users (uid, email, display_name, real_balance, demo_balance, country) 
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [userId, fbData.email || '', fbData.displayName || fbData.name || '', fbData.balance || 0, fbData.demoBalance || 10000, fbData.country || '']
-          );
-          user = await get('SELECT * FROM users WHERE uid = ?', [userId]) as any;
+      await transaction(async (conn) => {
+        let user = await get('SELECT * FROM users WHERE uid = ? FOR UPDATE', [userId], conn) as any;
+        if (!user) {
+          // User not in SQL yet, sync from Firestore first
+          const fbUser = await adminDb.collection('users').doc(userId).get();
+          if (fbUser.exists) {
+            const fbData = fbUser.data() || {};
+            await run(
+              `INSERT OR IGNORE INTO users (uid, email, display_name, real_balance, demo_balance, country) 
+               VALUES (?, ?, ?, ?, ?, ?)`,
+              [userId, fbData.email || '', fbData.displayName || fbData.name || '', fbData.balance || 0, fbData.demoBalance || 10000, fbData.country || ''],
+              conn
+            );
+            user = await get('SELECT * FROM users WHERE uid = ? FOR UPDATE', [userId], conn) as any;
+          }
         }
-      }
 
-      if (user) {
-        const currentBalance = new Big(user.real_balance || 0);
-        const newBalance = currentBalance.plus(depositAmountWithBonus).toFixed(2);
-        await run('UPDATE users SET real_balance = ?, total_deposits = total_deposits + ? WHERE uid = ?', [newBalance, rawDepositAmount, userId]);
-        
-        // Affiliate Commission (10%) - based on base deposit amount (excluding bonus)
-        const depositAmountBase = new Big(rawDepositAmount);
-        if (user.referred_by_uid) {
-          const commission = depositAmountBase.times(0.10).toFixed(2);
-          await run(
-            'UPDATE users SET affiliate_balance = affiliate_balance + ?, total_affiliate_earnings = total_affiliate_earnings + ? WHERE uid = ?',
-            [commission, commission, user.referred_by_uid]
-          );
-          await createAuditLog(user.referred_by_uid, 'affiliate_commission', 'user', userId, { amount: rawDepositAmount, commission });
+        if (user) {
+          const currentBalance = new Big(user.real_balance || 0);
+          const newBalance = currentBalance.plus(depositAmountWithBonus).toFixed(2);
+          await run('UPDATE users SET real_balance = ?, total_deposits = total_deposits + ? WHERE uid = ?', [newBalance, rawDepositAmount, userId], conn);
           
-          if (adminDb) {
-            try {
-              await adminDb.collection('affiliate_commissions').add({
-                referrerUid: user.referred_by_uid,
-                referredUid: userId,
-                amount: parseFloat(commission),
-                depositAmount: rawDepositAmount,
-                currency: user.currency || depositData?.currency || currency || 'BDT',
-                percent: 10,
-                createdAt: Date.now(),
-                type: 'deposit_commission'
-              });
-            } catch (fsErr: any) {
-              logger.error(`Failed to write affiliate_commissions to Firestore: ${fsErr.message}`);
+          // Affiliate Commission (10%) - based on base deposit amount (excluding bonus)
+          const depositAmountBase = new Big(rawDepositAmount);
+          if (user.referred_by_uid) {
+            const commission = depositAmountBase.times(0.10).toFixed(2);
+            await run(
+              'UPDATE users SET affiliate_balance = affiliate_balance + ?, total_affiliate_earnings = total_affiliate_earnings + ? WHERE uid = ?',
+              [commission, commission, user.referred_by_uid],
+              conn
+            );
+            await createAuditLog(user.referred_by_uid, 'affiliate_commission', 'user', userId, { amount: rawDepositAmount, commission });
+            
+            if (adminDb) {
+              try {
+                await adminDb.collection('affiliate_commissions').add({
+                  referrerUid: user.referred_by_uid,
+                  referredUid: userId,
+                  amount: parseFloat(commission),
+                  depositAmount: rawDepositAmount,
+                  currency: user.currency || depositData?.currency || currency || 'BDT',
+                  percent: 10,
+                  createdAt: Date.now(),
+                  type: 'deposit_commission'
+                });
+              } catch (fsErr: any) {
+                logger.error(`Failed to write affiliate_commissions to Firestore: ${fsErr.message}`);
+              }
+            }
+
+            const updatedReferrer = await get('SELECT * FROM users WHERE uid = ?', [user.referred_by_uid], conn);
+            if (updatedReferrer) {
+              const mappedReferrer = mapUserForFrontend(updatedReferrer);
+              getIO().to(`user_${user.referred_by_uid}`).emit('user_profile_update', mappedReferrer);
+              syncUserToFirestore(user.referred_by_uid, mappedReferrer);
             }
           }
 
-          const updatedReferrer = await get('SELECT * FROM users WHERE uid = ?', [user.referred_by_uid]);
-          if (updatedReferrer) {
-            const mappedReferrer = mapUserForFrontend(updatedReferrer);
-            getIO().to(`user_${user.referred_by_uid}`).emit('user_profile_update', mappedReferrer);
-            syncUserToFirestore(user.referred_by_uid, mappedReferrer);
+          const updatedUser = await get('SELECT * FROM users WHERE uid = ?', [userId], conn);
+          const mapped = mapUserForFrontend(updatedUser);
+          if (mapped) {
+            getIO().to(`user_${userId}`).emit('user_profile_update', mapped);
+            await syncUserToFirestore(userId, mapped);
           }
         }
-
-        const updatedUser = await get('SELECT * FROM users WHERE uid = ?', [userId]);
-        const mapped = mapUserForFrontend(updatedUser);
-        if (mapped) {
-          getIO().to(`user_${userId}`).emit('user_profile_update', mapped);
-          await syncUserToFirestore(userId, mapped);
-        }
-      }
+      });
       
       // Update Firebase totalDeposits metadata without duplicating balance addition (syncUserToFirestore authoritatively sets the balance)
       try {
@@ -3261,33 +3268,36 @@ router.post('/admin/withdrawals/update', requireAuth, async (req: AuthRequest, r
 
     // If rejecting a pending or approved withdrawal, REFUND the amount to the user's real balance
     if (status === 'rejected' && prevStatus !== 'rejected' && userId && amount > 0) {
-      let user = await get('SELECT * FROM users WHERE uid = ?', [userId]) as any;
-      if (!user && adminDb) {
-        const fbUser = await adminDb.collection('users').doc(userId).get();
-        if (fbUser.exists) {
-          const fbData = fbUser.data();
-          await run(
-            `INSERT OR IGNORE INTO users (uid, email, display_name, real_balance, demo_balance, country) 
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [userId, fbData.email || '', fbData.displayName || fbData.name || '', fbData.balance || 0, fbData.demoBalance || 10000, fbData.country || '']
-          );
-          user = await get('SELECT * FROM users WHERE uid = ?', [userId]) as any;
+      await transaction(async (conn) => {
+        let user = await get('SELECT * FROM users WHERE uid = ? FOR UPDATE', [userId], conn) as any;
+        if (!user && adminDb) {
+          const fbUser = await adminDb.collection('users').doc(userId).get();
+          if (fbUser.exists) {
+            const fbData = fbUser.data();
+            await run(
+              `INSERT OR IGNORE INTO users (uid, email, display_name, real_balance, demo_balance, country) 
+               VALUES (?, ?, ?, ?, ?, ?)`,
+              [userId, fbData.email || '', fbData.displayName || fbData.name || '', fbData.balance || 0, fbData.demoBalance || 10000, fbData.country || ''],
+              conn
+            );
+            user = await get('SELECT * FROM users WHERE uid = ? FOR UPDATE', [userId], conn) as any;
+          }
         }
-      }
 
-      if (user) {
-        const currentBalance = new Big(user.real_balance || 0);
-        const refundAmount = new Big(amount);
-        const newBalance = currentBalance.plus(refundAmount).toFixed(2);
-        await run('UPDATE users SET real_balance = ? WHERE uid = ?', [newBalance, userId]);
-        
-        const updatedUser = await get('SELECT * FROM users WHERE uid = ?', [userId]);
-        const mapped = mapUserForFrontend(updatedUser);
-        if (mapped) {
-          getIO().to(`user_${userId}`).emit('user_profile_update', mapped);
-          await syncUserToFirestore(userId, mapped);
+        if (user) {
+          const currentBalance = new Big(user.real_balance || 0);
+          const refundAmount = new Big(amount);
+          const newBalance = currentBalance.plus(refundAmount).toFixed(2);
+          await run('UPDATE users SET real_balance = ? WHERE uid = ?', [newBalance, userId], conn);
+          
+          const updatedUser = await get('SELECT * FROM users WHERE uid = ?', [userId], conn);
+          const mapped = mapUserForFrontend(updatedUser);
+          if (mapped) {
+            getIO().to(`user_${userId}`).emit('user_profile_update', mapped);
+            await syncUserToFirestore(userId, mapped);
+          }
         }
-      }
+      });
     }
 
     // Update Firestore withdrawal doc
@@ -3632,7 +3642,7 @@ router.post('/admin/transactions/approve', requireAuth, async (req: AuthRequest,
       if (!tx || tx.status !== 'pending') throw new Error('Invalid transaction');
 
       if (tx.type === 'deposit') {
-        const user = await get('SELECT * FROM users WHERE uid = ?', [tx.user_id], conn) as any;
+        const user = await get('SELECT * FROM users WHERE uid = ? FOR UPDATE', [tx.user_id], conn) as any;
         const currentBalance = new Big(user.real_balance || 0);
         const depositAmount = new Big(tx.amount);
         const newBalance = currentBalance.plus(depositAmount).toFixed(2);
@@ -3747,7 +3757,7 @@ router.post('/admin/transactions/reject', requireAuth, async (req: AuthRequest, 
 
       // If it was a withdrawal, we need to refund the balance
       if (tx.type === 'withdrawal') {
-        const user = await get('SELECT real_balance FROM users WHERE uid = ?', [tx.user_id], conn) as any;
+        const user = await get('SELECT real_balance FROM users WHERE uid = ? FOR UPDATE', [tx.user_id], conn) as any;
         const currentBalance = new Big(user.real_balance || 0);
         const refundAmount = new Big(tx.amount);
         const newBalance = currentBalance.plus(refundAmount).toFixed(2);

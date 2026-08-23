@@ -223,7 +223,7 @@ export async function settleTrade(tradeId: number | string, currentMarketPrice?:
       // Update user balance if payout > 0
       if (payoutAmount.gt(0)) {
         if (trade.account_type === 'tournament' && trade.tournament_id) {
-           const participant = await get('SELECT score FROM tournament_participants WHERE tournament_id = ? AND user_id = ?', [trade.tournament_id, trade.user_id], conn) as any;
+           const participant = await get('SELECT score FROM tournament_participants WHERE tournament_id = ? AND user_id = ? FOR UPDATE', [trade.tournament_id, trade.user_id], conn) as any;
            if (participant) {
              const currentBalance = new Big(participant.score || 0);
              const newBalance = currentBalance.plus(payoutAmount).toFixed(2);
@@ -236,7 +236,7 @@ export async function settleTrade(tradeId: number | string, currentMarketPrice?:
         } else {
            const balanceField = (trade.is_demo || trade.account_type === 'demo') ? 'demo_balance' : 'real_balance';
            // Lock user record
-           const user = await get('SELECT ' + balanceField + ' FROM users WHERE uid = ?', [trade.user_id], conn) as any;
+           const user = await get('SELECT ' + balanceField + ' FROM users WHERE uid = ? FOR UPDATE', [trade.user_id], conn) as any;
            if (user) {
                const currentBalance = new Big(user[balanceField] || 0);
                const newBalance = currentBalance.plus(payoutAmount).toFixed(2);
