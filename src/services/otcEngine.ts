@@ -51,6 +51,7 @@ interface MarketTrend {
 }
 
 const marketTrendStates: Record<string, MarketTrend> = {};
+const candleVolatilityStates: Record<string, any> = {};
 
 export async function updatePair(pair: string, type: 'real' | 'demo', now: number) {
   if (isMarketClosedAt(pair, now)) {
@@ -104,31 +105,73 @@ export async function updatePair(pair: string, type: 'real' | 'demo', now: numbe
     volMult = 4.0; // Solid steps for Forex
   }
 
-  // Base random price change - reduced range to prevent "shaking"
-  const randNoise = (Math.random() - 0.5) * 1.0; 
-
-  // Set direction based on active trend state
-  let trendBias = 0;
-  if (state.currentTrend === 'up') {
-    trendBias = state.trendIntensity * 1.5; // Much stronger bias for "Big Steps"
-  } else if (state.currentTrend === 'down') {
-    trendBias = -state.trendIntensity * 1.5;
-  } else {
-    trendBias = (Math.random() - 0.5) * 0.4;
+  // --- 5-Second Candle Micro-Volatility (Market Realism) ---
+  const bucket5s = now - (now % 5);
+  const candleStateKey = `${pair}_${type}`;
+  
+  if (!candleVolatilityStates[candleStateKey] || candleVolatilityStates[candleStateKey].start !== bucket5s) {
+      const roll = Math.random();
+      let pType = 'normal';
+      let vMult = 1.0;
+      
+      if (roll < 0.15) { pType = 'doji'; vMult = 0.8; }
+      else if (roll < 0.30) { pType = 'hammer'; vMult = 1.2; }
+      else if (roll < 0.45) { pType = 'shooting_star'; vMult = 1.2; }
+      else if (roll < 0.60) { pType = 'marubozu'; vMult = 1.1; }
+      else if (roll < 0.75) { pType = 'small'; vMult = 0.6; }
+      else { pType = 'normal'; vMult = 1.0; }
+      
+      candleVolatilityStates[candleStateKey] = { start: bucket5s, type: pType, volMult: vMult, initialDir: Math.random() > 0.5 ? 1 : -1 };
   }
+  const cState = candleVolatilityStates[candleStateKey];
 
-  // Calculate sharpened momentum for "Big Step" movement
-  // Using 0.85 for faster responsiveness and sharper "jumps"
+  // Base random price noise (dynamic based on candle personality)
+  const randNoise = (Math.random() - 0.5) * 1.5 * cState.volMult; 
+
+  // Macro trend bias
+  let trendBias = 0;
+  if (state.currentTrend === 'up') trendBias = state.trendIntensity * 1.5;
+  else if (state.currentTrend === 'down') trendBias = -state.trendIntensity * 1.5;
+  else trendBias = (Math.random() - 0.5) * 0.4;
+
   state.momentum = (state.momentum * 0.85) + (trendBias * 0.15);
 
-  // Combine noise and momentum for aggressive, stepping movement
   const rawVolatility = markets[pair]?.volatility || 0.0002;
   const baseVolatility = rawVolatility / currentPrice;
   
-  // High weight on momentum (0.95) and very low on noise (0.05) for clean, bold steps
-  const tickChangePercent = (randNoise * 0.05 + state.momentum * 0.95) * baseVolatility * volMult;
-  
+  // Calculate raw change
+  const tickChangePercent = (randNoise * 0.1 + state.momentum * 0.9) * baseVolatility * volMult;
   let change = currentPrice * tickChangePercent;
+  
+  // Apply Micro-Bias (Rejection/Wicks/Doji forces)
+  const active5sCandle = candlePool[pair]?.["5 seconds"];
+  if (active5sCandle) {
+      const openPrice = active5sCandle.open;
+      const elapsedSec = now - bucket5s;
+      const distToOpen = currentPrice - openPrice;
+      const rawPriceChangeLimit = currentPrice * baseVolatility * volMult * 0.5; // Drastically reduced for organic wicks
+      
+      let microBias = 0;
+      if (cState.type === 'doji') {
+          microBias = -distToOpen * 0.15; // Gentler magnetic pull
+      } else if (cState.type === 'marubozu') {
+          microBias = cState.initialDir * rawPriceChangeLimit * 0.3;
+      } else if (cState.type === 'hammer') {
+          if (elapsedSec < 3) {
+             microBias = -rawPriceChangeLimit * 0.8; 
+          } else {
+             microBias = (openPrice - currentPrice) * 0.15 + (rawPriceChangeLimit * 0.3); 
+          }
+      } else if (cState.type === 'shooting_star') {
+          if (elapsedSec < 3) {
+             microBias = rawPriceChangeLimit * 0.8; 
+          } else {
+             microBias = (openPrice - currentPrice) * 0.15 - (rawPriceChangeLimit * 0.3); 
+          }
+      }
+      
+      change += microBias;
+  }
 
   // --- Natural Outcome Steering ---
   // If there are active trades with target outcomes, we steer the price naturally using CACHED data for performance.

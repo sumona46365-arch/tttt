@@ -16,6 +16,7 @@ import { auth, db, collection, addDoc, query, where, orderBy, onSnapshot, doc, u
 import { useI18n } from '../context/I18nContext';
 import { useTranslation } from '../lib/translations';
 import { toast } from 'react-hot-toast';
+import { TwoFaTutorial } from '../components/TwoFaTutorial';
 
 interface SupportTicket {
   id: string;
@@ -51,15 +52,6 @@ interface Category {
   color: string;
 }
 
-const CATEGORIES: Category[] = [
-  { id: 'deposit', title: 'Deposit', desc: 'Issues with adding funds', icon: Wallet, color: 'emerald' },
-  { id: 'withdrawal', title: 'Withdrawal', desc: 'Processing & status', icon: CreditCard, color: 'amber' },
-  { id: 'trading', title: 'Trading', desc: 'Order & platform help', icon: TrendingUp, color: 'blue' },
-  { id: 'kyc', title: 'Verification', desc: 'Identity & documents', icon: UserCheck, color: 'purple' },
-  { id: 'security', title: 'Security', desc: '2FA & account safety', icon: Shield, color: 'red' },
-  { id: 'bonus', title: 'Bonus', desc: 'Promotions & rewards', icon: Star, color: 'pink' },
-];
-
 const FAQS = [
   { q: "How long do deposits take?", a: "Crypto deposits typically reflect after 1-3 network confirmations (approx. 5-10 mins). MFS deposits like bKash are processed within 15-30 minutes." },
   { q: "What is the minimum withdrawal?", a: "The minimum withdrawal amount is $10 for most methods. Fees vary depending on the network used." },
@@ -69,8 +61,7 @@ const FAQS = [
 
 export default function ClientSupportCenter() {
   const navigate = useNavigate();
-  const [view, setView] = useState<'home' | 'tickets' | 'chat' | 'new_ticket'>('home');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [view, setView] = useState<'home' | 'tickets' | 'chat' | 'new_ticket' | '2fa_tutorial'>('home');
   const [chatMessage, setChatMessage] = useState('');
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [activeTicket, setActiveTicket] = useState<SupportTicket | null>(null);
@@ -79,11 +70,6 @@ export default function ClientSupportCenter() {
   const [newSubject, setNewSubject] = useState('');
   const [newCategory, setNewCategory] = useState('General');
   const [attachedFiles, setAttachedFiles] = useState<string[]>([]);
-  const [isAiTyping, setIsAiTyping] = useState(false);
-  const [socialLinks, setSocialLinks] = useState<any>({
-    whatsapp: '',
-    telegram: ''
-  });
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -93,9 +79,7 @@ export default function ClientSupportCenter() {
   const currentUser = auth.currentUser;
   const currentUid = currentUser?.uid || '';
 
-  // No social links as per user request
-
-  // 2. Fetch User Tickets
+  // Fetch User Tickets
   useEffect(() => {
     if (!currentUid) return;
 
@@ -109,7 +93,6 @@ export default function ClientSupportCenter() {
       const ticketsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as SupportTicket[];
       setTickets(ticketsData);
       
-      // If we are in chat view, keep the active ticket updated
       if (activeTicket) {
         const updated = ticketsData.find(t => t.id === activeTicket.id);
         if (updated) setActiveTicket(updated);
@@ -121,7 +104,7 @@ export default function ClientSupportCenter() {
     return () => unsubscribe();
   }, [currentUid, activeTicket?.id]);
 
-  // 3. Fetch Messages for Active Ticket
+  // Fetch Messages for Active Ticket
   useEffect(() => {
     if (!activeTicket?.id || view !== 'chat') {
       setMessages([]);
@@ -141,10 +124,10 @@ export default function ClientSupportCenter() {
     return () => unsubscribe();
   }, [activeTicket?.id, view]);
 
-  // 4. Auto-scroll chat
+  // Auto-scroll chat
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isAiTyping, view]);
+  }, [messages, view]);
 
   const handleSendMessage = async () => {
     if (!chatMessage.trim() && attachedFiles.length === 0) return;
@@ -171,7 +154,6 @@ export default function ClientSupportCenter() {
         createdAt: now
       };
 
-      // 1. Persist directly to PostgreSQL database
       try {
         await fetch('/api/tickets/messages', {
           method: 'POST',
@@ -186,7 +168,6 @@ export default function ClientSupportCenter() {
         console.warn('PostgreSQL message persist warning:', sqlErr);
       }
 
-      // 2. Sync to Firestore for real-time listener
       try {
         await addDoc(collection(db, 'tickets', activeTicket.id, 'messages'), messagePayload);
 
@@ -198,86 +179,74 @@ export default function ClientSupportCenter() {
       } catch (fsErr) {
         console.warn('Firestore ticket sync warning:', fsErr);
       }
+
+      toast.success('Message sent');
     } catch (err) {
+      console.error("Error sending message:", err);
       toast.error('Failed to send message');
-      setChatMessage(text);
-      setAttachedFiles(files);
     } finally {
       setIsSending(false);
     }
   };
 
   const handleCreateTicket = async () => {
-    if (!chatMessage.trim() && attachedFiles.length === 0) {
-      toast.error('Please enter a message');
+    if (!chatMessage.trim()) {
+      toast.error('Please describe your issue or question.');
       return;
     }
 
     setIsSending(true);
+    const now = Date.now();
+    const ticketId = `tkt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
     try {
-      const now = Date.now();
-      const ticketId = `tkt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      const ticketData = {
+      const ticketPayload = {
         userId: currentUid,
         userName: currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User',
         userEmail: currentUser?.email || '',
-        subject: newSubject.trim() || `${newCategory} Inquiry`,
+        subject: newSubject.trim() || newCategory + ' Support Inquiry',
         category: newCategory,
-        message: chatMessage.trim() || 'Ticket inquiry',
         status: 'open',
-        lastMessage: chatMessage.trim() || 'Attached files',
+        lastMessage: chatMessage,
         createdAt: now,
         updatedAt: now
       };
 
-      const msgId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      const messagePayload = {
-        ticketId: ticketId,
-        senderId: currentUid,
-        senderName: ticketData.userName,
-        senderType: 'user',
-        isAdmin: false,
-        text: chatMessage.trim(),
-        attachments: attachedFiles,
-        createdAt: now
-      };
-
-      // 1. Persist directly to PostgreSQL database
       try {
         await fetch('/api/tickets', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ticketId, ticketData })
-        });
-
-        await fetch('/api/tickets/messages', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ticketId,
-            messageId: msgId,
-            messageData: messagePayload
-          })
+          body: JSON.stringify({ ticketId, ticketData: ticketPayload })
         });
       } catch (sqlErr) {
         console.warn('PostgreSQL ticket create warning:', sqlErr);
       }
 
-      // 2. Sync to Firestore
-      try {
-        const ticketRef = await addDoc(collection(db, 'tickets'), { ...ticketData, id: ticketId });
-        await addDoc(collection(db, 'tickets', ticketRef.id, 'messages'), messagePayload);
-      } catch (fsErr) {
-        console.warn('Firestore ticket create warning:', fsErr);
-      }
+      const docRef = await addDoc(collection(db, 'tickets'), ticketPayload);
+      const actualId = docRef.id || ticketId;
 
-      setActiveTicket({ id: ticketId, ...ticketData });
+      const firstMsg = {
+        ticketId: actualId,
+        senderId: currentUid,
+        senderName: currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User',
+        senderType: 'user',
+        isAdmin: false,
+        text: chatMessage,
+        attachments: attachedFiles,
+        createdAt: now
+      };
+
+      await addDoc(collection(db, 'tickets', actualId, 'messages'), firstMsg);
+
+      setActiveTicket({ id: actualId, ...ticketPayload });
+      setView('chat');
       setChatMessage('');
       setAttachedFiles([]);
-      setView('chat');
-      toast.success('Ticket created successfully and saved to database');
+      setNewSubject('');
+      toast.success('Support ticket created successfully!');
     } catch (err) {
-      toast.error('Failed to create ticket');
+      console.error("Error creating ticket:", err);
+      toast.error('Failed to create ticket. Please try again.');
     } finally {
       setIsSending(false);
     }
@@ -287,255 +256,293 @@ export default function ClientSupportCenter() {
     const files = e.target.files;
     if (!files) return;
 
-    Array.from(files).forEach(file => {
-      if (file.size > 5 * 1024 * 1024) {
-        toast.error('File size must be under 5MB');
-        return;
-      }
+    Array.from(files).forEach((file: File) => {
       const reader = new FileReader();
-      reader.onload = (ev) => {
-        if (ev.target?.result) {
-          setAttachedFiles(prev => [...prev, ev.target!.result as string]);
+      reader.onload = (uploadEvent) => {
+        const result = uploadEvent.target?.result as string;
+        if (result) {
+          setAttachedFiles(prev => [...prev, result]);
         }
       };
       reader.readAsDataURL(file);
     });
   };
 
-  const containerVariants = {
-    hidden: { opacity: 0, y: 10 },
-    visible: { opacity: 1, y: 0, transition: { duration: 0.4, staggerChildren: 0.1 } }
-  };
-
-  const itemVariants = {
-    hidden: { opacity: 0, scale: 0.95 },
-    visible: { opacity: 1, scale: 1 }
-  };
-
   return (
-    <div className="min-h-screen bg-[#0b0e11] text-gray-100 font-sans pb-10 overflow-x-hidden">
+    <div className="min-h-screen bg-[#0b0e14] text-gray-100 font-sans pb-16 overflow-x-hidden">
       
-      {/* Header */}
-      <header className="sticky top-0 z-[100] bg-[#0b0e11]/80 backdrop-blur-2xl border-b border-white/5 px-4 md:px-8 h-20 flex items-center justify-between">
-        <div className="flex items-center gap-4">
+      {/* Enterprise Professional Header */}
+      <header className="sticky top-0 z-[100] bg-[#0b0e14]/90 backdrop-blur-xl border-b border-white/10 px-4 sm:px-6 md:px-10 h-20 flex items-center justify-between">
+        <div className="flex items-center gap-3 sm:gap-6">
           <button 
             onClick={() => {
               if (view === 'home') navigate('/trade');
               else setView('home');
             }} 
-            className="p-3 bg-white/5 hover:bg-white/10 rounded-2xl text-gray-400 transition-all active:scale-95"
+            className="group flex items-center gap-2 sm:gap-3 text-gray-400 hover:text-white transition-all"
           >
-            <ChevronRight className="rotate-180" size={20} />
+            <div className="p-2 bg-white/5 group-hover:bg-[#f0b90b]/10 rounded-xl border border-white/5 group-hover:border-[#f0b90b]/30 transition-all">
+              <ChevronRight className="rotate-180" size={16} />
+            </div>
+            <span className="text-[11px] font-bold uppercase tracking-wider hidden sm:inline">Terminal</span>
           </button>
-          <div>
-            <h1 className="text-xl font-black text-white leading-none mb-1">{t('supportDesk')}</h1>
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.5)]"></div>
-              <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">VIP Priority Active</span>
+          
+          <div className="w-[1px] h-6 bg-white/10 hidden sm:block"></div>
+
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#f0b90b] to-amber-600 flex items-center justify-center font-black text-black shadow-lg shadow-[#f0b90b]/20">
+              <Headphones size={20} />
+            </div>
+            <div>
+              <h1 className="text-sm sm:text-base font-black text-white tracking-wide uppercase">Bivaax <span className="text-[#f0b90b]">Support</span></h1>
+              <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
+                <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest">24/7 VIP Desk Active</span>
+              </div>
             </div>
           </div>
         </div>
         
-        <div className="flex items-center gap-2 md:gap-4">
+        <div className="flex items-center gap-2 sm:gap-3">
           <button 
             onClick={() => setView('tickets')}
-            className={`hidden md:flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${view === 'tickets' ? 'bg-[#f45c5c] text-white shadow-lg' : 'bg-white/5 text-gray-400 hover:bg-white/10'}`}
+            className={`flex items-center gap-2 px-3 sm:px-5 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all border ${view === 'tickets' ? 'bg-[#f0b90b] text-black border-[#f0b90b] shadow-[0_0_15px_rgba(240,185,11,0.3)]' : 'bg-white/5 text-gray-300 border-white/10 hover:bg-white/10'}`}
           >
-            <Ticket size={16} /> My Tickets
+            <Ticket size={16} /> <span className="hidden xs:inline">My Tickets</span> ({tickets.length})
           </button>
-          <div className="w-[1px] h-8 bg-white/10 hidden md:block"></div>
-          <button className="p-3 bg-white/5 hover:bg-white/10 rounded-2xl text-gray-400">
-            <Bell size={20} />
+          
+          <button 
+            onClick={() => setView('new_ticket')}
+            className="hidden md:flex items-center gap-2 px-5 py-2.5 bg-[#00c980] hover:bg-[#00b372] text-black font-black rounded-xl text-[11px] uppercase tracking-wider transition-all shadow-lg shadow-[#00c980]/20"
+          >
+            <Plus size={16} /> New Ticket
           </button>
-          <button className="p-1 rounded-2xl bg-white/5 border border-white/10">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#f45c5c] to-red-600 flex items-center justify-center font-black text-white shadow-lg">
-              {currentUser?.email?.charAt(0).toUpperCase() || 'U'}
-            </div>
-          </button>
+
+          <div className="w-9 h-9 rounded-xl bg-[#1e2329] border border-white/10 flex items-center justify-center font-bold text-white text-xs">
+            {currentUser?.email?.charAt(0).toUpperCase() || 'U'}
+          </div>
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 pt-8 space-y-10">
+      {/* Main Container */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8 py-8 sm:py-12 space-y-12 sm:space-y-16">
         
         {view === 'home' && (
-          <motion.div variants={containerVariants} initial="hidden" animate="visible" className="space-y-10">
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-12 sm:space-y-16">
             
-            {/* Hero Section */}
-            <section className="relative rounded-[32px] bg-gradient-to-br from-[#1e2329] to-[#0b0e11] border border-white/5 p-8 md:p-12 overflow-hidden shadow-2xl">
-              <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-[#f45c5c]/5 blur-[150px] rounded-full -mr-[250px] -mt-[250px]"></div>
-              <div className="relative z-10 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-                <div className="space-y-8">
-                  <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#f45c5c]/10 border border-[#f45c5c]/20 text-[#f45c5c] text-[10px] font-black uppercase tracking-[0.2em]">
-                    <Sparkles size={14} fill="currentColor" /> Premium Support Hub
+            {/* Hero Banner - Professional International Trading Desk Style */}
+            <section className="relative overflow-hidden bg-gradient-to-br from-[#12161c] to-[#0e1217] border border-white/10 rounded-3xl sm:rounded-[40px] p-6 sm:p-10 md:p-16 shadow-2xl">
+              <div className="absolute top-0 right-0 w-96 h-96 bg-[#f0b90b]/5 blur-[120px] pointer-events-none rounded-full"></div>
+              
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center relative z-10">
+                <div className="lg:col-span-7 space-y-6 sm:space-y-8">
+                  <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#f0b90b]/10 border border-[#f0b90b]/30 text-[#f0b90b] text-[10px] sm:text-[11px] font-black uppercase tracking-widest">
+                    <Sparkles size={14} /> Professional Client Assistance
                   </div>
-                  <h2 className="text-4xl md:text-5xl font-black text-white leading-[1.1] tracking-tight">
-                    World-class <br/>
-                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#f45c5c] to-red-400">assistance</span> {language === 'bn' ? 'আপনার জন্য।' : 'for you.'}
+                  
+                  <h2 className="text-3xl sm:text-5xl md:text-6xl font-black text-white leading-[1.1] tracking-tight">
+                    Dedicated Support for <br className="hidden sm:inline"/>
+                    <span className="text-[#f0b90b]">Global Traders.</span>
                   </h2>
                   
-                  <div className="relative max-w-md group">
-                    <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within:text-[#f45c5c] transition-colors" size={20} />
-                    <input 
-                      type="text" 
-                      placeholder="Search for help articles..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full h-16 bg-white/5 border border-white/10 rounded-2xl pl-14 pr-6 text-sm text-white focus:outline-none focus:border-[#f45c5c] transition-all"
-                    />
-                  </div>
-
-                  <div className="flex flex-wrap gap-4">
+                  <p className="text-gray-400 text-sm sm:text-base md:text-lg font-normal max-w-xl leading-relaxed">
+                    Access expert assistance for deposits, withdrawals, verification, and order execution with industry-leading resolution times.
+                  </p>
+                  
+                  <div className="flex flex-col sm:flex-row gap-4 pt-2">
                     <button 
                       onClick={() => setView('new_ticket')}
-                      className="px-10 py-4.5 bg-[#f45c5c] hover:bg-[#e04848] text-white font-black rounded-[20px] shadow-2xl shadow-[#f45c5c]/30 transition-all active:scale-95 flex items-center gap-3"
+                      className="w-full sm:w-auto h-14 px-8 bg-[#f0b90b] hover:bg-[#d9a508] text-black font-black rounded-xl sm:rounded-2xl shadow-xl shadow-[#f0b90b]/20 transition-all active:scale-[0.98] flex items-center justify-center gap-3 uppercase tracking-wider text-xs"
                     >
-                      <Plus size={20} strokeWidth={3} /> {t('startNewTicket')}
+                      <Plus size={18} strokeWidth={3} /> Start Support Ticket
                     </button>
                     <button 
                       onClick={() => setView('tickets')}
-                      className="px-10 py-4.5 bg-white/5 hover:bg-white/10 text-white font-black rounded-[20px] border border-white/10 transition-all active:scale-95"
+                      className="w-full sm:w-auto h-14 px-8 bg-white/5 hover:bg-white/10 text-white font-black rounded-xl sm:rounded-2xl border border-white/10 transition-all active:scale-[0.98] flex items-center justify-center gap-3 uppercase tracking-wider text-xs"
                     >
-                      {t('trackStatus')}
+                      <History size={18} /> Track Active Tickets ({tickets.length})
                     </button>
                   </div>
                 </div>
-                
-                <div className="hidden lg:grid grid-cols-2 gap-4 relative">
-                   <div className="absolute inset-0 bg-[#f45c5c]/10 blur-[60px] rounded-full"></div>
-                   <div className="p-6 bg-[#161a1e]/80 backdrop-blur-xl border border-white/5 rounded-[24px] space-y-3 transform -rotate-3 hover:rotate-0 transition-transform cursor-default">
-                      <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center"><CheckCircle2 size={24} /></div>
-                      <h4 className="font-black text-white">Verified Security</h4>
-                      <p className="text-[11px] text-gray-500">Your data is protected by bank-grade encryption protocols.</p>
-                   </div>
-                   <div className="p-6 bg-[#161a1e]/80 backdrop-blur-xl border border-white/5 rounded-[24px] space-y-3 transform translate-y-8 rotate-3 hover:rotate-0 transition-transform cursor-default">
-                      <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center"><Clock size={24} /></div>
-                      <h4 className="font-black text-white">5-Min Response</h4>
-                      <p className="text-[11px] text-gray-500">Average response time for VIP and standard users.</p>
-                   </div>
+
+                <div className="lg:col-span-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4">
+                  <div className="p-6 bg-[#0b0e14] border border-white/5 rounded-2xl sm:rounded-3xl flex items-center gap-4 shadow-lg">
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center shrink-0">
+                      <ShieldCheck size={26} />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black text-white">Verified Security</h4>
+                      <p className="text-xs text-gray-400 mt-0.5">End-to-end encrypted desk</p>
+                    </div>
+                  </div>
+
+                  <div className="p-6 bg-[#0b0e14] border border-white/5 rounded-2xl sm:rounded-3xl flex items-center gap-4 shadow-lg">
+                    <div className="w-12 h-12 rounded-2xl bg-[#f0b90b]/10 text-[#f0b90b] flex items-center justify-center shrink-0">
+                      <Zap size={26} />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black text-white">Instant Response</h4>
+                      <p className="text-xs text-gray-400 mt-0.5">Average reply under 3 mins</p>
+                    </div>
+                  </div>
                 </div>
               </div>
             </section>
 
-            {/* Quick Contact Options */}
+            {/* Quick Categories */}
             <section className="space-y-6">
-              <div className="flex justify-between items-end">
+              <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
                 <div>
-                  <h3 className="text-xl font-black text-white">{t('quickShortcuts')}</h3>
-                  <p className="text-xs text-gray-500">Instant connection via your favorite social platforms.</p>
+                  <h3 className="text-xl sm:text-2xl font-black text-white tracking-tight">Support Topics</h3>
+                  <p className="text-xs sm:text-sm text-gray-400">Select an area for immediate assistance</p>
+                </div>
+                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+                  <div className="w-2 h-2 bg-emerald-500 rounded-full animate-ping"></div>
+                  <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">All Systems Operational</span>
                 </div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                 {[
-                   { label: t('depositIssue'), msg: "I have an issue with my deposit. It's not reflecting." },
-                   { label: t('withdrawalStatus'), msg: "I want to check my withdrawal status." },
-                   { label: t('verificationHelp'), msg: "I need help with my account verification." },
-                   { label: t('howToTrade'), msg: "Can you explain how to start trading?" }
-                 ].map((item, idx) => (
-                   <div 
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+                {[
+                  { title: 'Deposit & Funding', desc: 'bKash, Nagad, Crypto & Bank transfers', icon: Wallet, color: 'emerald', msg: "I need help with my deposit transaction." },
+                  { title: 'Withdrawal Status', desc: 'Processing times and payout inquiries', icon: CreditCard, color: 'amber', msg: "I would like to check my withdrawal status." },
+                  { title: 'Trading & Orders', desc: 'Execution, charts & platform tools', icon: TrendingUp, color: 'blue', msg: "I have a question regarding trade execution." },
+                  { title: 'Identity KYC', desc: 'Account verification & document review', icon: UserCheck, color: 'purple', msg: "I need assistance with my KYC verification." },
+                  { title: 'Security & 2FA', desc: 'Google Auth, passwords & safety', icon: Shield, color: 'red', msg: "I need help securing my account or resetting 2FA." },
+                  { title: 'Bonuses & VIP', desc: 'Promotions, tiers & cashback rewards', icon: Star, color: 'yellow', msg: "I have a question about VIP status and rewards." },
+                ].map((item, idx) => (
+                  <motion.div 
                     key={idx}
+                    whileHover={{ y: -4 }}
                     onClick={() => {
                       setView('new_ticket');
+                      setNewCategory(item.title.split(' ')[0]);
                       setChatMessage(item.msg);
-                      setNewSubject(item.label);
+                      setNewSubject(item.title);
                     }}
-                    className="group p-8 bg-[#161a1e] border border-white/5 rounded-[28px] hover:border-[#f45c5c]/30 transition-all flex flex-col items-center text-center space-y-4 hover:shadow-2xl hover:shadow-[#f45c5c]/10 cursor-pointer"
-                   >
-                      <div className="w-16 h-16 rounded-[22px] bg-[#f45c5c]/10 text-[#f45c5c] flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg">
-                        <Zap size={32} />
-                      </div>
-                      <div>
-                        <h4 className="text-lg font-black text-white">{item.label}</h4>
-                        <p className="text-xs text-gray-500 mt-1">Quick Action</p>
-                      </div>
-                      <div className="pt-2">
-                        <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase text-[#f45c5c] bg-[#f45c5c]/10 px-3 py-1 rounded-full">
-                            Select <Plus size={10} />
-                        </span>
-                      </div>
-                   </div>
-                 ))}
-              </div>
-            </section>
-
-            {/* Categories Grid */}
-            <section className="space-y-6">
-              <div className="flex justify-between items-end">
-                <h3 className="text-xl font-black text-white">Help Categories</h3>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-                {CATEGORIES.map((cat) => (
-                  <motion.div 
-                    key={cat.id}
-                    variants={itemVariants}
-                    whileHover={{ y: -5 }}
-                    className="group p-5 bg-[#161a1e] border border-white/5 rounded-2xl hover:bg-[#1e2329] transition-all cursor-pointer text-center space-y-3"
+                    className="p-6 sm:p-8 bg-[#12161c] border border-white/5 hover:border-[#f0b90b]/40 rounded-2xl sm:rounded-3xl transition-all cursor-pointer group flex flex-col justify-between shadow-lg"
                   >
-                    <div className={`w-12 h-12 mx-auto rounded-xl bg-${cat.color}-500/10 text-${cat.color}-400 flex items-center justify-center group-hover:scale-110 transition-transform`}>
-                      <cat.icon size={24} />
+                    <div>
+                      <div className={`w-12 h-12 rounded-xl bg-${item.color}-500/10 text-${item.color}-400 flex items-center justify-center mb-5 shadow-md`}>
+                        <item.icon size={24} />
+                      </div>
+                      <h4 className="text-base font-black text-white group-hover:text-[#f0b90b] transition-colors">{item.title}</h4>
+                      <p className="text-xs text-gray-400 mt-2 leading-relaxed">{item.desc}</p>
                     </div>
-                    <h4 className="font-bold text-[13px] text-white">{cat.title}</h4>
+                    <div className="flex items-center gap-2 text-[11px] font-black uppercase text-[#f0b90b] mt-6 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <span>Get Support</span> <ArrowRight size={14} />
+                    </div>
                   </motion.div>
                 ))}
               </div>
             </section>
+
+            {/* Featured Interactive 2FA Tutorial Banner */}
+            <section className="space-y-6">
+              <div className="p-8 sm:p-10 bg-gradient-to-r from-[#12161c] via-[#1a212b] to-[#12161c] border border-[#f0b90b]/30 rounded-3xl shadow-2xl relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-8">
+                <div className="absolute top-0 right-0 w-64 h-64 bg-[#f0b90b]/10 blur-[100px] pointer-events-none rounded-full"></div>
+                <div className="space-y-4 max-w-xl relative z-10">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 bg-[#f0b90b]/10 border border-[#f0b90b]/30 text-[#f0b90b] text-[10px] font-black uppercase tracking-widest">
+                    <ShieldCheck size={14} /> Recommended Security Guide
+                  </div>
+                  <h3 className="text-2xl sm:text-3xl font-black text-white tracking-tight">Step-by-Step 2FA Activation Tutorial</h3>
+                  <p className="text-sm text-gray-300 leading-relaxed">
+                    Learn how to secure your trading account with Google Authenticator in 4 simple steps with visual diagrams and instant linking to profile security settings.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setView('2fa_tutorial')}
+                  className="px-8 py-4 bg-[#f0b90b] hover:bg-[#d9a508] text-black font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-[#f0b90b]/20 transition-all flex items-center gap-2 shrink-0 active:scale-95 relative z-10"
+                >
+                  <span>Launch 2FA Tutorial</span> <ArrowRight size={16} />
+                </button>
+              </div>
+            </section>
+
+            {/* FAQs */}
+            <section className="space-y-6">
+              <h3 className="text-xl sm:text-2xl font-black text-white tracking-tight">Frequently Asked Questions</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+                {FAQS.map((faq, i) => (
+                  <div key={i} className="p-6 sm:p-8 bg-[#12161c] border border-white/5 rounded-2xl sm:rounded-3xl space-y-3 shadow-lg">
+                    <h4 className="text-sm font-black text-white">{faq.q}</h4>
+                    <p className="text-xs text-gray-400 leading-relaxed">{faq.a}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+          </motion.div>
+        )}
+
+        {view === '2fa_tutorial' && (
+          <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }}>
+            <TwoFaTutorial onClose={() => setView('home')} />
           </motion.div>
         )}
 
         {view === 'tickets' && (
           <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
-            <div className="flex items-center justify-between">
-              <h3 className="text-2xl font-black text-white uppercase tracking-tight">My Tickets</h3>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-2xl font-black text-white uppercase tracking-tight">My Support Tickets</h3>
+                <p className="text-xs text-gray-400">Track and manage your active inquiries</p>
+              </div>
               <button 
                 onClick={() => setView('new_ticket')}
-                className="px-6 py-2.5 bg-[#f45c5c] text-white font-black text-xs uppercase tracking-widest rounded-xl hover:bg-[#e04848] transition-all active:scale-95"
+                className="px-6 py-3 bg-[#f0b90b] hover:bg-[#d9a508] text-black font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg shadow-[#f0b90b]/20"
               >
-                Create New
+                + New Ticket
               </button>
             </div>
             
-            <div className="grid grid-cols-1 gap-4">
+            <div className="space-y-4">
               {tickets.length > 0 ? tickets.map((t) => (
                 <div 
                   key={t.id} 
                   onClick={() => { setActiveTicket(t); setView('chat'); }}
-                  className="bg-[#161a1e] border border-white/5 p-6 rounded-[24px] hover:bg-[#1e2329] transition-all cursor-pointer group flex flex-col md:flex-row md:items-center justify-between gap-6"
+                  className="bg-[#12161c] border border-white/5 p-6 rounded-2xl sm:rounded-3xl hover:border-white/20 transition-all cursor-pointer group flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-lg"
                 >
-                  <div className="flex items-center gap-5">
-                     <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 shadow-lg ${
-                       t.status === 'open' ? 'bg-emerald-500/10 text-emerald-400' : 
-                       t.status === 'resolved' ? 'bg-gray-500/10 text-gray-500' : 'bg-amber-500/10 text-amber-400'
+                  <div className="flex items-start sm:items-center gap-4">
+                     <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
+                       t.status === 'open' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'
                      }`}>
-                        <MessageCircle size={28} />
+                        <MessageCircle size={24} />
                      </div>
                      <div>
-                        <h4 className="font-black text-white group-hover:text-[#f45c5c] transition-colors">{t.subject}</h4>
-                        <p className="text-xs text-gray-500 mt-1 line-clamp-1 italic">"{t.lastMessage}"</p>
-                        <div className="flex items-center gap-3 mt-3">
-                           <span className="text-[10px] font-mono text-gray-600 uppercase">ID: {t.id}</span>
-                           <span className="w-1 h-1 bg-white/10 rounded-full"></span>
-                           <span className="text-[10px] font-bold text-gray-500 uppercase">{t.category}</span>
+                        <h4 className="font-black text-white text-sm sm:text-base group-hover:text-[#f0b90b] transition-colors">{t.subject}</h4>
+                        <p className="text-xs text-gray-400 mt-1 line-clamp-1 italic">"{t.lastMessage}"</p>
+                        <div className="flex items-center gap-3 mt-2 text-[10px] text-gray-500 font-mono">
+                           <span>ID: {t.id}</span>
+                           <span>•</span>
+                           <span className="uppercase">{t.category}</span>
                         </div>
                      </div>
                   </div>
-                  <div className="flex items-center justify-between md:flex-col md:items-end gap-2">
-                     <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${
-                        t.status === 'open' ? 'bg-emerald-500/20 text-emerald-400' : 
-                        t.status === 'resolved' ? 'bg-gray-800 text-gray-500' : 'bg-amber-500/20 text-amber-400'
+                  <div className="flex items-center justify-between sm:flex-col sm:items-end gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-white/5">
+                     <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                        t.status === 'open' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-800 text-gray-400'
                      }`}>{t.status}</span>
-                     <span className="text-[10px] text-gray-600 font-bold uppercase flex items-center gap-1.5">
+                     <span className="text-[10px] text-gray-500 flex items-center gap-1">
                         <Clock size={12} /> {new Date(t.updatedAt || t.createdAt || Date.now()).toLocaleDateString()}
                      </span>
                   </div>
                 </div>
               )) : (
-                <div className="py-20 flex flex-col items-center justify-center text-center space-y-4">
-                   <div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center text-gray-600 opacity-20">
-                      <Ticket size={48} />
+                <div className="py-24 flex flex-col items-center justify-center text-center space-y-4 bg-[#12161c] border border-white/5 rounded-3xl">
+                   <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center text-gray-500">
+                      <Ticket size={32} />
                    </div>
                    <div>
-                      <h4 className="text-lg font-black text-gray-500">No support tickets found</h4>
-                      <p className="text-xs text-gray-600 mt-1 max-w-xs">You haven't opened any support tickets yet. Click the button above to start.</p>
+                      <h4 className="text-base font-black text-white">No tickets found</h4>
+                      <p className="text-xs text-gray-400 mt-1">You haven't submitted any support tickets yet.</p>
                    </div>
+                   <button 
+                     onClick={() => setView('new_ticket')}
+                     className="mt-4 px-6 py-2.5 bg-[#f0b90b] text-black font-black text-xs uppercase tracking-wider rounded-xl"
+                   >
+                     Create First Ticket
+                   </button>
                 </div>
               )}
             </div>
@@ -543,144 +550,150 @@ export default function ClientSupportCenter() {
         )}
 
         {view === 'new_ticket' && (
-          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="max-w-3xl mx-auto">
-             <div className="bg-[#161a1e] border border-white/5 rounded-[32px] p-8 md:p-12 space-y-8 shadow-2xl">
-                <div className="space-y-2">
-                   <h3 className="text-2xl font-black text-white">{language === 'bn' ? 'সাপোর্ট টিকিট' : 'Create Support'} <span className="text-[#f45c5c]">{language === 'bn' ? 'তৈরি করুন' : 'Ticket'}</span></h3>
-                   <p className="text-gray-500 text-sm italic">{t('describeQuery')}</p>
+          <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="max-w-2xl mx-auto">
+             <div className="bg-[#12161c] border border-white/10 rounded-3xl p-6 sm:p-10 space-y-6 shadow-2xl">
+                <div>
+                   <h3 className="text-xl sm:text-2xl font-black text-white uppercase tracking-tight">Create Support Ticket</h3>
+                   <p className="text-xs sm:text-sm text-gray-400 mt-1">Provide details of your inquiry for priority assistance</p>
                 </div>
                 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                   <div className="space-y-2">
-                      <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest px-1">{t('category')}</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                   <div className="space-y-1.5">
+                      <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest">Category</label>
                       <select 
                         value={newCategory}
                         onChange={(e) => setNewCategory(e.target.value)}
-                        className="w-full h-14 bg-[#0b0e11] border border-white/10 rounded-2xl px-5 text-sm text-white focus:outline-none focus:border-[#f45c5c] transition-all appearance-none cursor-pointer"
+                        className="w-full h-12 bg-[#0b0e14] border border-white/10 rounded-xl px-4 text-xs sm:text-sm text-white focus:outline-none focus:border-[#f0b90b] transition-all"
                       >
                          <option value="General">General Inquiry</option>
                          <option value="Deposit">Deposit Issue</option>
-                         <option value="Withdrawal">Withdrawal Delay</option>
+                         <option value="Withdrawal">Withdrawal Status</option>
                          <option value="KYC">Identity Verification</option>
-                         <option value="Technical">Technical Glitch</option>
-                         <option value="Other">Other</option>
+                         <option value="Security">Security & 2FA</option>
+                         <option value="Trading">Trading Platform</option>
                       </select>
                    </div>
-                   <div className="space-y-2">
-                      <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest px-1">{t('subjectOptional')}</label>
+                   <div className="space-y-1.5">
+                      <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest">Subject (Optional)</label>
                       <input 
                         type="text" 
-                        placeholder="Short description of the issue"
+                        placeholder="e.g., Deposit not reflecting"
                         value={newSubject}
                         onChange={(e) => setNewSubject(e.target.value)}
-                        className="w-full h-14 bg-[#0b0e11] border border-white/10 rounded-2xl px-5 text-sm text-white focus:outline-none focus:border-[#f45c5c] transition-all"
+                        className="w-full h-12 bg-[#0b0e14] border border-white/10 rounded-xl px-4 text-xs sm:text-sm text-white focus:outline-none focus:border-[#f0b90b] transition-all"
                       />
                    </div>
                 </div>
 
-                <div className="space-y-2">
-                   <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest px-1">{t('yourMessage')}</label>
+                <div className="space-y-1.5">
+                   <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest">Description / Message</label>
                    <textarea 
-                     rows={6}
-                     placeholder="Type your message here..."
+                     rows={5}
+                     placeholder="Please provide transaction IDs, email address, or specific details..."
                      value={chatMessage}
                      onChange={(e) => setChatMessage(e.target.value)}
-                     className="w-full bg-[#0b0e11] border border-white/10 rounded-3xl p-6 text-sm text-white focus:outline-none focus:border-[#f45c5c] transition-all resize-none leading-relaxed"
+                     className="w-full bg-[#0b0e14] border border-white/10 rounded-2xl p-4 text-xs sm:text-sm text-white focus:outline-none focus:border-[#f0b90b] transition-all resize-none leading-relaxed"
                    />
                 </div>
 
-                {/* File Upload UI */}
-                <div className="space-y-4">
-                   <div className="flex flex-wrap gap-3">
+                {/* Attachments */}
+                <div className="space-y-3">
+                   <div className="flex flex-wrap gap-2">
                       {attachedFiles.map((file, i) => (
-                        <div key={i} className="relative group w-20 h-20 rounded-2xl overflow-hidden border border-white/10">
+                        <div key={i} className="relative group w-16 h-16 rounded-xl overflow-hidden border border-white/10">
                            <img src={file} alt="preview" className="w-full h-full object-cover" />
                            <button 
                              onClick={() => setAttachedFiles(prev => prev.filter((_, idx) => idx !== i))}
                              className="absolute inset-0 bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                            >
-                              <Trash2 size={16} />
+                              <Trash2 size={14} />
                            </button>
                         </div>
                       ))}
                       <button 
                         onClick={() => fileInputRef.current?.click()}
-                        className="w-20 h-20 rounded-2xl border-2 border-dashed border-white/10 hover:border-[#f45c5c]/50 flex flex-col items-center justify-center text-gray-500 hover:text-[#f45c5c] transition-all group"
+                        className="w-16 h-16 rounded-xl border border-dashed border-white/20 hover:border-[#f0b90b] flex flex-col items-center justify-center text-gray-400 hover:text-[#f0b90b] transition-all"
                       >
-                         <Plus size={24} className="group-hover:scale-110 transition-transform" />
-                         <span className="text-[9px] font-black uppercase mt-1">Add Image</span>
+                         <Plus size={20} />
+                         <span className="text-[9px] font-bold mt-1">Image</span>
                       </button>
                       <input type="file" ref={fileInputRef} className="hidden" accept="image/*" multiple onChange={handleFileSelect} />
                    </div>
-                   <p className="text-[10px] text-gray-600 italic">Recommended: Attach screenshots of transactions or error messages.</p>
                 </div>
 
-                <button 
-                  onClick={handleCreateTicket}
-                  disabled={isSending}
-                  className="w-full h-16 bg-[#f45c5c] hover:bg-[#e04848] text-white font-black rounded-2xl shadow-xl shadow-[#f45c5c]/20 transition-all active:scale-[0.98] flex items-center justify-center gap-3 disabled:opacity-50 disabled:grayscale"
-                >
-                   {isSending ? <Loader2 className="animate-spin" size={20} /> : <Send size={20} />}
-                   {isSending ? 'PROCESSING...' : 'SUBMIT TICKET'}
-                </button>
+                <div className="flex gap-3 pt-2">
+                   <button 
+                     onClick={() => setView('home')}
+                     className="w-1/3 h-14 bg-white/5 hover:bg-white/10 text-white font-bold rounded-xl text-xs uppercase tracking-wider transition-all"
+                   >
+                     Cancel
+                   </button>
+                   <button 
+                     onClick={handleCreateTicket}
+                     disabled={isSending}
+                     className="w-2/3 h-14 bg-[#f0b90b] hover:bg-[#d9a508] text-black font-black rounded-xl text-xs uppercase tracking-wider shadow-lg shadow-[#f0b90b]/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                   >
+                      {isSending ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
+                      {isSending ? 'Submitting...' : 'Submit Ticket'}
+                   </button>
+                </div>
              </div>
           </motion.div>
         )}
 
         {view === 'chat' && activeTicket && (
-          <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="h-[calc(100vh-180px)] flex flex-col bg-[#161a1e] border border-white/5 rounded-[32px] overflow-hidden shadow-2xl">
-             {/* Chat Header */}
-             <div className="px-8 py-5 border-b border-white/5 bg-white/5 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                   <div className="w-12 h-12 rounded-2xl bg-[#f45c5c] text-white flex items-center justify-center shadow-lg">
-                      <Headphones size={24} />
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-[calc(100vh-140px)] sm:h-[calc(100vh-160px)] flex flex-col bg-[#12161c] border border-white/10 rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl">
+             
+             {/* Chat Top Bar */}
+             <div className="px-4 sm:px-6 py-4 border-b border-white/10 bg-[#0b0e14]/50 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                   <div className="w-10 h-10 rounded-xl bg-[#f0b90b] text-black flex items-center justify-center font-black shadow-md">
+                      <Headphones size={20} />
                    </div>
                    <div>
-                      <h4 className="font-black text-white uppercase tracking-wider">{activeTicket.subject}</h4>
+                      <h4 className="font-black text-white text-xs sm:text-sm uppercase tracking-wide truncate max-w-[200px] sm:max-w-md">{activeTicket.subject}</h4>
                       <div className="flex items-center gap-2">
-                         <span className={`w-1.5 h-1.5 rounded-full ${activeTicket.status === 'open' ? 'bg-emerald-500 animate-pulse' : 'bg-gray-500'}`}></span>
-                         <span className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Status: {activeTicket.status}</span>
+                         <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                         <span className="text-[10px] text-gray-400 uppercase tracking-widest">VIP Desk Assigned</span>
                       </div>
                    </div>
                 </div>
                 <button 
                   onClick={() => setView('tickets')}
-                  className="p-3 bg-white/5 hover:bg-white/10 rounded-xl text-gray-400 transition-all active:scale-95"
+                  className="p-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-gray-300 transition-all"
                 >
-                   <X size={20} />
+                   <X size={18} />
                 </button>
              </div>
 
-             {/* Messages Area */}
-             <div className="flex-1 overflow-y-auto p-8 space-y-6 custom-scrollbar bg-gradient-to-b from-[#161a1e] to-[#0b0e11]">
+             {/* Message History */}
+             <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 custom-scrollbar bg-[#0b0e14]/30">
                 {messages.map((m, i) => {
                   const isUser = m.senderType === 'user';
                   return (
                     <div key={i} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-                       <div className={`max-w-[80%] space-y-2`}>
-                          <div className={`p-5 rounded-[24px] text-sm leading-relaxed shadow-xl ${
+                       <div className={`max-w-[85%] sm:max-w-[70%] space-y-1`}>
+                          <div className={`p-4 sm:p-5 rounded-2xl text-xs sm:text-sm leading-relaxed shadow-lg ${
                             isUser 
-                              ? 'bg-[#f45c5c] text-white rounded-br-none' 
-                              : 'bg-[#1e2329] text-gray-200 border border-white/10 rounded-bl-none'
+                              ? 'bg-[#f0b90b] text-black rounded-br-none font-medium' 
+                              : 'bg-[#1b222c] text-gray-100 border border-white/10 rounded-bl-none'
                           }`}>
                              {m.text}
                              
                              {m.attachments && m.attachments.length > 0 && (
-                               <div className="mt-4 flex flex-wrap gap-2">
+                               <div className="mt-3 flex flex-wrap gap-2">
                                   {m.attachments.map((img, idx) => (
-                                    <a key={idx} href={img} target="_blank" rel="noreferrer" className="block w-32 h-32 rounded-xl overflow-hidden border border-black/10 hover:opacity-80 transition-all">
+                                    <a key={idx} href={img} target="_blank" rel="noreferrer" className="block w-28 h-28 rounded-xl overflow-hidden border border-black/20 hover:opacity-90">
                                        <img src={img} alt="attachment" className="w-full h-full object-cover" />
                                     </a>
                                   ))}
                                </div>
                              )}
                           </div>
-                          <div className={`flex items-center gap-2 px-2 ${isUser ? 'justify-end' : 'justify-start'}`}>
-                             {!isUser && <span className="text-[10px] font-black text-amber-500 uppercase tracking-widest">Agent</span>}
-                             <span className="text-[9px] text-gray-600 font-bold uppercase tracking-widest">
-                               {new Date(m.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                             </span>
-                             {isUser && <CheckCheck size={12} className="text-[#f45c5c]" />}
+                          <div className={`flex items-center gap-2 px-1 text-[9px] text-gray-400 font-bold uppercase tracking-wider ${isUser ? 'justify-end' : 'justify-start'}`}>
+                             <span>{!isUser ? 'Support Agent' : 'You'}</span>
+                             <span>•</span>
+                             <span>{new Date(m.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                           </div>
                        </div>
                     </div>
@@ -689,50 +702,49 @@ export default function ClientSupportCenter() {
                 <div ref={chatEndRef} />
              </div>
 
-             {/* Footer Input Area */}
-             <div className="p-6 bg-white/5 border-t border-white/5 space-y-4">
+             {/* Input Area */}
+             <div className="p-4 sm:p-5 bg-[#0b0e14] border-t border-white/10 space-y-3">
                 {attachedFiles.length > 0 && (
-                   <div className="flex flex-wrap gap-2 pb-2">
+                   <div className="flex flex-wrap gap-2">
                       {attachedFiles.map((f, i) => (
-                        <div key={i} className="relative group w-16 h-16 rounded-xl overflow-hidden border border-white/10">
+                        <div key={i} className="relative group w-14 h-14 rounded-lg overflow-hidden border border-white/10">
                            <img src={f} alt="preview" className="w-full h-full object-cover" />
                            <button onClick={() => setAttachedFiles(prev => prev.filter((_, idx) => idx !== i))} className="absolute inset-0 bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100">
-                              <Trash2 size={14} />
+                              <Trash2 size={12} />
                            </button>
                         </div>
                       ))}
                    </div>
                 )}
-                <div className="flex items-center gap-4">
+                
+                <div className="flex items-center gap-2 sm:gap-3">
                    <button 
                      onClick={() => fileInputRef.current?.click()}
-                     className="p-4 bg-white/5 hover:bg-white/10 rounded-2xl text-gray-400 transition-all"
+                     className="p-3.5 bg-white/5 hover:bg-white/10 rounded-xl text-gray-300 transition-all shrink-0"
                    >
-                      <Paperclip size={24} />
+                      <Paperclip size={20} />
                    </button>
-                   <div className="relative flex-1">
-                      <input 
-                        type="text" 
-                        placeholder="Reply to agent..."
-                        value={chatMessage}
-                        onChange={(e) => setChatMessage(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                        className="w-full h-14 bg-[#0b0e11] border border-white/10 rounded-2xl px-6 text-sm text-white focus:outline-none focus:border-[#f45c5c] transition-all pr-12"
-                      />
-                      <button className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white transition-colors">
-                        <Mic size={20} />
-                      </button>
-                   </div>
+                   
+                   <input 
+                     type="text" 
+                     placeholder="Type your reply..."
+                     value={chatMessage}
+                     onChange={(e) => setChatMessage(e.target.value)}
+                     onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+                     className="flex-1 h-12 sm:h-14 bg-[#12161c] border border-white/10 rounded-xl px-4 text-xs sm:text-sm text-white focus:outline-none focus:border-[#f0b90b] transition-all"
+                   />
+                   
                    <button 
                      onClick={handleSendMessage}
                      disabled={isSending || (!chatMessage.trim() && attachedFiles.length === 0)}
-                     className="w-14 h-14 bg-[#f45c5c] hover:bg-[#e04848] text-white rounded-2xl flex items-center justify-center shadow-lg transition-all active:scale-90 disabled:opacity-50 disabled:grayscale"
+                     className="w-12 h-12 sm:w-14 sm:h-14 bg-[#f0b90b] hover:bg-[#d9a508] text-black rounded-xl flex items-center justify-center shadow-lg transition-all active:scale-95 shrink-0 disabled:opacity-50"
                    >
-                      <Send size={24} />
+                      <Send size={20} />
                    </button>
                 </div>
                 <input type="file" ref={fileInputRef} className="hidden" accept="image/*" multiple onChange={handleFileSelect} />
              </div>
+
           </motion.div>
         )}
 
@@ -740,20 +752,19 @@ export default function ClientSupportCenter() {
 
       <style>{`
         .custom-scrollbar::-webkit-scrollbar {
-          width: 5px;
+          width: 4px;
         }
         .custom-scrollbar::-webkit-scrollbar-track {
           background: transparent;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: rgba(255, 255, 255, 0.05);
+          background: rgba(255, 255, 255, 0.1);
           border-radius: 10px;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: rgba(244, 92, 92, 0.3);
+          background: rgba(240, 185, 11, 0.4);
         }
       `}</style>
     </div>
   );
 }
-

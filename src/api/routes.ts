@@ -553,6 +553,61 @@ router.post('/auth/login', async (req, res) => {
 
 // Partner Login OTP Map & Endpoints
 const partnerLoginOtps = new Map<string, { otp: string, expiresAt: number, userId: string }>();
+const partnerRegisterOtps = new Map<string, { otp: string, expiresAt: number, data: any }>();
+
+router.post('/auth/partner/send-register-otp', async (req, res) => {
+  const { email, fullName } = req.body;
+  if (!email) return res.status(400).json({ error: 'Email is required' });
+
+  try {
+    const existing = await get('SELECT * FROM users WHERE email = ?', [email]);
+    if (existing) return res.status(400).json({ error: 'Email already registered' });
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+    partnerRegisterOtps.set(email.toLowerCase().trim(), { otp, expiresAt, data: req.body });
+
+    const subject = 'Bivaax Partners Registration Verification Code';
+    const html = `
+      <div style="font-family: sans-serif; max-w: 600px; margin: 0 auto; background-color: #f9f9f9; padding: 30px; border-radius: 12px; border: 1px solid #edf2f7;">
+        <h2 style="color: #111217; font-size: 20px; font-weight: 800; text-align: center; margin-bottom: 24px;">PARTNER REGISTRATION VERIFICATION</h2>
+        <p style="color: #4a5568; font-size: 14px; line-height: 1.6;">Hello ${fullName || 'Partner'},<br><br>Thank you for your interest in joining Bivaax Partners. Use the following 6-digit security code to verify your email and complete your application:</p>
+        <div style="background-color: #111217; color: #FFE24C; padding: 20px; text-align: center; font-size: 36px; font-weight: 800; letter-spacing: 5px; border-radius: 8px; margin: 30px 0; font-family: monospace;">
+          ${otp}
+        </div>
+        <p style="color: #718096; font-size: 12px; line-height: 1.5; text-align: center;">This code is valid for 10 minutes. If you did not request this, please ignore this email.</p>
+      </div>
+    `;
+    await sendEmail(email, subject, html);
+
+    res.json({ success: true, message: 'Verification OTP sent to your email' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/auth/partner/verify-register-otp', async (req, res) => {
+  const { email, otp } = req.body;
+  if (!email || !otp) return res.status(400).json({ error: 'Email and OTP are required' });
+
+  try {
+    const record = partnerRegisterOtps.get(email.toLowerCase().trim());
+    if (!record) return res.status(400).json({ error: 'No active registration request found' });
+
+    if (Date.now() > record.expiresAt) {
+      partnerRegisterOtps.delete(email.toLowerCase().trim());
+      return res.status(400).json({ error: 'Verification code expired' });
+    }
+
+    if (record.otp !== otp) return res.status(401).json({ error: 'Invalid verification code' });
+
+    // Success! Data is verified. We can proceed with registration.
+    res.json({ success: true, message: 'Email verified successfully' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.post('/auth/partner/send-otp', async (req, res) => {
   const { email, password } = req.body;
@@ -2575,10 +2630,10 @@ router.get('/leaderboard', async (req, res) => {
   console.log('[DEBUG] GET /api/leaderboard called');
   try {
     const data = await fetchLeaderboards();
-    res.json(data);
+    res.json(data || { allTime: [], winRate: [], streaks: [], daily: [], weekly: [], monthly: [] });
   } catch (err: any) {
     console.error('API Error: Failed to fetch leaderboard data', err);
-    res.status(500).json({ error: 'Failed to fetch leaderboard data' });
+    res.json({ allTime: [], winRate: [], streaks: [], daily: [], weekly: [], monthly: [] });
   }
 });
 
@@ -4702,17 +4757,17 @@ router.get('/admin/kyc/requests', requireAuth, async (req: AuthRequest, res) => 
     const mergedMap = new Map<string, any>();
 
     for (const item of firestoreRequests) {
-      const key = String(item.id || item.userId || Math.random());
+      const key = String(item.id || item.userId || item.uid || Math.random());
       mergedMap.set(key, {
         id: String(item.id),
-        userId: item.userId || '',
+        userId: item.userId || item.uid || item.user_id || '',
         userEmail: item.userEmail || item.email || '',
-        fullName: item.fullName || item.userName || '---',
-        idType: item.idType || item.documentType || 'NID',
-        idNumber: item.idNumber || item.documentNumber || '---',
-        idFrontUrl: item.idFrontUrl || item.frontImage || '',
-        idBackUrl: item.idBackUrl || item.backImage || '',
-        selfieUrl: item.selfieUrl || item.selfieImage || '',
+        fullName: item.fullName || item.userName || item.name || item.full_name || '---',
+        idType: item.idType || item.documentType || item.document_type || 'NID',
+        idNumber: item.idNumber || item.documentNumber || item.document_number || '---',
+        idFrontUrl: item.idFrontUrl || item.frontImage || item.front_image || item.photoURL || '',
+        idBackUrl: item.idBackUrl || item.backImage || item.back_image || '',
+        selfieUrl: item.selfieUrl || item.selfieImage || item.selfie_image || '',
         status: item.status || 'pending',
         submittedAt: item.submittedAt || (item.createdAt?.toMillis ? item.createdAt.toMillis() : Date.now()),
         rejectionReason: item.rejectionReason || ''
@@ -4724,7 +4779,7 @@ router.get('/admin/kyc/requests', requireAuth, async (req: AuthRequest, res) => 
       if (!mergedMap.has(key)) {
         mergedMap.set(key, {
           id: String(item.id),
-          userId: item.userId || '',
+          userId: item.userId || item.uid || item.user_id || '',
           userEmail: item.userEmail || '',
           fullName: item.fullName || '---',
           idType: item.idType || 'NID',
@@ -4757,7 +4812,7 @@ router.post('/admin/kyc/update', requireAuth, async (req: AuthRequest, res) => {
 
   const { id, userId, status, rejectionReason } = req.body;
   if (!userId || !status) {
-    return res.status(400).json({ error: 'Missing required parameters' });
+    return res.status(400).json({ error: 'Missing user ID or status parameters. This happens if the KYC data is corrupted. Please reject and ask user to resubmit.' });
   }
 
   try {
@@ -4784,9 +4839,10 @@ router.post('/admin/kyc/update', requireAuth, async (req: AuthRequest, res) => {
     } catch (e: any) {}
 
     // 3. Update SQL kyc_requests table
+    const sqlId = !isNaN(Number(id)) ? Number(id) : 0;
     await run(
       'UPDATE kyc_requests SET status = ?, rejection_reason = ?, updated_at = ? WHERE user_id = ? AND (status = \'pending\' OR id = ?)',
-      [status, rejectionReason || '', Date.now(), userId, id || 0]
+      [status, rejectionReason || '', Date.now(), userId, sqlId]
     );
 
     // 4. Emit live socket event and sync to Firestore

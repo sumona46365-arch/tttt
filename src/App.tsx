@@ -901,7 +901,7 @@ export default function App() {
               <Route path="/profile/info" element={<RequireAuth user={user} loading={loading}><ProfilePage /></RequireAuth>} />
               <Route path="/profile/invite" element={<RequireAuth user={user} loading={loading}><ProfilePage /></RequireAuth>} />
               <Route path="/profile/transactions" element={<RequireAuth user={user} loading={loading}><ProfilePage /></RequireAuth>} />
-              <Route path="/affiliate" element={<RequireAuth user={user} loading={loading}><AffiliatePage /></RequireAuth>} />
+              <Route path="/affiliate" element={loading ? <PageLoader /> : (user ? <AffiliatePage /> : <AffiliateLandingPage />)} />
               <Route path="/signals" element={<RequireAuth user={user} loading={loading}><SignalsPage /></RequireAuth>} />
               <Route path="/copytrading" element={<RequireAuth user={user} loading={loading}><CopyTradingPage /></RequireAuth>} />
               <Route path="/admin" element={<AdminDashboard />} />

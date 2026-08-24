@@ -95,13 +95,15 @@ export const TradingChart: React.FC = () => {
     const candleSeries = (chart as any).addCandlestickSeries({
       upColor: colors.up,
       downColor: colors.down,
-      borderVisible: false,
+      borderVisible: true,
+      borderUpColor: colors.up,
+      borderDownColor: colors.down,
       wickUpColor: colors.up,
       wickDownColor: colors.down,
       priceFormat: {
         type: 'price',
-        precision: 5,
-        minMove: 0.00001,
+        precision: 2,
+        minMove: 0.01,
       },
     });
 
@@ -113,21 +115,60 @@ export const TradingChart: React.FC = () => {
     const historicalData: CandlestickData<Time>[] = [];
     const nowInit = Date.now();
     let historyTime = (Math.floor(nowInit / (timeframeSeconds * 1000)) * timeframeSeconds) - (historyCount * timeframeSeconds);
-    let historyPrice = 1.11250; // Starting price roughly matching screenshot
+    let historyPrice = 1589.60; // Starting price matching screenshot
 
     for (let i = 0; i < historyCount; i++) {
       const open = historyPrice;
-      const isUp = Math.random() > 0.5;
-      const bodySize = (Math.random() * 0.0006) + 0.0002; 
-      const close = isUp ? open + bodySize : open - bodySize;
-      const wickUpper = close > open ? close + Math.random() * 0.0004 : open + Math.random() * 0.0004;
-      const wickLower = close > open ? open - Math.random() * 0.0004 : close - Math.random() * 0.0004;
-      
+      const roll = Math.random();
+      let close = open;
+      let high = open;
+      let low = open;
+
+      if (roll < 0.2) {
+         // Doji
+         close = open + (Math.random() - 0.5) * 0.1;
+         high = open + Math.random() * 0.5;
+         low = open - Math.random() * 0.5;
+      } else if (roll < 0.4) {
+         // Strong Trend (Marubozu)
+         const dir = Math.random() > 0.5 ? 1 : -1;
+         const bodySize = (Math.random() * 0.8) + 0.4;
+         close = open + (dir * bodySize);
+         high = Math.max(open, close) + (Math.random() * 0.05);
+         low = Math.min(open, close) - (Math.random() * 0.05);
+      } else if (roll < 0.6) {
+         // Rejection (Hammer / Shooting Star)
+         const isHammer = Math.random() > 0.5;
+         const bodySize = (Math.random() * 0.2) + 0.05;
+         close = open + (Math.random() > 0.5 ? bodySize : -bodySize);
+         if (isHammer) {
+             high = Math.max(open, close) + Math.random() * 0.1;
+             low = Math.min(open, close) - ((Math.random() * 0.8) + 0.4);
+         } else {
+             high = Math.max(open, close) + ((Math.random() * 0.8) + 0.4);
+             low = Math.min(open, close) - Math.random() * 0.1;
+         }
+      } else if (roll < 0.8) {
+         // Small body
+         const dir = Math.random() > 0.5 ? 1 : -1;
+         const bodySize = Math.random() * 0.2 + 0.1;
+         close = open + (dir * bodySize);
+         high = Math.max(open, close) + Math.random() * 0.2;
+         low = Math.min(open, close) - Math.random() * 0.2;
+      } else {
+         // Normal
+         const dir = Math.random() > 0.5 ? 1 : -1;
+         const bodySize = Math.random() * 0.5 + 0.2;
+         close = open + (dir * bodySize);
+         high = Math.max(open, close) + Math.random() * 0.4;
+         low = Math.min(open, close) - Math.random() * 0.4;
+      }
+
       historicalData.push({
         time: historyTime as Time,
         open,
-        high: wickUpper,
-        low: wickLower,
+        high,
+        low,
         close,
       });
       historyPrice = close;
@@ -141,16 +182,14 @@ export const TradingChart: React.FC = () => {
     } catch (e) {}
 
     // 3. Perfect Sync: Real-time engine starts EXACTLY where history ended
-    let lastTickTime = 0;
-    let nextTickDelay = 50; // Ultra-fast ticks for fluid movement
-    let targetPrice = historyPrice;
     let visualPrice = historyPrice;
-    
-    // Volatility and Trend parameters for "Natural" movement
-    let currentVolatility = 0.0006;
-    let volatilityBurstTimer = 0;
-    let internalTrend = 0; // Cumulative momentum within a 5s candle
-    let trendTimer = 0;
+    let velocity = 0;
+
+    // Personality variables for dynamic volatility
+    let currentCandleStart = 0;
+    let drift = 0;
+    let volatilityMult = 1;
+    let reversionStrength = 0;
 
     const updateLoop = () => {
       if (!seriesRef.current) return;
@@ -158,57 +197,70 @@ export const TradingChart: React.FC = () => {
       const now = Date.now();
       const candleTime = (Math.floor(now / (timeframeSeconds * 1000)) * timeframeSeconds) as Time;
 
-      // 1. Core Logic Update (Ticks) - Simulating dynamic market behavior
-      if (now - lastTickTime > nextTickDelay) {
-        lastTickTime = now;
-        
-        // Dynamic trend switching for erratic movements (creating wicks/reversals)
-        if (trendTimer <= 0) {
-          internalTrend = (Math.random() - 0.5) * 0.0008;
-          trendTimer = Math.random() * 3000 + 1000; // Change trend every 1-4 seconds
-        } else {
-          trendTimer -= nextTickDelay;
-        }
-
-        // Randomly trigger volatility bursts for "Long Body" or "Fast" spikes
-        if (volatilityBurstTimer <= 0) {
-          if (Math.random() > 0.94) {
-            volatilityBurstTimer = Math.random() * 3000 + 1000;
-            currentVolatility = 0.0018; // High volatility spike
-          } else {
-            currentVolatility = 0.0003 + Math.random() * 0.0005; // Normal noise
-          }
-        } else {
-          volatilityBurstTimer -= nextTickDelay;
-        }
-
-        nextTickDelay = Math.random() * 100 + 50; 
-        
-        // Movement calculation: Trend + Random Noise + Reversion tendency
-        // Reversion tendency pulls price slightly back if it moves too far too fast
-        const randomNoise = (Math.random() - 0.5) * currentVolatility;
-        const drift = internalTrend;
-        
-        targetPrice += randomNoise + drift;
-        
-        // Occasionally "snap back" to create Dojis or Wicks
-        if (Math.random() > 0.85) {
-           const open = lastCandleRef.current ? lastCandleRef.current.open : targetPrice;
-           targetPrice = targetPrice + (open - targetPrice) * 0.4; // Pull back towards open
-        }
+      // 1. High-Frequency Market Physics (Runs every frame at ~60 FPS)
+      
+      if (Number(candleTime) !== currentCandleStart) {
+         currentCandleStart = Number(candleTime);
+         // Roll new personality for the new 5-second candle
+         const roll = Math.random();
+         if (roll < 0.2) {
+             // Doji: high reversion, low volatility
+             drift = 0;
+             volatilityMult = 0.5;
+             reversionStrength = 0.15;
+         } else if (roll < 0.4) {
+             // Strong Trend (Marubozu): strong drift, low reversion
+             drift = (Math.random() - 0.5) * 0.08;
+             volatilityMult = 0.8;
+             reversionStrength = 0.005;
+         } else if (roll < 0.6) {
+             // Rejection (Hammer/Shooting Star): strong initial burst, then we will reverse it.
+             drift = (Math.random() - 0.5) * 0.05;
+             volatilityMult = 1.2;
+             reversionStrength = 0.08;
+         } else if (roll < 0.8) {
+             // Small Body: low volatility
+             drift = (Math.random() - 0.5) * 0.02;
+             volatilityMult = 0.4;
+             reversionStrength = 0.03;
+         } else {
+             // Normal volatile
+             drift = (Math.random() - 0.5) * 0.04;
+             volatilityMult = 0.9;
+             reversionStrength = 0.02;
+         }
       }
 
-      // 2. Natural Micro-Fluctuations (Live Vibration)
-      const microJitter = (Math.random() - 0.5) * 0.00003;
-      const effectiveTarget = targetPrice + microJitter;
+      // Base random noise (Brownian motion) + drift
+      const acceleration = ((Math.random() - 0.5) * 0.15 * volatilityMult) + drift;
+      
+      velocity += acceleration;
+      
+      // Friction/Damping: 0.92 gives it a "sharp" but fluid tick feel (like Quotex)
+      velocity *= 0.92;
 
-      // 3. Fast + Smooth Interpolation (Lerp)
-      const lerpFactor = 0.32; 
-      visualPrice = visualPrice + (effectiveTarget - visualPrice) * lerpFactor;
+      // Rare volatility spikes (1.5% chance per frame)
+      if (Math.random() > 0.985) {
+          velocity += (Math.random() - 0.5) * 0.2 * volatilityMult; // Tamed
+      }
+
+      // Mean Reversion (The secret to DOJI and LONG WICKS)
+      // We pull the price back towards the candle's open if it moves too far
+      const open = lastCandleRef.current ? lastCandleRef.current.open : visualPrice;
+      const dist = Math.abs(visualPrice - open);
+      
+      if (dist > 0.15) {
+          // Spring force pulling it back. The further away, the stronger the pull.
+          const reverseForce = (open - visualPrice) * reversionStrength; 
+          velocity += reverseForce;
+      }
+
+      // Apply velocity directly to visual price
+      visualPrice += velocity;
 
       let updatedCandle: CandlestickData<Time>;
 
-      // 4. Correct High/Low Formation Tracking
+      // 2. Correct OHLC Tracking
       if (!lastCandleRef.current || (Number(candleTime) > Number(lastCandleRef.current.time))) {
         // Start of a new candle
         const openPrice = lastCandleRef.current ? lastCandleRef.current.close : visualPrice;
@@ -225,7 +277,6 @@ export const TradingChart: React.FC = () => {
         updatedCandle = {
           ...lastCandleRef.current,
           close: visualPrice,
-          // HIGH and LOW now track the ACTUAL visual extreme reached
           high: Math.max(lastCandleRef.current.high, visualPrice),
           low: Math.min(lastCandleRef.current.low, visualPrice),
         };

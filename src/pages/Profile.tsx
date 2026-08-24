@@ -18,6 +18,7 @@ import * as OTPAuth from 'otpauth';
 import QRCode from 'qrcode';
 import { currencies, formatWithCurrency, formatCurrencyOnly } from '../lib/currencies';
 import { TimeZoneModal } from '../components/TimeZoneModal';
+import { buildTraderReferralLink } from '../lib/affiliate';
 
 import { profileTranslations } from '../lib/profileTranslations';
 
@@ -1420,7 +1421,7 @@ export default function ProfilePage() {
                 {(() => {
                   const cachedCode = user?.uid ? localStorage.getItem('bivaax_aff_code_' + user.uid) : null;
                   const displayRefCode = activeRefCode || user?.referralCode || user?.affiliateId || user?.referral_code || user?.affiliate_id || cachedCode || '100000';
-                  const fullRefLink = `${window.location.origin}/register?ref=${displayRefCode}`;
+                  const fullRefLink = buildTraderReferralLink(displayRefCode);
 
                   return (
                     <>

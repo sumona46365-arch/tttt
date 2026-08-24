@@ -80,13 +80,15 @@ export const OnyxTradingChart: React.FC = () => {
     const candleSeries = (chart as any).addCandlestickSeries({
       upColor: '#10b981',
       downColor: '#f43f5e',
-      borderVisible: false,
+      borderVisible: true,
+      borderUpColor: '#10b981',
+      borderDownColor: '#f43f5e',
       wickUpColor: '#10b981',
       wickDownColor: '#f43f5e',
       priceFormat: {
         type: 'price',
-        precision: 5,
-        minMove: 0.00001,
+        precision: 2,
+        minMove: 0.01,
       },
     });
 
@@ -95,13 +97,13 @@ export const OnyxTradingChart: React.FC = () => {
     // 3. Pillar 1 & 2: Continuity and Global Sync Logic
     const timeframeSeconds = 5;
     let lastCandle: any = null;
-    let targetPrice = 1.25400;
-    let visualPrice = 1.25400;
-    let lastTickTime = Date.now();
-    let currentVolatility = 0.00035;
-    let volatilityBurstTimer = 0;
-    let internalTrend = 0;
-    let trendTimer = 0;
+    let visualPrice = 1589.60;
+    let velocity = 0;
+    let drift = 0;
+    let volatilityMult = 1;
+    let reversionStrength = 0;
+    let currentCandleStart = 0;
+
     const requestRef = useRef<number>(0);
 
     const updateLoop = () => {
@@ -110,49 +112,70 @@ export const OnyxTradingChart: React.FC = () => {
       const now = Date.now();
       const candleTime = Math.floor(now / (timeframeSeconds * 1000)) * timeframeSeconds;
       
-      // 1. Tick Update (Erratic Market Behavior)
-      if (now - lastTickTime > 80) { 
-        lastTickTime = now;
-
-        if (trendTimer <= 0) {
-          internalTrend = (Math.random() - 0.5) * 0.0006;
-          trendTimer = Math.random() * 4000 + 1000;
-        } else {
-          trendTimer -= 80;
-        }
-
-        if (volatilityBurstTimer <= 0) {
-          if (Math.random() > 0.95) {
-            volatilityBurstTimer = Math.random() * 3000 + 1000;
-            currentVolatility = 0.0012; 
-          } else {
-            currentVolatility = 0.0001 + Math.random() * 0.0003;
-          }
-        } else {
-          volatilityBurstTimer -= 80;
-        }
-
-        const randomJump = (Math.random() - 0.5) * currentVolatility;
-        targetPrice += randomJump + internalTrend;
-
-        // "Wick Logic": Random pullbacks within the same 5s cycle
-        if (Math.random() > 0.9) {
-          const open = lastCandle ? lastCandle.open : targetPrice;
-          targetPrice = targetPrice + (open - targetPrice) * 0.5;
-        }
+      // 1. High-Frequency Market Physics (Runs every frame at ~60 FPS)
+      
+      if (Number(candleTime) !== currentCandleStart) {
+         currentCandleStart = Number(candleTime);
+         // Roll new personality for the new 5-second candle
+         const roll = Math.random();
+         if (roll < 0.2) {
+             // Doji: high reversion, low volatility
+             drift = 0;
+             volatilityMult = 0.5;
+             reversionStrength = 0.15;
+         } else if (roll < 0.4) {
+             // Strong Trend (Marubozu): strong drift, low reversion
+             drift = (Math.random() - 0.5) * 0.08;
+             volatilityMult = 0.8;
+             reversionStrength = 0.005;
+         } else if (roll < 0.6) {
+             // Rejection (Hammer/Shooting Star): strong initial burst, then we will reverse it.
+             drift = (Math.random() - 0.5) * 0.05;
+             volatilityMult = 1.2;
+             reversionStrength = 0.08;
+         } else if (roll < 0.8) {
+             // Small Body: low volatility
+             drift = (Math.random() - 0.5) * 0.02;
+             volatilityMult = 0.4;
+             reversionStrength = 0.03;
+         } else {
+             // Normal volatile
+             drift = (Math.random() - 0.5) * 0.04;
+             volatilityMult = 0.9;
+             reversionStrength = 0.02;
+         }
       }
 
-      // 2. Micro-Jitter
-      const microJitter = (Math.random() - 0.5) * 0.00002;
-      const effectiveTarget = targetPrice + microJitter;
+      // Base random noise (Brownian motion) + drift
+      const acceleration = ((Math.random() - 0.5) * 0.15 * volatilityMult) + drift;
+      
+      velocity += acceleration;
+      
+      // Friction/Damping: 0.92 gives it a "sharp" but fluid tick feel (like Quotex)
+      velocity *= 0.92;
 
-      // 3. Interpolation
-      const lerpFactor = 0.30;
-      visualPrice = visualPrice + (effectiveTarget - visualPrice) * lerpFactor;
+      // Rare volatility spikes (1.5% chance per frame)
+      if (Math.random() > 0.985) {
+          velocity += (Math.random() - 0.5) * 0.2 * volatilityMult;
+      }
+
+      // Mean Reversion (The secret to DOJI and LONG WICKS)
+      // We pull the price back towards the candle's open if it moves too far
+      const open = lastCandle ? lastCandle.open : visualPrice;
+      const dist = Math.abs(visualPrice - open);
+      
+      if (dist > 0.15) {
+          // Spring force pulling it back. The further away, the stronger the pull.
+          const reverseForce = (open - visualPrice) * reversionStrength; 
+          velocity += reverseForce;
+      }
+
+      // Apply velocity directly to visual price
+      visualPrice += velocity;
 
       let updatedCandle;
 
-      // 4. Natural OHLC Tracking
+      // 2. Natural OHLC Tracking
       if (!lastCandle || Number(candleTime) > Number(lastCandle.time)) {
         const openPrice = lastCandle ? lastCandle.close : visualPrice;
         

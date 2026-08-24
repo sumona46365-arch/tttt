@@ -218,6 +218,49 @@ export async function getUserByAffiliateId(id: string | number) {
 }
 
 /**
+ * Gets the main trading platform base origin for trader referral links.
+ * If accessed from partner.bivaax.com or affiliate.bivaax.com, it strips the subdomain prefix
+ * so links lead traders directly to the main trading platform (e.g. bivaax.com).
+ */
+export function getTraderPlatformOrigin(customDomain?: string): string {
+  if (customDomain) {
+    return customDomain.startsWith('http') ? customDomain : `https://${customDomain}`;
+  }
+  if (typeof window === 'undefined') return '';
+  const { protocol, host, hostname } = window.location;
+  if (hostname.startsWith('partner.') || hostname.startsWith('affiliate.')) {
+    const mainHost = host.replace(/^partner\./, '').replace(/^affiliate\./, '');
+    return `${protocol}//${mainHost}`;
+  }
+  return window.location.origin;
+}
+
+/**
+ * Builds a full trader registration link with referral code and optional campaign parameters.
+ */
+export function buildTraderReferralLink(
+  referralCode?: string | number | null,
+  options?: { subId?: string; landingPage?: string; linkType?: string; customDomain?: string }
+): string {
+  if (!referralCode) return '';
+  const refStr = String(referralCode).trim();
+  if (!refStr) return '';
+  const origin = getTraderPlatformOrigin(options?.customDomain);
+  const landing = (!options?.landingPage || options.landingPage === '/') ? '/register' : options.landingPage;
+  const path = landing.startsWith('/') ? landing : `/${landing}`;
+  const base = `${origin}${path}`;
+  const connector = base.includes('?') ? '&' : '?';
+  let url = `${base}${connector}ref=${encodeURIComponent(refStr)}`;
+  if (options?.subId && options.subId !== 'default' && options.subId !== 'MAIN') {
+    url += `&sub=${encodeURIComponent(options.subId)}`;
+  }
+  if (options?.linkType && options.linkType !== 'revshare') {
+    url += `&type=${encodeURIComponent(options.linkType)}`;
+  }
+  return url;
+}
+
+/**
  * Processes revenue share when a referred user loses a trade.
  * Bivaax model: Referrer gets a share of the lost amount.
  */

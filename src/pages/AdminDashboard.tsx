@@ -481,7 +481,34 @@ export default function AdminDashboard() {
         if (kycRef.ok) {
             const apiKyc = await kycRef.json();
             if (Array.isArray(apiKyc)) {
-                setKycRequests(apiKyc);
+                setKycRequests(prev => {
+                     const map = new Map();
+                     [...prev, ...apiKyc].forEach(r => {
+                         if (!r) return;
+                         map.set(String(r.id), Object.assign({}, map.get(String(r.id)) || {}, r));
+                     });
+                     const arr = Array.from(map.values());
+                     arr.sort((a: any, b: any) => {
+                         const getMillis = (item: any) => {
+                            if (!item) return 0;
+                            const candidates = [item.submittedAt, item.timestamp, item.createdAt, item.date];
+                            for (const val of candidates) {
+                                if (!val) continue;
+                                if (typeof val.toMillis === 'function') return val.toMillis();
+                                if (typeof val.toDate === 'function') return val.toDate().getTime();
+                                if (val instanceof Date) return val.getTime();
+                                if (typeof val === 'number') return val;
+                                if (typeof val === 'string') {
+                                    const parsed = Date.parse(val);
+                                    if (!isNaN(parsed)) return parsed;
+                                }
+                            }
+                            return 0;
+                        };
+                        return getMillis(b) - getMillis(a);
+                     });
+                     return arr;
+                });
             }
         }
 
@@ -709,27 +736,53 @@ export default function AdminDashboard() {
             }));
 
             unsubs.push(onSnapshot(collection(db, 'kycRequests'), (snap) => {
-                const reqs = snap.docs.map(d => ({id: d.id, ...d.data()}));
-                reqs.sort((a: any, b: any) => {
-                    const getMillis = (item: any) => {
-                        if (!item) return 0;
-                        const candidates = [item.timestamp, item.submittedAt, item.createdAt, item.date];
-                        for (const val of candidates) {
-                            if (!val) continue;
-                            if (typeof val.toMillis === 'function') return val.toMillis();
-                            if (typeof val.toDate === 'function') return val.toDate().getTime();
-                            if (val instanceof Date) return val.getTime();
-                            if (typeof val === 'number') return val;
-                            if (typeof val === 'string') {
-                                const parsed = Date.parse(val);
-                                if (!isNaN(parsed)) return parsed;
-                            }
-                        }
-                        return 0;
-                    };
-                    return getMillis(b) - getMillis(a);
+                const reqs = snap.docs.map(d => {
+                   const item = d.data();
+                   return {
+                       id: d.id,
+                       userId: item.userId || item.uid || item.user_id || '',
+                       userEmail: item.userEmail || item.email || '',
+                       fullName: item.fullName || item.userName || item.name || item.full_name || '---',
+                       idType: item.idType || item.documentType || item.document_type || 'NID',
+                       idNumber: item.idNumber || item.documentNumber || item.document_number || '---',
+                       idFrontUrl: item.idFrontUrl || item.frontImage || item.front_image || item.photoURL || '',
+                       idBackUrl: item.idBackUrl || item.backImage || item.back_image || '',
+                       selfieUrl: item.selfieUrl || item.selfieImage || item.selfie_image || '',
+                       status: item.status || 'pending',
+                       rejectionReason: item.rejectionReason || '',
+                       submittedAt: item.submittedAt || item.timestamp || item.createdAt || 0,
+                       ...item
+                   };
                 });
-                setKycRequests(reqs);
+                setKycRequests(prev => {
+                     const map = new Map();
+                     // Give priority to newer/updated objects.
+                     [...prev, ...reqs].forEach(r => {
+                         if (!r) return;
+                         map.set(String(r.id), Object.assign({}, map.get(String(r.id)) || {}, r));
+                     });
+                     const arr = Array.from(map.values());
+                     arr.sort((a: any, b: any) => {
+                         const getMillis = (item: any) => {
+                            if (!item) return 0;
+                            const candidates = [item.submittedAt, item.timestamp, item.createdAt, item.date];
+                            for (const val of candidates) {
+                                if (!val) continue;
+                                if (typeof val.toMillis === 'function') return val.toMillis();
+                                if (typeof val.toDate === 'function') return val.toDate().getTime();
+                                if (val instanceof Date) return val.getTime();
+                                if (typeof val === 'number') return val;
+                                if (typeof val === 'string') {
+                                    const parsed = Date.parse(val);
+                                    if (!isNaN(parsed)) return parsed;
+                                }
+                            }
+                            return 0;
+                        };
+                        return getMillis(b) - getMillis(a);
+                     });
+                     return arr;
+                });
             }));
 
             unsubs.push(onSnapshot(collection(db, 'tickets'), (snap) => {
@@ -3292,9 +3345,13 @@ export default function AdminDashboard() {
                                    </div>
 
                                    <div className="grid grid-cols-2 gap-4 p-4 bg-[#15161d] rounded-2xl border border-white/5">
+                                       <div className="col-span-2">
+                                           <label className="text-[10px] font-black uppercase text-gray-500 block">Email</label>
+                                           <p className="font-mono text-sm">{selectedKYCRequest.userEmail || selectedKYCRequest.email || 'N/A'}</p>
+                                       </div>
                                        <div>
                                            <label className="text-[10px] font-black uppercase text-gray-500 block">Full Name</label>
-                                           <p className="font-bold">{selectedKYCRequest.fullName || selectedKYCRequest.userName}</p>
+                                           <p className="font-bold">{selectedKYCRequest.fullName || selectedKYCRequest.userName || 'N/A'}</p>
                                        </div>
                                        <div>
                                            <label className="text-[10px] font-black uppercase text-gray-500 block">ID Type</label>
@@ -3307,18 +3364,29 @@ export default function AdminDashboard() {
                                    </div>
 
                                    <div className="grid grid-cols-1 gap-4">
-                                       <div className="space-y-2">
-                                           <label className="text-[10px] font-black uppercase text-gray-500">Front</label>
-                                           <img src={selectedKYCRequest.idFrontUrl || selectedKYCRequest.frontImage} className="w-full rounded-xl border border-white/5" alt="Front" onError={(e) => (e.target as HTMLImageElement).src = 'https://via.placeholder.com/600x400?text=Image+Not+Found'}/>
-                                       </div>
-                                       <div className="space-y-2">
-                                           <label className="text-[10px] font-black uppercase text-gray-500">Back</label>
-                                           <img src={selectedKYCRequest.idBackUrl || selectedKYCRequest.backImage} className="w-full rounded-xl border border-white/5" alt="Back" onError={(e) => (e.target as HTMLImageElement).src = 'https://via.placeholder.com/600x400?text=Image+Not+Found'}/>
-                                       </div>
-                                       <div className="space-y-2">
-                                           <label className="text-[10px] font-black uppercase text-gray-500">Selfie</label>
-                                           <img src={selectedKYCRequest.selfieUrl || selectedKYCRequest.selfieImage} className="w-full rounded-xl border border-white/5" alt="Selfie" onError={(e) => (e.target as HTMLImageElement).src = 'https://via.placeholder.com/600x400?text=Image+Not+Found'}/>
-                                       </div>
+                                       {(selectedKYCRequest.idFrontUrl || selectedKYCRequest.frontImage) && (
+                                           <div className="space-y-2">
+                                               <label className="text-[10px] font-black uppercase text-gray-500">Front</label>
+                                               <img src={selectedKYCRequest.idFrontUrl || selectedKYCRequest.frontImage} className="w-full rounded-xl border border-white/5" alt="Front" onError={(e) => (e.target as HTMLImageElement).src = 'https://via.placeholder.com/600x400?text=Image+Not+Found'}/>
+                                           </div>
+                                       )}
+                                       {(selectedKYCRequest.idBackUrl || selectedKYCRequest.backImage) && (
+                                           <div className="space-y-2">
+                                               <label className="text-[10px] font-black uppercase text-gray-500">Back</label>
+                                               <img src={selectedKYCRequest.idBackUrl || selectedKYCRequest.backImage} className="w-full rounded-xl border border-white/5" alt="Back" onError={(e) => (e.target as HTMLImageElement).src = 'https://via.placeholder.com/600x400?text=Image+Not+Found'}/>
+                                           </div>
+                                       )}
+                                       {(selectedKYCRequest.selfieUrl || selectedKYCRequest.selfieImage) && (
+                                           <div className="space-y-2">
+                                               <label className="text-[10px] font-black uppercase text-gray-500">Selfie</label>
+                                               <img src={selectedKYCRequest.selfieUrl || selectedKYCRequest.selfieImage} className="w-full rounded-xl border border-white/5" alt="Selfie" onError={(e) => (e.target as HTMLImageElement).src = 'https://via.placeholder.com/600x400?text=Image+Not+Found'}/>
+                                           </div>
+                                       )}
+                                       {!selectedKYCRequest.idFrontUrl && !selectedKYCRequest.frontImage && !selectedKYCRequest.idBackUrl && !selectedKYCRequest.backImage && !selectedKYCRequest.selfieUrl && !selectedKYCRequest.selfieImage && (
+                                           <div className="p-4 bg-white/5 rounded-2xl border border-white/5 text-center text-sm text-gray-400">
+                                               No documents uploaded.
+                                           </div>
+                                       )}
                                    </div>
 
                                    {selectedKYCRequest.status === 'pending' && (
@@ -3340,7 +3408,10 @@ export default function AdminDashboard() {
                                                                userId: selectedKYCRequest.userId
                                                            })
                                                        });
-                                                       if (!res.ok) throw new Error("Update failed");
+                                                       if (!res.ok) {
+     const errData = await res.json().catch(() => ({}));
+     throw new Error(errData.error || "Update failed");
+   }
                                                        await fetchLists();
                                                        setSelectedKYCRequest(null);
                                                        alert("Approved!");
@@ -3369,7 +3440,10 @@ export default function AdminDashboard() {
                                                                userId: selectedKYCRequest.userId
                                                            })
                                                        });
-                                                       if (!res.ok) throw new Error("Update failed");
+                                                       if (!res.ok) {
+     const errData = await res.json().catch(() => ({}));
+     throw new Error(errData.error || "Update failed");
+   }
                                                        await fetchLists();
                                                        setSelectedKYCRequest(null);
                                                        alert("Rejected.");

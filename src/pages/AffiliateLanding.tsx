@@ -35,7 +35,7 @@ export default function AffiliateLandingPage() {
   const [faqSearch, setFaqSearch] = useState('');
 
   // Auth widget states
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot_password' | 'verify_reset_otp' | 'reset_password'>('login');
   const [showPassword, setShowPassword] = useState(false);
   
   // Login flow
@@ -46,11 +46,19 @@ export default function AffiliateLandingPage() {
   const [loading, setLoading] = useState(false);
   const [countdown, setCountdown] = useState(0);
 
+  // Forgot Password / Reset flow
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetOtp, setResetOtp] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [resetStep, setResetStep] = useState(1);
+
   // Register flow
   const [fullName, setFullName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [agreed, setAgreed] = useState(false);
+  const [regOtpCode, setRegOtpCode] = useState('');
+  const [regOtpSent, setRegOtpSent] = useState(false);
 
   // Interactive Calculator State
   const [tradersCount, setTradersCount] = useState(50);
@@ -115,7 +123,7 @@ export default function AffiliateLandingPage() {
 
     setLoading(true);
     try {
-      const response = await fetch('/auth/partner/send-otp', {
+      const response = await fetch('/api/auth/partner/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })
@@ -144,7 +152,7 @@ export default function AffiliateLandingPage() {
 
     setLoading(true);
     try {
-      const response = await fetch('/auth/partner/verify-otp', {
+      const response = await fetch('/api/auth/partner/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, otp: otpCode })
@@ -165,8 +173,8 @@ export default function AffiliateLandingPage() {
     }
   };
 
-  // Handle Partner Registration
-  const handlePartnerRegister = async (e: React.FormEvent) => {
+  // Handle Partner Registration OTP request
+  const handleRequestRegisterOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!fullName || !regEmail || !regPassword) {
       toast.error("Please fill in all required fields.");
@@ -176,9 +184,50 @@ export default function AffiliateLandingPage() {
       toast.error("You must agree to the Partnership Agreement.");
       return;
     }
+    if (regPassword.length < 6) {
+      toast.error("Password must be at least 6 characters.");
+      return;
+    }
 
     setLoading(true);
     try {
+      const response = await fetch('/api/auth/partner/send-register-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: regEmail, fullName })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to send verification code.");
+      
+      setRegOtpSent(true);
+      setCountdown(300);
+      toast.success("Registration OTP sent to your email!");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to process request.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle Partner Registration completion
+  const handlePartnerRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!regOtpCode) {
+      toast.error("Please enter the verification code.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // 1. Verify Registration OTP
+      const verifyResponse = await fetch('/api/auth/partner/verify-register-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: regEmail, otp: regOtpCode })
+      });
+      const verifyData = await verifyResponse.json();
+      if (!verifyResponse.ok) throw new Error(verifyData.error || "Invalid registration code.");
+
       const ref = localStorage.getItem('referralCode') || localStorage.getItem('referral_code');
       let finalReferrerUid = null;
       if (ref) {
@@ -248,6 +297,94 @@ export default function AffiliateLandingPage() {
       navigate('/affiliate');
     } catch (err: any) {
       toast.error(err.message || "Failed to apply for partnership.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle Forgot Password - Request OTP
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetEmail) {
+      toast.error("Please enter your email address.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: resetEmail })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to send reset code.");
+      
+      setAuthMode('verify_reset_otp');
+      toast.success("Security OTP sent to your email!");
+    } catch (err: any) {
+      toast.error(err.message || "An error occurred.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle Verify Reset OTP
+  const handleVerifyResetOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetOtp) {
+      toast.error("Please enter the verification code.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch('/api/auth/verify-reset-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: resetEmail, otp: resetOtp })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Invalid reset code.");
+      
+      setAuthMode('reset_password');
+      toast.success("Verification successful!");
+    } catch (err: any) {
+      toast.error(err.message || "Invalid or expired code.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle Reset Password
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPassword.length < 6) {
+      toast.error("Password must be at least 6 characters.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          email: resetEmail, 
+          token: resetOtp, 
+          password: newPassword 
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to reset password.");
+      
+      toast.success("Password reset successful! You can now sign in.");
+      setAuthMode('login');
+      setEmail(resetEmail);
+      setPassword('');
+      setOtpSent(false);
+    } catch (err: any) {
+      toast.error(err.message || "An error occurred.");
     } finally {
       setLoading(false);
     }
@@ -348,25 +485,27 @@ export default function AffiliateLandingPage() {
             <div className="absolute -top-12 -right-12 w-24 h-24 bg-[#ffcf00]/10 blur-xl rounded-full" />
 
             {/* Form Tabs */}
-            <div className="flex border-b border-white/5 mb-6">
-              <button 
-                onClick={() => {
-                  setAuthMode('login');
-                  setOtpSent(false);
-                }} 
-                className={`flex-1 pb-4 text-center text-sm font-bold uppercase tracking-wider transition-colors relative ${authMode === 'login' ? 'text-[#ffcf00]' : 'text-gray-500 hover:text-gray-300'}`}
-              >
-                Sign In
-                {authMode === 'login' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#ffcf00]" />}
-              </button>
-              <button 
-                onClick={() => setAuthMode('register')} 
-                className={`flex-1 pb-4 text-center text-sm font-bold uppercase tracking-wider transition-colors relative ${authMode === 'register' ? 'text-[#ffcf00]' : 'text-gray-500 hover:text-gray-300'}`}
-              >
-                Apply Now
-                {authMode === 'register' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#ffcf00]" />}
-              </button>
-            </div>
+            {['login', 'register'].includes(authMode) && (
+              <div className="flex border-b border-white/5 mb-6">
+                <button 
+                  onClick={() => {
+                    setAuthMode('login');
+                    setOtpSent(false);
+                  }} 
+                  className={`flex-1 pb-4 text-center text-sm font-bold uppercase tracking-wider transition-colors relative ${authMode === 'login' ? 'text-[#ffcf00]' : 'text-gray-500 hover:text-gray-300'}`}
+                >
+                  Sign In
+                  {authMode === 'login' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#ffcf00]" />}
+                </button>
+                <button 
+                  onClick={() => setAuthMode('register')} 
+                  className={`flex-1 pb-4 text-center text-sm font-bold uppercase tracking-wider transition-colors relative ${authMode === 'register' ? 'text-[#ffcf00]' : 'text-gray-500 hover:text-gray-300'}`}
+                >
+                  Apply Now
+                  {authMode === 'register' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#ffcf00]" />}
+                </button>
+              </div>
+            )}
 
             <AnimatePresence mode="wait">
               {authMode === 'login' ? (
@@ -416,10 +555,23 @@ export default function AffiliateLandingPage() {
                         </div>
                       </div>
 
+                      <div className="flex items-center justify-between mt-2">
+                        <button 
+                          type="button" 
+                          onClick={() => {
+                            setAuthMode('forgot_password');
+                            setResetEmail(email);
+                          }}
+                          className="text-[10px] font-black text-[#ffcf00] hover:underline uppercase tracking-widest"
+                        >
+                          Forgot Password?
+                        </button>
+                      </div>
+
                       <button 
                         type="submit" 
                         disabled={loading}
-                        className="w-full bg-[#ffcf00] hover:bg-[#e6b800] text-black h-13 font-black uppercase text-xs tracking-widest rounded-xl transition-all flex items-center justify-center gap-2 active:scale-[0.99] disabled:opacity-50"
+                        className="w-full bg-[#ffcf00] hover:bg-[#e6b800] text-black h-13 font-black uppercase text-xs tracking-widest rounded-xl transition-all flex items-center justify-center gap-2 active:scale-[0.99] disabled:opacity-50 mt-4"
                       >
                         {loading ? "Checking Credentials..." : "Proceed & Send Code"}
                         <ArrowRight size={14} strokeWidth={2.5} />
@@ -474,7 +626,7 @@ export default function AffiliateLandingPage() {
                     </form>
                   )}
                 </motion.div>
-              ) : (
+              ) : authMode === 'register' ? (
                 <motion.div
                   key="register-form-pane"
                   initial={{ opacity: 0, x: 15 }}
@@ -482,62 +634,231 @@ export default function AffiliateLandingPage() {
                   exit={{ opacity: 0, x: -15 }}
                   transition={{ duration: 0.2 }}
                 >
-                  <form onSubmit={handlePartnerRegister} className="space-y-4">
+                  {!regOtpSent ? (
+                    <form onSubmit={handleRequestRegisterOtp} className="space-y-4">
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Full Name</label>
+                        <input 
+                          type="text" 
+                          required
+                          placeholder="John Doe" 
+                          value={fullName}
+                          onChange={(e) => setFullName(e.target.value)}
+                          className="w-full bg-[#181920] border border-white/5 hover:border-white/10 focus:border-[#ffcf00] rounded-xl px-4 py-3.5 text-sm placeholder-gray-600 focus:outline-none transition-colors"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Partnership Email</label>
+                        <input 
+                          type="email" 
+                          required
+                          placeholder="partner@yourdomain.com" 
+                          value={regEmail}
+                          onChange={(e) => setRegEmail(e.target.value)}
+                          className="w-full bg-[#181920] border border-white/5 hover:border-white/10 focus:border-[#ffcf00] rounded-xl px-4 py-3.5 text-sm placeholder-gray-600 focus:outline-none transition-colors"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Secure Password</label>
+                        <input 
+                          type="password" 
+                          required
+                          placeholder="••••••••••••" 
+                          value={regPassword}
+                          onChange={(e) => setRegPassword(e.target.value)}
+                          className="w-full bg-[#181920] border border-white/5 hover:border-white/10 focus:border-[#ffcf00] rounded-xl px-4 py-3.5 text-sm placeholder-gray-600 focus:outline-none transition-colors"
+                        />
+                      </div>
+
+                      <label className="flex items-start gap-3 cursor-pointer select-none py-1">
+                        <input 
+                          type="checkbox" 
+                          checked={agreed}
+                          onChange={(e) => setAgreed(e.target.checked)}
+                          className="w-4 h-4 rounded border-gray-700 bg-black text-[#ffcf00] focus:ring-0 mt-0.5 accent-[#ffcf00]"
+                        />
+                        <span className="text-[11px] text-gray-400 font-medium leading-normal">
+                          I hereby agree to the <span className="text-white hover:underline">Bivaax Partners Agreement</span> and standard terms of service.
+                        </span>
+                      </label>
+
+                      <button 
+                        type="submit" 
+                        disabled={loading}
+                        className="w-full bg-[#ffcf00] hover:bg-[#e6b800] text-black h-13 font-black uppercase text-xs tracking-widest rounded-xl transition-all flex items-center justify-center gap-2 active:scale-[0.99] disabled:opacity-50"
+                      >
+                        {loading ? "Processing..." : "Send Verification Code"}
+                        <ArrowRight size={14} strokeWidth={2.5} />
+                      </button>
+                    </form>
+                  ) : (
+                    <form onSubmit={handlePartnerRegister} className="space-y-6">
+                      <div className="text-center space-y-2">
+                        <div className="inline-flex p-3 bg-[#ffcf00]/10 border border-[#ffcf00]/20 rounded-full text-[#ffcf00]">
+                          <ShieldCheck size={28} />
+                        </div>
+                        <h4 className="text-lg font-black">Verify Your Email</h4>
+                        <p className="text-xs text-gray-400 max-w-xs mx-auto">
+                          Enter the 6-digit verification code we sent to <strong className="text-gray-200">{regEmail}</strong>.
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2 text-center">Registration Code</label>
+                        <input 
+                          type="text" 
+                          maxLength={6}
+                          required
+                          placeholder="000000" 
+                          value={regOtpCode}
+                          onChange={(e) => setRegOtpCode(e.target.value.replace(/[^0-9]/g, ''))}
+                          className="w-full bg-[#181920] border border-white/5 focus:border-[#ffcf00] rounded-xl px-4 py-4 text-center text-2xl font-black tracking-[0.4em] focus:outline-none placeholder-gray-700"
+                        />
+                      </div>
+
+                      <button 
+                        type="submit" 
+                        disabled={loading}
+                        className="w-full bg-[#ffcf00] hover:bg-[#e6b800] text-black h-13 font-black uppercase text-xs tracking-widest rounded-xl transition-all flex items-center justify-center gap-2 active:scale-[0.99] disabled:opacity-50"
+                      >
+                        {loading ? "Verifying..." : "Complete Registration"}
+                      </button>
+
+                      <div className="text-center">
+                        <button 
+                          type="button" 
+                          onClick={() => setRegOtpSent(false)}
+                          className="text-[11px] text-gray-500 hover:text-white font-black uppercase tracking-widest transition-colors"
+                        >
+                          Change Email Address
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </motion.div>
+              ) : authMode === 'forgot_password' ? (
+                <motion.div
+                  key="forgot-password-pane"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  transition={{ duration: 0.2 }}
+                  className="space-y-6"
+                >
+                  <div className="text-center space-y-2">
+                    <h4 className="text-xl font-black">Reset Password</h4>
+                    <p className="text-xs text-gray-400">Enter your partner email to receive a reset code.</p>
+                  </div>
+                  <form onSubmit={handleForgotPassword} className="space-y-4">
                     <div>
-                      <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Full Name</label>
-                      <input 
-                        type="text" 
-                        required
-                        placeholder="John Doe" 
-                        value={fullName}
-                        onChange={(e) => setFullName(e.target.value)}
-                        className="w-full bg-[#181920] border border-white/5 hover:border-white/10 focus:border-[#ffcf00] rounded-xl px-4 py-3.5 text-sm placeholder-gray-600 focus:outline-none transition-colors"
-                      />
+                      <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Partner Email</label>
+                      <div className="relative">
+                        <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
+                        <input 
+                          type="email" 
+                          required
+                          placeholder="partner@yourdomain.com" 
+                          value={resetEmail}
+                          onChange={(e) => setResetEmail(e.target.value)}
+                          className="w-full bg-[#181920] border border-white/5 hover:border-white/10 focus:border-[#ffcf00] rounded-xl pl-12 pr-4 py-3.5 text-sm focus:outline-none transition-colors"
+                        />
+                      </div>
                     </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Partnership Email</label>
-                      <input 
-                        type="email" 
-                        required
-                        placeholder="partner@yourdomain.com" 
-                        value={regEmail}
-                        onChange={(e) => setRegEmail(e.target.value)}
-                        className="w-full bg-[#181920] border border-white/5 hover:border-white/10 focus:border-[#ffcf00] rounded-xl px-4 py-3.5 text-sm placeholder-gray-600 focus:outline-none transition-colors"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Secure Password</label>
-                      <input 
-                        type="password" 
-                        required
-                        placeholder="••••••••••••" 
-                        value={regPassword}
-                        onChange={(e) => setRegPassword(e.target.value)}
-                        className="w-full bg-[#181920] border border-white/5 hover:border-white/10 focus:border-[#ffcf00] rounded-xl px-4 py-3.5 text-sm placeholder-gray-600 focus:outline-none transition-colors"
-                      />
-                    </div>
-
-                    <label className="flex items-start gap-3 cursor-pointer select-none py-1">
-                      <input 
-                        type="checkbox" 
-                        checked={agreed}
-                        onChange={(e) => setAgreed(e.target.checked)}
-                        className="w-4 h-4 rounded border-gray-700 bg-black text-[#ffcf00] focus:ring-0 mt-0.5 accent-[#ffcf00]"
-                      />
-                      <span className="text-[11px] text-gray-400 font-medium leading-normal">
-                        I hereby agree to the <span className="text-white hover:underline">Bivaax Partners Agreement</span> and standard terms of service.
-                      </span>
-                    </label>
-
                     <button 
                       type="submit" 
                       disabled={loading}
-                      className="w-full bg-[#ffcf00] hover:bg-[#e6b800] text-black h-13 font-black uppercase text-xs tracking-widest rounded-xl transition-all flex items-center justify-center gap-2 active:scale-[0.99] disabled:opacity-50"
+                      className="w-full bg-[#ffcf00] hover:bg-[#e6b800] text-black h-13 font-black uppercase text-xs tracking-widest rounded-xl transition-all disabled:opacity-50"
                     >
-                      {loading ? "Creating Account..." : "Create Partner Account"}
-                      <UserCheck size={14} strokeWidth={2.5} />
+                      {loading ? "Sending..." : "Send Reset Code"}
+                    </button>
+                    <button 
+                      type="button" 
+                      onClick={() => setAuthMode('login')}
+                      className="w-full text-[11px] font-black text-gray-500 hover:text-white uppercase tracking-widest text-center transition-colors"
+                    >
+                      Back to Sign In
+                    </button>
+                  </form>
+                </motion.div>
+              ) : authMode === 'verify_reset_otp' ? (
+                <motion.div
+                  key="verify-reset-otp-pane"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  transition={{ duration: 0.2 }}
+                  className="space-y-6"
+                >
+                  <div className="text-center space-y-2">
+                    <div className="inline-flex p-3 bg-[#ffcf00]/10 border border-[#ffcf00]/20 rounded-full text-[#ffcf00]">
+                      <ShieldCheck size={28} />
+                    </div>
+                    <h4 className="text-lg font-black">Reset Code Sent</h4>
+                    <p className="text-xs text-gray-400">Please enter the 6-digit code sent to your email.</p>
+                  </div>
+                  <form onSubmit={handleVerifyResetOtp} className="space-y-6">
+                    <input 
+                      type="text" 
+                      maxLength={6}
+                      required
+                      placeholder="000000" 
+                      value={resetOtp}
+                      onChange={(e) => setResetOtp(e.target.value.replace(/[^0-9]/g, ''))}
+                      className="w-full bg-[#181920] border border-white/5 focus:border-[#ffcf00] rounded-xl px-4 py-4 text-center text-2xl font-black tracking-[0.4em] focus:outline-none"
+                    />
+                    <button 
+                      type="submit" 
+                      disabled={loading}
+                      className="w-full bg-[#ffcf00] hover:bg-[#e6b800] text-black h-13 font-black uppercase text-xs tracking-widest rounded-xl transition-all disabled:opacity-50"
+                    >
+                      {loading ? "Verifying..." : "Verify Reset Code"}
+                    </button>
+                  </form>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="reset-password-pane"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  transition={{ duration: 0.2 }}
+                  className="space-y-6"
+                >
+                  <div className="text-center space-y-2">
+                    <h4 className="text-xl font-black">Create New Password</h4>
+                    <p className="text-xs text-gray-400">Set a strong password for your partner account.</p>
+                  </div>
+                  <form onSubmit={handleResetPassword} className="space-y-4">
+                    <div>
+                      <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">New Password</label>
+                      <div className="relative">
+                        <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
+                        <input 
+                          type={showPassword ? "text" : "password"} 
+                          required
+                          minLength={6}
+                          placeholder="••••••••••••" 
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          className="w-full bg-[#181920] border border-white/5 hover:border-white/10 focus:border-[#ffcf00] rounded-xl pl-12 pr-12 py-3.5 text-sm focus:outline-none transition-colors"
+                        />
+                        <button 
+                          type="button" 
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white"
+                        >
+                          {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                        </button>
+                      </div>
+                    </div>
+                    <button 
+                      type="submit" 
+                      disabled={loading}
+                      className="w-full bg-[#ffcf00] hover:bg-[#e6b800] text-black h-13 font-black uppercase text-xs tracking-widest rounded-xl transition-all disabled:opacity-50"
+                    >
+                      {loading ? "Updating..." : "Update Password"}
                     </button>
                   </form>
                 </motion.div>

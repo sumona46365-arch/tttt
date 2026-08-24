@@ -52,7 +52,8 @@ import {
   ShieldAlert,
   Send,
   Trash2,
-  Lock
+  Lock,
+  LogOut
 } from 'lucide-react';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, where, getDocs, orderBy, limit, onSnapshot, doc, getDoc, updateDoc, increment, addDoc, deleteDoc } from '../firebase';
@@ -73,6 +74,7 @@ import { useNavigate } from 'react-router-dom';
 import { Logo } from '../components/Logo';
 import SEO from '../components/SEO';
 import { useAuth } from '../contexts/AuthContext';
+import { buildTraderReferralLink, getTraderPlatformOrigin } from '../lib/affiliate';
 
 
 const StatCard = ({ title, value, subtext, color = "blue", icon: Icon }: { title: string, value: string | number, subtext: string, color?: string, icon?: any }) => {
@@ -138,7 +140,7 @@ const SectionHeading = ({ icon: Icon, title, desc }: { icon: any, title: string,
   </div>
 );
 
-const BivaaxSidebar = ({ isOpen, onClose, activeTab, onTabChange, initials }: any) => (
+const BivaaxSidebar = ({ isOpen, onClose, activeTab, onTabChange, initials, onLogout }: any) => (
   <AnimatePresence>
     {isOpen && (
       <>
@@ -195,15 +197,18 @@ const BivaaxSidebar = ({ isOpen, onClose, activeTab, onTabChange, initials }: an
           </div>
 
           <div className="p-6 border-t border-white/5 space-y-4">
-            <button className="flex items-center gap-4 px-4 py-3 w-full text-gray-400 hover:text-white transition-colors">
-              <Globe size={20} />
-              <span className="text-[15px] font-semibold">English</span>
+            <button 
+              onClick={onLogout}
+              className="flex items-center gap-4 px-4 py-3 w-full text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-xl transition-all font-semibold text-[15px]"
+            >
+              <LogOut size={20} />
+              <span>Logout</span>
             </button>
-            <div className="lg:hidden flex items-center gap-3 px-4 py-3 bg-white/5 rounded-2xl">
+            <div className="flex items-center gap-3 px-4 py-3 bg-white/5 rounded-2xl">
               <div className="w-9 h-9 rounded-full bg-[#dbeafe] text-[#3b82f6] flex items-center justify-center font-bold text-sm">
                 {initials}
               </div>
-              <div className="text-sm font-bold text-white truncate">Profile Settings</div>
+              <div className="text-sm font-bold text-white truncate">Partner Account</div>
             </div>
           </div>
         </motion.div>
@@ -212,7 +217,7 @@ const BivaaxSidebar = ({ isOpen, onClose, activeTab, onTabChange, initials }: an
   </AnimatePresence>
 );
 
-const BivaaxHeader = ({ email, initials, onMenuClick }: { email: string, initials: string, onMenuClick: () => void }) => (
+const BivaaxHeader = ({ email, initials, onMenuClick, onLogout }: { email: string, initials: string, onMenuClick: () => void, onLogout: () => void }) => (
   <header className="bg-white border-b border-gray-100 px-4 py-3 flex items-center justify-between sticky top-0 z-[100] shadow-sm">
     <div className="flex items-center gap-4">
       <button onClick={onMenuClick} className="p-2 hover:bg-gray-50 rounded-lg transition-colors">
@@ -220,6 +225,13 @@ const BivaaxHeader = ({ email, initials, onMenuClick }: { email: string, initial
       </button>
     </div>
     <div className="flex items-center gap-3">
+      <button 
+        onClick={onLogout}
+        className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 border border-rose-100"
+      >
+        <LogOut size={14} />
+        <span className="hidden sm:inline">Logout</span>
+      </button>
       <div className="flex flex-col items-end mr-1">
         <span className="text-[13px] font-bold text-[#1a2233] leading-none mb-1">
           {email.length > 20 ? `${email.substring(0, 3)}***${email.split('@')[0].slice(-1)}@${email.split('@')[1]}` : email}
@@ -483,10 +495,12 @@ export default function AffiliatePage() {
   const [isAddingPostback, setIsAddingPostback] = useState(false);
   const [showAddPostback, setShowAddPostback] = useState(false);
   const [newPostback, setNewPostback] = useState({ name: '', url: '', event: 'registration', method: 'GET' });
-
+  const [appConfig, setAppConfig] = useState<any>({});
 
   const referralCode = affId || '';
-  const referralLink = referralCode ? `${window.location.origin}/register?ref=${referralCode}` : '';
+  const referralLink = referralCode 
+    ? buildTraderReferralLink(referralCode, { customDomain: appConfig?.mainDomain })
+    : '';
 
   const addCampaign = async () => {
     if (!currentUser) return;
@@ -542,23 +556,17 @@ export default function AffiliatePage() {
 
   const getCampaignLink = (subId: string, landingPage: string = '/register', linkType: string = 'revshare') => {
     if (!referralCode) return 'Loading...';
-    const targetPage = (!landingPage || landingPage === '/') ? '/register' : landingPage;
-    const base = window.location.origin + (targetPage.startsWith('/') ? targetPage : `/${targetPage}`);
-    const connector = base.includes('?') ? '&' : '?';
-    let url = `${base}${connector}ref=${referralCode}`;
-    if (subId && subId !== 'default' && subId !== 'MAIN') {
-      url += `&sub=${subId}`;
-    }
-    if (linkType && linkType !== 'revshare') {
-      url += `&type=${linkType}`;
-    }
-    return url;
+    return buildTraderReferralLink(referralCode, {
+      subId,
+      landingPage,
+      linkType,
+      customDomain: appConfig?.mainDomain
+    });
   };
   const [balance, setBalance] = useState(0.00);
   const [affiliateBalance, setAffiliateBalance] = useState(0.00);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
-  const [appConfig, setAppConfig] = useState<any>({});
   const [referrals, setReferrals] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loadingStats, setLoadingStats] = useState(true);
@@ -1207,6 +1215,17 @@ export default function AffiliatePage() {
     return last7Days;
   }, [referrals]);
 
+  const handleLogout = async () => {
+    try {
+      await auth.signOut();
+      toast.success("Logged out successfully");
+      navigate('/affiliate');
+    } catch (err: any) {
+      console.error("Logout error:", err);
+      toast.error("Logout failed: " + err.message);
+    }
+  };
+
   if (appConfig?.affiliateProgramDisabled) {
     return (
       <div className="min-h-screen bg-[#0d0e12] text-white flex flex-col items-center justify-center p-6 text-center">
@@ -1239,11 +1258,13 @@ export default function AffiliatePage() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         initials={currentUser?.email ? currentUser.email.substring(0, 2).toUpperCase() : "HA"}
+        onLogout={handleLogout}
       />
       <BivaaxHeader 
         email={currentUser?.email || "user@Bivaax.trade"} 
         initials={currentUser?.email ? currentUser.email.substring(0, 2).toUpperCase() : "HA"}
         onMenuClick={() => setIsSidebarOpen(!isSidebarOpen)}
+        onLogout={handleLogout}
       />
 
       <main className="max-w-4xl mx-auto p-4 md:p-8 space-y-6">

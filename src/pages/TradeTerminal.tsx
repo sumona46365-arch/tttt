@@ -502,30 +502,45 @@ const getFlagCode = (currency: string) => {
 const AnimatedBalance = ({ value, currency, accountType, isHidden }: { value: number, currency: string, accountType: string, isHidden: boolean }) => {
   const [displayValue, setDisplayValue] = useState(value);
   const prevValueRef = useRef(value);
+  const animationRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (value !== prevValueRef.current) {
+    // Round both values to avoid noise-triggered animations
+    const roundedValue = parseFloat(value.toFixed(4));
+    const roundedPrev = parseFloat(prevValueRef.current.toFixed(4));
+
+    if (roundedValue !== roundedPrev) {
+      if (animationRef.current) {
+        window.cancelAnimationFrame(animationRef.current);
+      }
+
       const start = prevValueRef.current;
       const end = value;
-      const duration = 800;
+      const duration = 600; // Slightly faster for responsiveness
       let startTimestamp: number | null = null;
       
       const step = (timestamp: number) => {
         if (!startTimestamp) startTimestamp = timestamp;
         const progress = Math.min((timestamp - startTimestamp) / duration, 1);
-        const easeOut = 1 - Math.pow(1 - progress, 3); // Cubic ease out
+        const easeOut = 1 - Math.pow(1 - progress, 3);
         const current = start + (end - start) * easeOut;
         
         setDisplayValue(current);
         
         if (progress < 1) {
-          window.requestAnimationFrame(step);
+          animationRef.current = window.requestAnimationFrame(step);
         }
       };
       
-      window.requestAnimationFrame(step);
+      animationRef.current = window.requestAnimationFrame(step);
       prevValueRef.current = value;
     }
+    
+    return () => {
+      if (animationRef.current) {
+        window.cancelAnimationFrame(animationRef.current);
+      }
+    };
   }, [value]);
 
   if (isHidden) return <span className="font-sans font-bold">✱✱✱✱✱</span>;
@@ -1717,9 +1732,13 @@ export default function TradeTerminal() {
                         setUserCurrency(userData.currency);
                         userCurrencyRef.current = userData.currency;
                     }
-                    if (userData.balance !== undefined && realBalanceRef.current !== userData.balance) {
-                        setRealBalance(userData.balance);
-                        realBalanceRef.current = userData.balance;
+                    if (userData.balance !== undefined) {
+                        const newBal = parseFloat(userData.balance.toString());
+                        // Only update if difference is more than 0.0001 to prevent jitter
+                        if (Math.abs(realBalanceRef.current - newBal) > 0.0001) {
+                            setRealBalance(newBal);
+                            realBalanceRef.current = newBal;
+                        }
                     }
                     if (userData.demoBalance !== undefined && demoBalanceRef.current !== userData.demoBalance) {
                         setDemoBalance(userData.demoBalance);
@@ -2540,23 +2559,28 @@ export default function TradeTerminal() {
             { name: 'LUC TRADER', country: '🇫🇷', isVip: false, copiersCount: 8, maxCopiers: 80, gainPerWeek: '28%', copiedTrades: 92, commission: '7%', profitRate: 68, lossRate: 32, winRate: 75, totalProfit: 21000, strategy: 'Fib Retracement Swing Trading', level: 'Standard', riskIndex: 3 }
           ];
           for (const t of traders) {
-            await addDoc(collection(db, 'masterTraders'), { 
-              ...t, 
-              history: Array.from({ length: 15 }).map((_, i) => ({
-                id: `history-${i}`,
-                asset: ['Crypto IDX', 'EUR/USD', 'GBP/JPY', 'Gold', 'BTC/USD'][Math.floor(Math.random() * 5)],
-                type: Math.random() > 0.5 ? 'CALL' : 'PUT',
-                amount: (Math.random() * 500 + 100).toFixed(2),
-                payout: 82,
-                result: Math.random() > 0.3 ? 'won' : 'lost',
-                time: '20:23:00',
-                profit: (Math.random() * 1000 + 200).toFixed(2)
-              })),
-              performanceData: Array.from({ length: 8 }).map((_, i) => ({
-                name: (i + 1).toString(),
-                value: 400 + Math.random() * 1100
-              }))
-            });
+            try {
+              await addDoc(collection(db, 'masterTraders'), { 
+                ...t, 
+                history: Array.from({ length: 15 }).map((_, i) => ({
+                  id: `history-${i}`,
+                  asset: ['Crypto IDX', 'EUR/USD', 'GBP/JPY', 'Gold', 'BTC/USD'][Math.floor(Math.random() * 5)],
+                  type: Math.random() > 0.5 ? 'CALL' : 'PUT',
+                  amount: (Math.random() * 500 + 100).toFixed(2),
+                  payout: 82,
+                  result: Math.random() > 0.3 ? 'won' : 'lost',
+                  time: '20:23:00',
+                  profit: (Math.random() * 1000 + 200).toFixed(2)
+                })),
+                performanceData: Array.from({ length: 8 }).map((_, i) => ({
+                  name: (i + 1).toString(),
+                  value: 400 + Math.random() * 1100
+                }))
+              });
+            } catch (seedErr: any) {
+              console.warn("Master trader seed skipped (rate limit / quota):", seedErr?.message || seedErr);
+              break;
+            }
           }
         };
         seedMastersInTerminal();
@@ -5005,10 +5029,8 @@ const PROMOTED_ARTICLES = [
               currentInterpolatedPriceRef.current = targetPriceRef.current;
           } else {
               // Buttery smooth fluid interpolation at 60FPS
-              // 0.28 factor ensures it is both Fast and Smooth
-              currentInterpolatedPriceRef.current += (targetPriceRef.current - currentInterpolatedPriceRef.current) * 0.28;
+              currentInterpolatedPriceRef.current += (targetPriceRef.current - currentInterpolatedPriceRef.current) * 0.25;
           }
-          // Enable interpolation for ALL chart types to ensure no jumping
           newInterp = currentInterpolatedPriceRef.current;
       }
 
@@ -5627,6 +5649,26 @@ const PROMOTED_ARTICLES = [
      return profit;
   }, [visibleUserTrades]);
 
+
+  const completedDepositsBdt = React.useMemo(() => {
+    let total = 0;
+    userTransactions.forEach((tx: any) => {
+      if (tx.type === 'Deposit' && (tx.status === 'Completed' || tx.status === 'completed')) {
+        const amt = parseFloat(tx.amount || 0);
+        const curr = tx.currency || userCurrency || 'BDT';
+        total += curr === 'USD' ? amt * 118 : amt;
+      }
+    });
+    return total;
+  }, [userTransactions, userCurrency]);
+
+  const activeUserStatus = React.useMemo(() => {
+    if (completedDepositsBdt >= 360000) return 'Prestige';
+    if (completedDepositsBdt >= 85000) return 'VIP';
+    if (completedDepositsBdt >= 42000) return 'Gold';
+    if (completedDepositsBdt >= 1000) return 'Standard';
+    return 'Free';
+  }, [completedDepositsBdt]);
 
   const [leaderboards, setLeaderboards] = useState<any>({ daily: [], weekly: [], monthly: [], allTime: [] });
   const [isLoadingLeaderboard, setIsLoadingLeaderboard] = useState(false);
@@ -6421,8 +6463,11 @@ const PROMOTED_ARTICLES = [
             const raw = data.real_balance ?? data.balance ?? data.realBalance;
             const val = parseFloat(raw?.toString());
             if (!isNaN(val)) {
-                setRealBalance(val);
-                realBalanceRef.current = val;
+                // Only update if difference is more than 0.0001 to prevent jitter
+                if (Math.abs(realBalanceRef.current - val) > 0.0001) {
+                    setRealBalance(val);
+                    realBalanceRef.current = val;
+                }
             }
         }
         if (data.demo_balance !== undefined || data.demoBalance !== undefined) {
@@ -6559,9 +6604,15 @@ const PROMOTED_ARTICLES = [
           rawLastCandleRef.current = newCandle;
       } else {
           rawLastCandleRef.current.close = newClose;
-          rawLastCandleRef.current.high = Math.max(rawLastCandleRef.current.high, newClose);
-          rawLastCandleRef.current.low = Math.min(rawLastCandleRef.current.low, newClose);
-          if (tick.candle?.volume) rawLastCandleRef.current.volume = tick.candle.volume;
+          // Sync with server's actual high/low from the micro-volatility engine
+          if (tick.candle) {
+              rawLastCandleRef.current.high = Math.max(rawLastCandleRef.current.high, newClose, tick.candle.high || newClose);
+              rawLastCandleRef.current.low = Math.min(rawLastCandleRef.current.low, newClose, tick.candle.low || newClose);
+              rawLastCandleRef.current.volume = tick.candle.volume || rawLastCandleRef.current.volume;
+          } else {
+              rawLastCandleRef.current.high = Math.max(rawLastCandleRef.current.high, newClose);
+              rawLastCandleRef.current.low = Math.min(rawLastCandleRef.current.low, newClose);
+          }
       }
 
       targetPriceRef.current = newClose;
@@ -14598,9 +14649,9 @@ const PROMOTED_ARTICLES = [
                         <div className="w-16 h-16 bg-[#FFE24C]/10 rounded-full flex items-center justify-center mx-auto mb-4 border border-[#FFE24C]/20">
                           <Icons.ShieldAlert className="text-[#FFE24C]" size={30} />
                         </div>
-                        <h2 className="text-white text-xl font-bold mb-2">ওটিপি কোড যাচাই করুন</h2>
+                        <h2 className="text-white text-xl font-bold mb-2">Verify OTP Code</h2>
                         <p className="text-gray-400 text-sm max-w-xs mx-auto mb-6">
-                          আমরা আপনার ইমেইলে (<span className="text-white font-medium">{auth?.currentUser?.email || withdrawEmail}</span>) একটি ৬-ডিজিটের ওটিপি কোড পাঠিয়েছি। অনুগ্রহ করে কোডটি এখানে দিন।
+                          We have sent a 6-digit OTP code to your email (<span className="text-white font-medium">{auth?.currentUser?.email || withdrawEmail}</span>). Please enter the code below.
                         </p>
 
                         <div className="relative mb-6 max-w-xs mx-auto">
@@ -14622,13 +14673,13 @@ const PROMOTED_ARTICLES = [
                              }}
                              className="text-gray-400 hover:text-white transition-colors"
                            >
-                             ফিরে যান
+                             Back
                            </button>
                            
                            <button 
                              onClick={async () => {
                                 setIsRequestingOtp(true);
-                                setWithdrawalLoadingText("নতুন ওটিপি পাঠানো হচ্ছে...");
+                                setWithdrawalLoadingText("Sending new OTP...");
                                 try {
                                    const amount = Number(withdrawAmount);
                                    const baseWithdrawAmount = convertToBase(amount, userCurrency);
@@ -14647,7 +14698,7 @@ const PROMOTED_ARTICLES = [
                                    if (!res.ok) {
                                        throw new Error(data.error || 'Failed to resend OTP');
                                    }
-                                   toast.success('নতুন ওটিপি সফলভাবে পাঠানো হয়েছে!');
+                                   toast.success('New OTP sent successfully!');
                                    setIsRequestingOtp(false);
                                    setWithdrawalLoadingText("");
                                 } catch (e: any) {
@@ -14659,7 +14710,7 @@ const PROMOTED_ARTICLES = [
                              disabled={isRequestingOtp}
                              className="text-[#FFE24C] hover:underline"
                            >
-                             কোড পাননি? রিসেন্ড করুন
+                             Didn't receive code? Resend
                            </button>
                         </div>
                       </div>
@@ -14726,11 +14777,11 @@ const PROMOTED_ARTICLES = [
                       onClick={() => {
                          if (showWithdrawOtp) {
                             if (!withdrawOtpValue || withdrawOtpValue.length !== 6) {
-                                toast.error('দয়া করে সঠিক ৬ ডিজিটের ওটিপি কোডটি লিখুন');
+                                toast.error('Please enter a valid 6-digit OTP code');
                                 return;
                             }
                             setIsRequestingOtp(true);
-                            setWithdrawalLoadingText("ওটিপি কোড যাচাই করা হচ্ছে...");
+                            setWithdrawalLoadingText("Verifying OTP code...");
                             setTimeout(async () => {
                                 if (auth?.currentUser) {
                                     try {
@@ -14797,7 +14848,7 @@ const PROMOTED_ARTICLES = [
                             }
 
                             setIsRequestingOtp(true);
-                            setWithdrawalLoadingText("ওটিপি কোড পাঠানো হচ্ছে...");
+                            setWithdrawalLoadingText("Sending OTP code...");
                             
                             setTimeout(async () => {
                                 if (auth?.currentUser) {
@@ -16996,8 +17047,8 @@ const PROMOTED_ARTICLES = [
                     </div>
                     <div className="p-5 md:p-6 relative z-10 flex flex-col h-full">
                        <h3 className="text-xl font-bold mb-4">Free</h3>
-                       <div className="bg-gray-100 text-gray-500 text-[10px] font-bold px-3 py-1.5 rounded inline-flex items-center uppercase tracking-wider mb-6 self-start">
-                         <Icons.Check size={12} className="mr-1" strokeWidth={3} /> Unlocked
+                       <div className={`${activeUserStatus === 'Free' ? 'bg-[#00c980] text-white' : 'bg-gray-100 text-gray-500'} text-[10px] font-bold px-3 py-1.5 rounded inline-flex items-center uppercase tracking-wider mb-6 self-start`}>
+                         <Icons.Check size={12} className="mr-1" strokeWidth={3} /> {activeUserStatus === 'Free' ? 'Your status' : 'Unlocked'}
                        </div>
 
                        <div className="space-y-3 mb-6">
@@ -17049,8 +17100,8 @@ const PROMOTED_ARTICLES = [
                     </div>
                     <div className="p-5 md:p-6 relative z-10 flex flex-col h-full">
                        <h3 className="text-xl font-bold mb-4">Standard</h3>
-                       <div className="bg-[#00c980] text-white text-[10px] font-bold px-3 py-1.5 rounded inline-flex items-center uppercase tracking-wider mb-6 self-start">
-                         <Icons.Check size={12} className="mr-1" strokeWidth={3} /> Your status
+                       <div className={`${activeUserStatus === 'Standard' ? 'bg-[#00c980] text-white' : (completedDepositsBdt >= 1000 ? 'bg-gray-100 text-gray-500' : 'bg-gray-100 text-gray-400')} text-[10px] font-bold px-3 py-1.5 rounded inline-flex items-center uppercase tracking-wider mb-6 self-start`}>
+                         <Icons.Check size={12} className="mr-1" strokeWidth={3} /> {activeUserStatus === 'Standard' ? 'Your status' : (completedDepositsBdt >= 1000 ? 'Unlocked' : 'Locked')}
                        </div>
 
                        <div className="space-y-3 mb-6">
@@ -17160,7 +17211,13 @@ const PROMOTED_ARTICLES = [
                        </div>
                        
                        <div className="mt-auto pt-4">
-                         <button className="w-full bg-[#fcd535] hover:bg-[#ebd04f] text-black font-bold py-3.5 rounded-xl transition-all shadow-[0_4px_10px_rgba(252,213,53,0.3)] active:scale-[0.98]">
+                         <button 
+                           onClick={() => {
+                             setActiveTab('cashier');
+                             toast.success('Redirecting to cashier deposit to upgrade status!');
+                           }}
+                           className="w-full bg-[#fcd535] hover:bg-[#ebd04f] text-black font-bold py-3.5 rounded-xl transition-all shadow-[0_4px_10px_rgba(252,213,53,0.3)] active:scale-[0.98]"
+                         >
                            Upgrade
                          </button>
                        </div>
