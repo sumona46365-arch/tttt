@@ -502,9 +502,20 @@ const getFlagCode = (currency: string) => {
 const AnimatedBalance = ({ value, currency, accountType, isHidden }: { value: number, currency: string, accountType: string, isHidden: boolean }) => {
   const [displayValue, setDisplayValue] = useState(value);
   const prevValueRef = useRef(value);
+  const prevAccountTypeRef = useRef(accountType);
   const animationRef = useRef<number | null>(null);
 
   useEffect(() => {
+    if (prevAccountTypeRef.current !== accountType) {
+      prevAccountTypeRef.current = accountType;
+      prevValueRef.current = value;
+      setDisplayValue(value);
+      if (animationRef.current) {
+        window.cancelAnimationFrame(animationRef.current);
+      }
+      return;
+    }
+
     // Round both values to avoid noise-triggered animations
     const roundedValue = parseFloat(value.toFixed(4));
     const roundedPrev = parseFloat(prevValueRef.current.toFixed(4));
@@ -516,7 +527,7 @@ const AnimatedBalance = ({ value, currency, accountType, isHidden }: { value: nu
 
       const start = prevValueRef.current;
       const end = value;
-      const duration = 600; // Slightly faster for responsiveness
+      const duration = 400; // Responsive animation duration
       let startTimestamp: number | null = null;
       
       const step = (timestamp: number) => {
@@ -541,7 +552,7 @@ const AnimatedBalance = ({ value, currency, accountType, isHidden }: { value: nu
         window.cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [value]);
+  }, [value, accountType]);
 
   if (isHidden) return <span className="font-sans font-bold">✱✱✱✱✱</span>;
 
@@ -6149,7 +6160,12 @@ const PROMOTED_ARTICLES = [
         socket.emit('authenticate', token);
       }
       
-      socket.emit('request_initial_data', { asset: activeAssetRef.current, timeframe: timeframeRef.current, accountType: accountTypeRef.current, userId: auth.currentUser?.uid });
+      const currentUid = auth.currentUser?.uid;
+      if (currentUid) {
+        socket.emit('join_user_room', currentUid);
+      }
+      
+      socket.emit('request_initial_data', { asset: activeAssetRef.current, timeframe: timeframeRef.current, accountType: accountTypeRef.current, userId: currentUid });
     });
 
     socket.on("connect_error", (err) => {
@@ -6163,39 +6179,58 @@ const PROMOTED_ARTICLES = [
     
     socket.on('trade_settled', (trade: any) => {
         console.log("Trade settled via socket:", trade);
+        const tradeId = trade.id ? String(trade.id) : '';
+        const fbId = trade.firebaseId || trade.firebase_id ? String(trade.firebaseId || trade.firebase_id) : '';
+
+        const alreadyProcessed = (tradeId && processedTradesRef.current.has(tradeId)) || 
+                                 (fbId && processedTradesRef.current.has(fbId));
         
-        // Add Binomo-style notification inside the chart/terminal
-        const isWon = trade.status === 'win' || trade.status === 'won' || trade.status === 'profit';
-        const isDraw = trade.status === 'draw';
-        const notifStatus = isWon ? 'won' : (isDraw ? 'draw' : 'lost');
-        const notifAmount = isWon ? (trade.payoutAmount || trade.amount * 1.9) : trade.amount;
-        addTradeNotification({
-            id: trade.id || trade.firebaseId || Math.random().toString(),
-            tradeId: trade.id || trade.firebaseId,
-            status: notifStatus,
-            asset: trade.asset,
-            amount: notifAmount
-        });
+        if (tradeId) processedTradesRef.current.add(tradeId);
+        if (fbId) processedTradesRef.current.add(fbId);
 
+        // Add notification inside the chart/terminal only if not already shown locally
+        if (!alreadyProcessed) {
+          const isWon = trade.status === 'win' || trade.status === 'won' || trade.status === 'profit';
+          const isDraw = trade.status === 'draw';
+          const notifStatus = isWon ? 'won' : (isDraw ? 'draw' : 'lost');
+          const notifAmount = isWon ? (trade.payoutAmount || (trade.amount * (1 + (trade.payoutRate || 80) / 100))) : trade.amount;
+          addTradeNotification({
+              id: tradeId || fbId || Math.random().toString(),
+              tradeId: tradeId || fbId,
+              status: notifStatus,
+              asset: trade.asset,
+              amount: notifAmount
+          });
+        }
 
-
-        setActiveTrades(prev => prev.filter(t => t.id !== trade.id));
+        setActiveTrades(prev => prev.filter(t => String(t.id) !== tradeId && String(t.id) !== fbId && (t as any).firebaseId !== tradeId && (t as any).firebaseId !== fbId));
         setUserTrades(prev => {
-            const updated = prev.map(t => t.id === trade.id ? { ...t, ...trade } : t);
-            if (!updated.find(t => t.id === trade.id)) {
+            const updated = prev.map(t => (String(t.id) === tradeId || String(t.id) === fbId || (t as any).firebaseId === tradeId || (t as any).firebaseId === fbId) ? { ...t, ...trade } : t);
+            if (!updated.find(t => String(t.id) === tradeId || String(t.id) === fbId || (t as any).firebaseId === tradeId || (t as any).firebaseId === fbId)) {
                 updated.unshift(trade);
             }
             updated.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
             return updated.slice(0, 100);
         });
         
-        // Balance is updated in real-time authoritatively and instantly via Firestore onSnapshot / socket user_profile_update.
-        // We do not modify the client balance state manually here to prevent any double-addition race conditions.
-        if (!processedTradesRef.current.has(trade.id)) {
-            if (processedTradesRef.current.size > 1000) {
-              processedTradesRef.current.clear();
+        // Apply Authoritative Balance from trade settlement
+        if (trade.user || trade.balance !== undefined || trade.realBalance !== undefined || trade.demoBalance !== undefined) {
+          const rawReal = trade.balance ?? trade.realBalance ?? trade.user?.balance ?? trade.user?.realBalance;
+          if (rawReal !== undefined) {
+            const val = parseFloat(rawReal.toString());
+            if (!isNaN(val)) {
+              setRealBalance(val);
+              realBalanceRef.current = val;
             }
-            processedTradesRef.current.add(trade.id);
+          }
+          const rawDemo = trade.demoBalance ?? trade.user?.demoBalance;
+          if (rawDemo !== undefined) {
+            const val = parseFloat(rawDemo.toString());
+            if (!isNaN(val)) {
+              setDemoBalance(val);
+              demoBalanceRef.current = val;
+            }
+          }
         }
     });
 
@@ -6700,14 +6735,21 @@ const PROMOTED_ARTICLES = [
         if (trade.timeLeft <= 0) {
           if (!currentPriceForAsset) return true;
           
-          if (processedTradesRef.current.has(trade.id)) return false;
+          const tradeId = trade.id ? String(trade.id) : '';
+          const fbId = (trade as any).firebaseId || (trade as any).firebase_id ? String((trade as any).firebaseId || (trade as any).firebase_id) : '';
+
+          const alreadyProcessed = (tradeId && processedTradesRef.current.has(tradeId)) || 
+                                   (fbId && processedTradesRef.current.has(fbId));
+          
+          if (alreadyProcessed) return false;
           
           // Prevent Set from growing indefinitely in long sessions
           if (processedTradesRef.current.size > 1000) {
             processedTradesRef.current.clear();
           }
           
-          processedTradesRef.current.add(trade.id);
+          if (tradeId) processedTradesRef.current.add(tradeId);
+          if (fbId) processedTradesRef.current.add(fbId);
           tradesUpdated = true;
 
           const settlePrice = currentPriceForAsset;
@@ -6725,7 +6767,27 @@ const PROMOTED_ARTICLES = [
           const returnAmt = trade.amount * (payoutRate / 100 + 1);
           const tradeStatus = isDraw ? 'draw' : won ? 'won' : 'lost';
 
-          // Settle on server
+          if (trade.accountType === 'tournament') {
+            if (won) {
+              updateTournamentScore(returnAmt - trade.amount, true);
+            } else if (isDraw) {
+              updateTournamentScore(0, false);
+            } else {
+              updateTournamentScore(-trade.amount, false);
+            }
+          }
+
+          // Trigger result notification for local settlement
+          const notifAmount = won ? returnAmt : trade.amount;
+          addTradeNotification({
+              id: tradeId || fbId || Math.random().toString(),
+              tradeId: tradeId || fbId,
+              status: tradeStatus,
+              asset: trade.asset,
+              amount: notifAmount
+          });
+
+          // Settle on server and apply authoritative balance & outcome
           fetch('/api/trade/settle-secure', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -6734,15 +6796,15 @@ const PROMOTED_ARTICLES = [
             if (res.ok) {
               const data = await res.json().catch(() => null);
               if (data?.user) {
-                if (data.user.balance !== undefined && (trade.accountType === 'real' || (!trade.isDemo && !trade.is_demo))) {
-                  const b = parseFloat(data.user.balance);
+                if (data.user.balance !== undefined || data.user.realBalance !== undefined) {
+                  const b = parseFloat((data.user.balance ?? data.user.realBalance).toString());
                   if (!isNaN(b)) {
                     setRealBalance(b);
                     realBalanceRef.current = b;
                   }
                 }
-                if (data.user.demoBalance !== undefined && (trade.accountType === 'demo' || trade.isDemo || trade.is_demo)) {
-                  const db = parseFloat(data.user.demoBalance);
+                if (data.user.demoBalance !== undefined) {
+                  const db = parseFloat(data.user.demoBalance.toString());
                   if (!isNaN(db)) {
                     setDemoBalance(db);
                     demoBalanceRef.current = db;
@@ -6750,47 +6812,14 @@ const PROMOTED_ARTICLES = [
                 }
               }
               if (data?.trade) {
-                 // Authoritative server trade outcome
                  const serverTrade = data.trade;
-                 if (serverTrade.status && serverTrade.status !== tradeStatus) {
-                     // The server decided a different outcome (e.g. Smart Mode)
-                     // Re-trigger the correct notification and update history
-                     addTradeNotification({
-                         id: (serverTrade.id || Math.random()).toString() + '_server',
-                         tradeId: serverTrade.id,
-                         status: serverTrade.status,
-                         asset: serverTrade.asset || trade.asset,
-                         amount: serverTrade.status === 'won' ? serverTrade.payoutAmount : (serverTrade.status === 'draw' ? serverTrade.amount : serverTrade.amount)
-                     });
-                     
-                     setUserTrades(prev => {
-                         const correctedTrade = { ...trade, ...serverTrade };
-                         return [correctedTrade, ...prev.filter(t => t.id !== trade.id && t.id !== serverTrade.id)].slice(0, 100);
-                     });
-                 }
+                 setUserTrades(prev => {
+                     const correctedTrade = { ...trade, ...serverTrade };
+                     return [correctedTrade, ...prev.filter(t => String(t.id) !== String(trade.id) && String(t.id) !== String(serverTrade.id))].slice(0, 100);
+                 });
               }
             }
           }).catch(err => console.error("Settlement request failed:", err));
-
-          if (won) {
-            updateTournamentScore(returnAmt - trade.amount, true);
-          } else if (isDraw) {
-            updateTournamentScore(0, false);
-          } else {
-            updateTournamentScore(-trade.amount, false);
-          }
-
-          // Trigger result notification for local settlement
-          const notifAmount = won ? returnAmt : trade.amount;
-          addTradeNotification({
-              id: trade.id || (trade as any).firebaseId || Math.random().toString(),
-              tradeId: trade.id || (trade as any).firebaseId,
-              status: tradeStatus,
-              asset: trade.asset,
-              amount: notifAmount
-          });
-
-
 
           setUserTrades(prev => {
             const settledTrade = { ...trade, status: tradeStatus, exitPrice: settlePrice, payoutAmount: won ? returnAmt : (isDraw ? trade.amount : 0) };
@@ -7762,15 +7791,16 @@ const PROMOTED_ARTICLES = [
 
         // Apply authoritative balance from server response
         if (resData.user) {
-          if (resData.user.balance !== undefined && accountType === 'real') {
-            const b = parseFloat(resData.user.balance);
+          const rawReal = resData.user.balance ?? resData.user.realBalance;
+          if (rawReal !== undefined) {
+            const b = parseFloat(rawReal.toString());
             if (!isNaN(b)) {
               setRealBalance(b);
               realBalanceRef.current = b;
             }
           }
-          if (resData.user.demoBalance !== undefined && accountType === 'demo') {
-            const db = parseFloat(resData.user.demoBalance);
+          if (resData.user.demoBalance !== undefined) {
+            const db = parseFloat(resData.user.demoBalance.toString());
             if (!isNaN(db)) {
               setDemoBalance(db);
               demoBalanceRef.current = db;

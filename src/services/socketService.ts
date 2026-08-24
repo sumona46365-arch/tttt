@@ -53,17 +53,31 @@ export function initSocket(server: HttpServer) {
     // User-specific room for private updates (balance, trade results)
     socket.on('authenticate', (token: string) => {
       try {
+        if (!token) return;
         const decoded = verifyToken(token) as any;
-        if (decoded) {
+        if (decoded && decoded.uid) {
           socket.data.userId = decoded.uid;
           socket.join(`user_${decoded.uid}`);
           if (decoded.is_admin || decoded.role === 'admin' || decoded.role === 'support' || decoded.role === 'supervisor') {
             socket.join('agents_room');
           }
           console.log(`User/Agent ${decoded.uid} authenticated on socket ${socket.id}`);
+        } else if (typeof token === 'string' && token.length > 5 && !token.includes('.')) {
+          // If a direct userId or session token was passed
+          socket.data.userId = token;
+          socket.join(`user_${token}`);
+          console.log(`User room joined directly for ${token} on socket ${socket.id}`);
         }
       } catch (err) {
         console.error('Socket authentication failed:', err);
+      }
+    });
+
+    socket.on('join_user_room', (userId: string) => {
+      if (userId) {
+        socket.data.userId = userId;
+        socket.join(`user_${userId}`);
+        console.log(`Explicit join_user_room: ${userId}`);
       }
     });
 
@@ -172,9 +186,11 @@ export function initSocket(server: HttpServer) {
         serverTime: Date.now()
       });
 
-      // If userId provided and authenticated, send profile update
+      // If userId provided and authenticated, join room and send profile update
       if (userId || socket.data.userId) {
         const uid = userId || socket.data.userId;
+        socket.data.userId = uid;
+        socket.join(`user_${uid}`);
         const user = await get('SELECT * FROM users WHERE uid = ?', [uid]);
         if (user) {
           socket.emit('user_profile_update', mapUserForFrontend(user));

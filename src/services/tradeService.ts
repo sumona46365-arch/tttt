@@ -491,13 +491,34 @@ export async function settleTrade(tradeId: number | string, currentMarketPrice?:
 
     if (result) {
       const io = getIO();
-      // Notify user via socket
-      io.to(`user_${result.userId}`).emit('trade_settled', result);
-      // Also notify balance update
       const user = await get('SELECT * FROM users WHERE uid = ?', [result.userId]) as any;
       const mapped = mapUserForFrontend(user);
-      io.to(`user_${result.userId}`).emit('user_profile_update', mapped);
-      syncUserToFirestore(result.userId, mapped);
+
+      const enrichedResult = {
+        ...result,
+        user: mapped,
+        balance: mapped?.balance ?? 0,
+        realBalance: mapped?.balance ?? 0,
+        demoBalance: mapped?.demoBalance ?? 10000
+      };
+
+      // Notify user via socket
+      io.to(`user_${result.userId}`).emit('trade_settled', enrichedResult);
+      
+      if (mapped) {
+        // Also notify profile and balance updates
+        io.to(`user_${result.userId}`).emit('user_profile_update', mapped);
+        io.to(`user_${result.userId}`).emit('balance_update', {
+          real_balance: mapped.balance,
+          realBalance: mapped.balance,
+          balance: mapped.balance,
+          demo_balance: mapped.demoBalance,
+          demoBalance: mapped.demoBalance
+        });
+        syncUserToFirestore(result.userId, mapped).catch(err => logger.error('Firestore user sync error on trade settlement:', err));
+      }
+
+      return enrichedResult;
     }
 
     return result;
