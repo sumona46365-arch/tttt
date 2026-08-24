@@ -95,7 +95,12 @@ export const OnyxTradingChart: React.FC = () => {
     // 3. Pillar 1 & 2: Continuity and Global Sync Logic
     const timeframeSeconds = 5;
     let lastCandle: any = null;
-    let currentPrice = 1.25400; // Starting point
+    let targetPrice = 1.25400;
+    let visualPrice = 1.25400;
+    let lastTickTime = Date.now();
+    let currentVolatility = 0.00035;
+    let volatilityBurstTimer = 0;
+    const requestRef = useRef<number>(0);
 
     const updateLoop = () => {
       if (!seriesRef.current) return;
@@ -103,38 +108,62 @@ export const OnyxTradingChart: React.FC = () => {
       const now = Date.now();
       const candleTime = Math.floor(now / (timeframeSeconds * 1000)) * timeframeSeconds;
       
-      // Simulate price movement
-      const volatility = 0.00035;
-      currentPrice += (Math.random() - 0.5) * volatility;
+      // 1. Tick Update (Simulate market ticks with varied behavior)
+      if (now - lastTickTime > 150) { // Faster ticks for real-time response
+        lastTickTime = now;
+
+        if (volatilityBurstTimer <= 0) {
+          if (Math.random() > 0.92) {
+            volatilityBurstTimer = Math.random() * 4000 + 1000;
+            currentVolatility = 0.0008; // High spike
+          } else {
+            currentVolatility = 0.0002 + Math.random() * 0.0003;
+          }
+        } else {
+          volatilityBurstTimer -= 150;
+        }
+
+        const jump = (Math.random() - 0.5) * currentVolatility;
+        targetPrice += jump;
+      }
+
+      // 2. Micro-Jitter (Live noise)
+      const microJitter = (Math.random() - 0.5) * 0.00003;
+      const effectiveTarget = targetPrice + microJitter;
+
+      // 3. Interpolation (Lerp) - Buttery smooth at 60FPS
+      const lerpFactor = 0.25;
+      visualPrice = visualPrice + (effectiveTarget - visualPrice) * lerpFactor;
 
       let updatedCandle;
 
+      // 4. Natural Candle Formation (OHLC)
       if (!lastCandle || Number(candleTime) > Number(lastCandle.time)) {
-        // Pillar 1: No-Gap Logic
-        const openPrice = lastCandle ? lastCandle.close : currentPrice;
+        const openPrice = lastCandle ? lastCandle.close : visualPrice;
         
         updatedCandle = {
           time: candleTime as any,
           open: openPrice,
-          high: Math.max(openPrice, currentPrice),
-          low: Math.min(openPrice, currentPrice),
-          close: currentPrice,
+          high: Math.max(openPrice, visualPrice),
+          low: Math.min(openPrice, visualPrice),
+          close: visualPrice,
         };
       } else {
-        // Pillar 3: High-Frequency Merging (New object to avoid mutation issues)
         updatedCandle = {
           ...lastCandle,
-          close: currentPrice,
-          high: Math.max(lastCandle.high, currentPrice),
-          low: Math.min(lastCandle.low, currentPrice),
+          close: visualPrice,
+          high: Math.max(lastCandle.high, visualPrice),
+          low: Math.min(lastCandle.low, visualPrice),
         };
       }
 
       lastCandle = updatedCandle;
       seriesRef.current.update(updatedCandle);
+      
+      requestRef.current = requestAnimationFrame(updateLoop);
     };
 
-    const interval = setInterval(updateLoop, 100); // 10 FPS for ultra-smooth movement
+    requestRef.current = requestAnimationFrame(updateLoop);
 
     const handleResize = () => {
       if (chartContainerRef.current) {
@@ -145,7 +174,7 @@ export const OnyxTradingChart: React.FC = () => {
     window.addEventListener('resize', handleResize);
 
     return () => {
-      clearInterval(interval);
+      if (requestRef.current) cancelAnimationFrame(requestRef.current);
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };

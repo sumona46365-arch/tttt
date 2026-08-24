@@ -62,7 +62,7 @@ export async function startMarketEngine() {
           try {
             // Process REAL market continuously for all pairs
             const roomNameReal = `market_${pair}_real`;
-            const realTick = updatePair(pair, 'real', nowSec);
+            const realTick = await updatePair(pair, 'real', nowSec);
             if (realTick) {
               io.to(roomNameReal).emit('market_tick', { pair, ...realTick });
               tickDataReal[pair] = realTick;
@@ -70,7 +70,7 @@ export async function startMarketEngine() {
 
             // Process DEMO market continuously for all pairs
             const roomNameDemo = `market_${pair}_demo`;
-            const demoTick = updatePair(pair, 'demo', nowSec);
+            const demoTick = await updatePair(pair, 'demo', nowSec);
             if (demoTick) {
               io.to(roomNameDemo).emit('market_tick', { pair, ...demoTick });
             }

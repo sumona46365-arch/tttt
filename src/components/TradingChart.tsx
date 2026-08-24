@@ -144,10 +144,15 @@ export const TradingChart: React.FC = () => {
     let currentPrice = historyPrice;
     lastCandleRef.current = historicalData[historicalData.length - 1];
 
-    // Onyx Logic: Real-time update loop using requestAnimationFrame
-    let candleCount = historyCount;
+    // Onyx Logic: Real-time engine starts EXACTLY where history ended
     let lastTickTime = 0;
     let nextTickDelay = 500;
+    let targetPrice = historyPrice;
+    let visualPrice = historyPrice;
+    
+    // Volatility parameters for "Natural" movement
+    let currentVolatility = 0.0006;
+    let volatilityBurstTimer = 0;
 
     const updateLoop = () => {
       if (!seriesRef.current) return;
@@ -155,46 +160,61 @@ export const TradingChart: React.FC = () => {
       const now = Date.now();
       const candleTime = (Math.floor(now / (timeframeSeconds * 1000)) * timeframeSeconds) as Time;
 
-      // Only move the price in distinct ticks (e.g., every 250ms to 500ms)
-      // This prevents 60FPS micro-jitter and creates solid, confident movements like major platforms
+      // 1. Core Logic Update (Ticks) - Simulating dynamic market behavior
       if (now - lastTickTime > nextTickDelay) {
         lastTickTime = now;
-        nextTickDelay = Math.random() * 250 + 250; // Ticks happen every 250ms-500ms
-
-        // Larger, more deliberate price movements matching historical scale
-        const baseVolatility = 0.0006;
-        const jump = (Math.random() - 0.5) * baseVolatility;
-        const momentum = (Math.random() - 0.5) > 0 ? 1.5 : 0.7; 
         
-        currentPrice += jump * momentum;
+        // Randomly trigger volatility bursts for "Long Body" or "Fast" candles
+        if (volatilityBurstTimer <= 0) {
+          if (Math.random() > 0.9) {
+            volatilityBurstTimer = Math.random() * 5000 + 2000; // 2-7 seconds of burst
+            currentVolatility = 0.0015; // High volatility
+          } else {
+            currentVolatility = 0.0004 + Math.random() * 0.0004; // Normal to low
+          }
+        } else {
+          volatilityBurstTimer -= nextTickDelay;
+        }
+
+        nextTickDelay = Math.random() * 150 + 100; // Faster ticks for "Live" feel
+        
+        const jump = (Math.random() - 0.5) * currentVolatility;
+        const momentum = (Math.random() - 0.5) > 0 ? 1.8 : 0.6; 
+        targetPrice += jump * momentum;
       }
+
+      // 2. Natural Micro-Fluctuations (Jitter)
+      // Adds that "Live" vibration seen in real trading platforms
+      const microJitter = (Math.random() - 0.5) * 0.00005;
+      const effectiveTarget = targetPrice + microJitter;
+
+      // 3. Fast + Smooth Interpolation (Lerp)
+      // Increased factor for faster response while keeping it fluid
+      const lerpFactor = 0.28; 
+      visualPrice = visualPrice + (effectiveTarget - visualPrice) * lerpFactor;
 
       let updatedCandle: CandlestickData<Time>;
 
+      // 4. Correct High/Low Formation Tracking
       if (!lastCandleRef.current || (Number(candleTime) > Number(lastCandleRef.current.time))) {
-        // Pillar 1: No-Gap Logic (New Open = Last Close)
-        const openPrice = lastCandleRef.current ? lastCandleRef.current.close : currentPrice;
+        // Start of a new candle
+        const openPrice = lastCandleRef.current ? lastCandleRef.current.close : visualPrice;
         
         updatedCandle = {
           time: candleTime,
           open: openPrice,
-          high: Math.max(openPrice, currentPrice) + 0.0001, // Give a tiny initial wick to avoid square boxes
-          low: Math.min(openPrice, currentPrice) - 0.0001,
-          close: currentPrice,
+          high: Math.max(openPrice, visualPrice),
+          low: Math.min(openPrice, visualPrice),
+          close: visualPrice,
         };
-
-        // Performance Guard: Garbage Collection for old candles to prevent memory leak
-        candleCount++;
-        if (candleCount > 2000) {
-          candleCount = 0;
-        }
       } else {
-        // High-frequency merging
+        // Continuous development of the current candle
         updatedCandle = {
           ...lastCandleRef.current,
-          close: currentPrice,
-          high: Math.max(lastCandleRef.current.high, currentPrice),
-          low: Math.min(lastCandleRef.current.low, currentPrice),
+          close: visualPrice,
+          // Track absolute high/low reached during this 5s window
+          high: Math.max(lastCandleRef.current.high, visualPrice),
+          low: Math.min(lastCandleRef.current.low, visualPrice),
         };
       }
 

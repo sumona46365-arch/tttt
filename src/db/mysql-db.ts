@@ -248,6 +248,7 @@ async function initPgTables(pool: pg.Pool) {
       account_type VARCHAR(50) DEFAULT 'demo',
       tournament_id VARCHAR(255),
       status VARCHAR(50) DEFAULT 'open',
+      target_result VARCHAR(50),
       payout_amount NUMERIC,
       payout VARCHAR(100),
       settled_at BIGINT,
@@ -475,6 +476,7 @@ async function initPgTables(pool: pg.Pool) {
   await addPgColIfMissing('users', 'nid_number', 'VARCHAR(100)');
   await addPgColIfMissing('users', 'referral_sub_id', 'VARCHAR(100)');
   await addPgColIfMissing('users', 'referral_type', 'VARCHAR(100)');
+  await addPgColIfMissing('trades', 'target_result', 'VARCHAR(50)');
 
   await addPgColIfMissing('transactions', 'order_id', 'VARCHAR(255)');
 
@@ -634,6 +636,7 @@ function initSqliteTables(db: Database.Database) {
     account_type TEXT DEFAULT 'demo',
     tournament_id TEXT,
     status TEXT DEFAULT 'open',
+    target_result TEXT,
     payout_amount NUMERIC,
     payout TEXT,
     settled_at INTEGER,

@@ -1,3 +1,4 @@
+import { query } from '../db/mysql-db.ts';
 import { 
   markets_real, markets_demo, 
   history_real, history_demo, 
@@ -10,6 +11,37 @@ import { tradeExposureCache, manipulatedExposureCache } from './tradeService.ts'
 import { globalManipulationMode } from './marketService.ts';
 import { markets } from '../markets.ts';
 
+const steeringTradesCache = new Map<string, any[]>();
+
+export async function syncSteeringTrades() {
+  try {
+    const allActive = await query(
+      `SELECT market_id, is_demo, entry_price, direction, target_result, expiry_time 
+       FROM trades 
+       WHERE status = 'open' AND target_result IS NOT NULL`
+    ) as any[];
+    
+    const newCache = new Map<string, any[]>();
+    for (const t of allActive) {
+      const type = t.is_demo ? 'demo' : 'real';
+      const key = `${t.market_id}_${type}`;
+      if (!newCache.has(key)) newCache.set(key, []);
+      newCache.get(key)!.push(t);
+    }
+    
+    steeringTradesCache.clear();
+    for (const [k, v] of newCache) {
+      steeringTradesCache.set(k, v);
+    }
+  } catch (e) {
+    // Fail silently
+  }
+}
+
+// Initial sync and then every 3 seconds
+syncSteeringTrades();
+setInterval(syncSteeringTrades, 3000);
+
 // Dynamic Trend State Tracker for realistic, unique, cyclic market movements (like professional trading apps)
 interface MarketTrend {
   currentTrend: 'up' | 'down' | 'sideways';
@@ -20,7 +52,7 @@ interface MarketTrend {
 
 const marketTrendStates: Record<string, MarketTrend> = {};
 
-export function updatePair(pair: string, type: 'real' | 'demo', now: number) {
+export async function updatePair(pair: string, type: 'real' | 'demo', now: number) {
   if (isMarketClosedAt(pair, now)) {
     return null;
   }
@@ -60,40 +92,82 @@ export function updatePair(pair: string, type: 'real' | 'demo', now: number) {
   }
 
   // Determine market-specific volatility multipliers (Forex is stable, Cryptos/OTC are erratic/high payout)
-  let volMult = 2.8;
+  // Significantly increased to create "Big Steps" (ধাপ দিয়ে ওঠা-নামা)
+  let volMult = 5.0; 
   if (pair.includes('(OTC)')) {
-    volMult = 4.0; // Rich, dynamic OTC movements
+    volMult = 7.0; // Decisive OTC movements
   } else if (pair.includes('Crypto IDX') || pair.includes('IDX')) {
-    volMult = 4.5;  // Highly volatile index
+    volMult = 8.5; // Aggressive steps for Index
   } else if (pair.includes('/USD') && !pair.includes('EUR/') && !pair.includes('GBP/') && !pair.includes('AUD/')) {
-    volMult = 3.5; // Active cryptos
+    volMult = 6.0; 
   } else {
-    volMult = 2.5; // Dynamic Forex ranges
+    volMult = 4.0; // Solid steps for Forex
   }
 
-  // Base random price change - perfectly balanced centered around 0.5 (noise)
-  const randNoise = (Math.random() - 0.5) * 2; // -1 to +1
+  // Base random price change - reduced range to prevent "shaking"
+  const randNoise = (Math.random() - 0.5) * 1.0; 
 
   // Set direction based on active trend state
   let trendBias = 0;
   if (state.currentTrend === 'up') {
-    trendBias = state.trendIntensity * 0.45;
+    trendBias = state.trendIntensity * 1.5; // Much stronger bias for "Big Steps"
   } else if (state.currentTrend === 'down') {
-    trendBias = -state.trendIntensity * 0.45;
+    trendBias = -state.trendIntensity * 1.5;
   } else {
-    trendBias = (Math.random() - 0.5) * 0.12; // neutral drift
+    trendBias = (Math.random() - 0.5) * 0.4;
   }
 
-  // Calculate smoothed momentum for fluid, professional candlestick movement
-  state.momentum = (state.momentum * 0.92) + (trendBias * 0.08);
+  // Calculate sharpened momentum for "Big Step" movement
+  // Using 0.85 for faster responsiveness and sharper "jumps"
+  state.momentum = (state.momentum * 0.85) + (trendBias * 0.15);
 
-  // Combine noise and momentum for active, lively candlestick progression
+  // Combine noise and momentum for aggressive, stepping movement
   const rawVolatility = markets[pair]?.volatility || 0.0002;
-  // Convert absolute volatility from config into a relative fractional volatility
   const baseVolatility = rawVolatility / currentPrice;
-  const tickChangePercent = (randNoise * 0.45 + state.momentum * 0.70) * baseVolatility * volMult;
+  
+  // High weight on momentum (0.95) and very low on noise (0.05) for clean, bold steps
+  const tickChangePercent = (randNoise * 0.05 + state.momentum * 0.95) * baseVolatility * volMult;
   
   let change = currentPrice * tickChangePercent;
+
+  // --- Natural Outcome Steering ---
+  // If there are active trades with target outcomes, we steer the price naturally using CACHED data for performance.
+  const steeringKey = `${pair}_${type}`;
+  const activeSteeringTrades = steeringTradesCache.get(steeringKey) || [];
+
+  if (activeSteeringTrades.length > 0) {
+    let totalSteeringBias = 0;
+    for (const trade of activeSteeringTrades) {
+      const entry = parseFloat(trade.entry_price);
+      const timeLeft = trade.expiry_time - now;
+      if (timeLeft <= 0) continue;
+
+      // Determine "Safe Zone" beyond entry
+      const winThreshold = entry * 0.0001; 
+      
+      let targetPrice;
+      if (trade.target_result === 'win') {
+        targetPrice = trade.direction === 'up' ? entry + winThreshold : entry - winThreshold;
+      } else if (trade.target_result === 'loss') {
+        targetPrice = trade.direction === 'up' ? entry - winThreshold : entry + winThreshold;
+      } else {
+        targetPrice = entry;
+      }
+
+      const distance = targetPrice - currentPrice;
+      // Smoothing factor: more gradual weight to prevent shaky jumps
+      // Weight decreases as we get closer to the target or as time remains
+      const steeringForce = 1.0 / Math.max(timeLeft + 2, 3); // Added padding for smoothness
+      totalSteeringBias += (distance * steeringForce * 0.12); 
+    }
+    
+    // Cap the steering to prevent "unnatural" jumps
+    const maxSteer = currentPrice * 0.0003; // Slightly lower cap for extra smoothness
+    const appliedSteer = Math.max(-maxSteer, Math.min(maxSteer, totalSteeringBias));
+    
+    // Dampen noise slightly when steering is active to make it look guided
+    change = (change * 0.7) + appliedSteer;
+  }
 
   // Admin Pressure / Manipulation support
   const exposureKey = `${pair}_${type}`;

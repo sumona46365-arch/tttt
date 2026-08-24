@@ -1,5 +1,29 @@
 import React, { useEffect, useState, Suspense, lazy } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { useLocation, BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+
+function ReferralTracker() {
+  const location = useLocation();
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const ref = params.get('ref');
+    const sub = params.get('sub');
+    const type = params.get('type');
+    
+    if (ref) {
+      localStorage.setItem('referralCode', ref);
+      localStorage.setItem('referral_code', ref);
+      if (sub) {
+        localStorage.setItem('referralSub', sub);
+        localStorage.setItem('referral_sub_id', sub);
+      }
+      if (type) {
+        localStorage.setItem('referralType', type);
+        localStorage.setItem('referral_type', type);
+      }
+    }
+  }, [location]);
+  return null;
+}
 import { auth, db, onAuthStateChanged, signOut, getDoc, doc, getDocs, query, collection, where, setDoc, updateDoc, limit } from './firebase';
 import { User } from './lib/auth-client.ts';
 import { Lock, LogOut } from 'lucide-react';
@@ -829,7 +853,7 @@ export default function App() {
     );
   }
 
-  const isAffiliateSubdomain = window.location.hostname.startsWith('affiliate.') || window.location.hostname.includes('affiliate');
+  const isAffiliateSubdomain = window.location.hostname.startsWith('affiliate.') || window.location.hostname.includes('affiliate') || window.location.hostname.startsWith('partner.') || window.location.hostname.includes('partner');
   const isMarketSubdomain = window.location.hostname.startsWith('market.') || window.location.hostname.includes('market');
 
   return (
@@ -844,6 +868,7 @@ export default function App() {
           <SupportProvider>
             <SupportModalWrapper user={user} />
           <BrowserRouter>
+            <ReferralTracker />
             <AppBoundary>
             <Suspense fallback={<PageLoader />}>
               <Routes>

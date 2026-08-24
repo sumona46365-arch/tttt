@@ -239,7 +239,7 @@ export default function AuthPage() {
     const sub = localStorage.getItem('referralSub') || localStorage.getItem('referral_sub_id') || urlSub;
     const type = localStorage.getItem('referralType') || localStorage.getItem('referral_type') || urlType;
 
-    let finalReferrerUid = ref;
+    let finalReferrerUid = null;
     if (ref) {
       try {
         const referrerUser = await getUserByAffiliateId(ref);

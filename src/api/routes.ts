@@ -551,6 +551,81 @@ router.post('/auth/login', async (req, res) => {
   }
 });
 
+// Partner Login OTP Map & Endpoints
+const partnerLoginOtps = new Map<string, { otp: string, expiresAt: number, userId: string }>();
+
+router.post('/auth/partner/send-otp', async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
+
+  try {
+    const user = await get('SELECT * FROM users WHERE email = ?', [email]) as any;
+    if (!user || !user.password_hash) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const match = await bcrypt.compare(password, user.password_hash);
+    if (!match) return res.status(401).json({ error: 'Invalid credentials' });
+
+    // Generate a secure 6-digit OTP code
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
+
+    partnerLoginOtps.set(email.toLowerCase().trim(), { otp, expiresAt, userId: user.uid });
+
+    // Send email with OTP using the system sendEmail helper
+    const subject = 'Bivaax Partners Login Verification Code';
+    const html = `
+      <div style="font-family: sans-serif; max-w: 600px; margin: 0 auto; background-color: #f9f9f9; padding: 30px; border-radius: 12px; border: 1px solid #edf2f7;">
+        <h2 style="color: #111217; font-size: 20px; font-weight: 800; text-align: center; margin-bottom: 24px;">PARTNER LOGIN VERIFICATION</h2>
+        <p style="color: #4a5568; font-size: 14px; line-height: 1.6;">You are attempting to sign in to your Bivaax Partners affiliate portal. Please use the following 6-digit security code to complete your verification:</p>
+        <div style="background-color: #111217; color: #FFE24C; padding: 20px; text-align: center; font-size: 36px; font-weight: 800; letter-spacing: 5px; border-radius: 8px; margin: 30px 0; font-family: monospace;">
+          ${otp}
+        </div>
+        <p style="color: #718096; font-size: 12px; line-height: 1.5; text-align: center;">This code is valid for 5 minutes. If you did not initiate this login request, please secure your account immediately.</p>
+      </div>
+    `;
+    await sendEmail(email, subject, html);
+
+    res.json({ success: true, message: 'Verification OTP sent to your email' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/auth/partner/verify-otp', async (req, res) => {
+  const { email, otp } = req.body;
+  if (!email || !otp) return res.status(400).json({ error: 'Email and OTP are required' });
+
+  try {
+    const record = partnerLoginOtps.get(email.toLowerCase().trim());
+    if (!record) {
+      return res.status(400).json({ error: 'No active login request found for this email' });
+    }
+
+    if (Date.now() > record.expiresAt) {
+      partnerLoginOtps.delete(email.toLowerCase().trim());
+      return res.status(400).json({ error: 'Verification code expired' });
+    }
+
+    if (record.otp !== otp) {
+      return res.status(401).json({ error: 'Invalid verification code' });
+    }
+
+    // OTP verified! Get the user.
+    const user = await get('SELECT * FROM users WHERE uid = ?', [record.userId]) as any;
+    partnerLoginOtps.delete(email.toLowerCase().trim());
+
+    if (!user) {
+      return res.status(400).json({ error: 'User not found' });
+    }
+
+    res.json({ success: true, user });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/api/kyc', async (req, res) => {
   const { userId, kycData } = req.body;
   if (!userId || !kycData) return res.status(400).json({ error: 'Missing KYC data' });
@@ -2231,7 +2306,7 @@ router.get('/support/analytics', async (req, res) => {
 });
 
 import { processCopyTrading } from '../services/copyTradingService.ts';
-import { settleTrade } from '../services/tradeService.ts';
+import { settleTrade, determineTradeOutcome } from '../services/tradeService.ts';
 import { createDeposit } from '../services/gopayService.ts';
 
 // 10. Trade Placement (Compatibility with frontend)
@@ -2246,6 +2321,19 @@ router.post('/trade', async (req, res) => {
 
   try {
     await transaction(async (conn) => {
+      // 0. Check for existing 5s trade
+      let duration = trade?.timeLeft || 60;
+      if (Number(duration) === 5) {
+        const active5s = await get(
+          'SELECT id FROM trades WHERE user_id = ? AND duration = 5 AND status = "open"',
+          [userId],
+          conn
+        );
+        if (active5s) {
+          throw new Error('You already have an active 5-second trade. Please wait for it to complete.');
+        }
+      }
+
       // 1. Check user balance
       let currentBalance = new Big(0);
       let balanceField = 'real_balance';
@@ -2286,7 +2374,7 @@ router.post('/trade', async (req, res) => {
 
       // 3. Insert trade
       const entryPrice = trade?.entryPrice || 0;
-      const duration = trade?.timeLeft || 60;
+      duration = trade?.timeLeft || 60;
       const expiryTime = trade?.expirationTime ? Math.floor(trade.expirationTime / 1000) : Math.floor((Date.now() + duration * 1000) / 1000);
       const createdAt = Date.now();
 
@@ -2612,6 +2700,18 @@ router.post('/trades/place',
 
   try {
     await transaction(async (conn) => {
+      // 0. Check for existing 5s trade if this is a 5s trade
+      if (Number(duration) === 5) {
+        const active5s = await get(
+          'SELECT id FROM trades WHERE user_id = ? AND duration = 5 AND status = "open"',
+          [uid],
+          conn
+        );
+        if (active5s) {
+          throw new Error('You already have an active 5-second trade. Please wait for it to complete.');
+        }
+      }
+
       // 1. Check balance with lock
       const user = await get('SELECT real_balance, demo_balance FROM users WHERE uid = ?', [uid], conn) as any;
       
@@ -2642,13 +2742,25 @@ router.post('/trades/place',
         await run(`UPDATE users SET ${balanceField} = ? WHERE uid = ?`, [newBalance, uid], conn);
       }
 
-      // 3. Insert trade
+      // 3. Pre-determine outcome
       const now = Date.now();
+      const targetResult = await determineTradeOutcome({
+        user_id: uid,
+        market_id: marketId,
+        amount,
+        direction,
+        duration,
+        is_demo: (isDemo || accountType === 'demo'),
+        expiry_time: Math.floor((now + duration * 1000) / 1000),
+        created_at: now
+      }, conn);
+
+      // 4. Insert trade
       const expiryTime = Math.floor((now + duration * 1000) / 1000);
       await run(
-        `INSERT INTO trades (user_id, market_id, amount, direction, entry_price, duration, expiry_time, is_demo, status, account_type, tournament_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [uid, marketId, amount.toString(), direction, entryPrice.toString(), duration, expiryTime, (isDemo || accountType === 'demo') ? 1 : 0, 'open', accountType || (isDemo ? 'demo' : 'real'), isTournament ? tournamentId : null, now],
+        `INSERT INTO trades (user_id, market_id, amount, direction, entry_price, duration, expiry_time, is_demo, status, target_result, account_type, tournament_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [uid, marketId, amount.toString(), direction, entryPrice.toString(), duration, expiryTime, (isDemo || accountType === 'demo') ? 1 : 0, 'open', targetResult, accountType || (isDemo ? 'demo' : 'real'), isTournament ? tournamentId : null, now],
         conn
       );
 

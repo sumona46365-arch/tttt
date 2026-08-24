@@ -1043,6 +1043,7 @@ interface Trade {
   closePrice?: number;
   status?: string;
   payoutAmount?: number;
+  duration?: number;
   [key: string]: any;
 }
 
@@ -5003,13 +5004,12 @@ const PROMOTED_ARTICLES = [
           if (currentInterpolatedPriceRef.current === 0) {
               currentInterpolatedPriceRef.current = targetPriceRef.current;
           } else {
-              currentInterpolatedPriceRef.current += (targetPriceRef.current - currentInterpolatedPriceRef.current) * 0.32;
+              // Buttery smooth fluid interpolation at 60FPS
+              // 0.28 factor ensures it is both Fast and Smooth
+              currentInterpolatedPriceRef.current += (targetPriceRef.current - currentInterpolatedPriceRef.current) * 0.28;
           }
-          if (isLineOrMountain) {
-              newInterp = currentInterpolatedPriceRef.current;
-          } else {
-              newInterp = targetPriceRef.current;
-          }
+          // Enable interpolation for ALL chart types to ensure no jumping
+          newInterp = currentInterpolatedPriceRef.current;
       }
 
       const hasPriceChanged = newInterp !== lastRenderedPriceRef.current;
@@ -5655,9 +5655,8 @@ const PROMOTED_ARTICLES = [
   const dynamicLeaderboard = React.useMemo(() => {
     if (!leaderboards) return [];
     
-    const sourceData = (leaderboards.daily || [])
-        .sort((a: any, b: any) => parseFloat(b.profit || b.total_profit || 0) - parseFloat(a.profit || a.total_profit || 0))
-        .slice(0, 20);
+    const sortedAll = (leaderboards.daily || [])
+        .sort((a: any, b: any) => parseFloat(b.profit || b.total_profit || 0) - parseFloat(a.profit || a.total_profit || 0));
 
     const getCountryCode = (countryName: string) => {
         if (!countryName) return "gb";
@@ -5674,12 +5673,41 @@ const PROMOTED_ARTICLES = [
         return "gb";
     };
 
-    return sourceData.map((l: any, i: number) => {
+    const top20 = sortedAll.slice(0, 20);
+    const currentUserIndexInAll = currentUser ? sortedAll.findIndex((l: any) => l.user_id === currentUser.uid) : -1;
+
+    let displayList = [...top20];
+
+    if (currentUser && currentUserIndexInAll >= 20) {
+      displayList.push({
+        ...sortedAll[currentUserIndexInAll],
+        _actualRank: currentUserIndexInAll + 1
+      });
+    } else if (currentUser && currentUserIndexInAll === -1) {
+      const todayProfit = userTodayProfit || 0;
+      displayList.push({
+        user_id: currentUser.uid,
+        display_name: currentUser.displayName || currentUser.email?.split('@')[0] || 'You',
+        profit: todayProfit,
+        country: 'United Kingdom',
+        country_code: 'gb',
+        _actualRank: '-'
+      });
+    }
+
+    return displayList.map((l: any, i: number) => {
       const countryCode = (l.country_code || "").toLowerCase() || getCountryCode(l.country);
       const rawProfit = parseFloat(l.profit || l.total_profit || 0);
       const profitVal = isNaN(rawProfit) ? 0 : rawProfit;
 
-      const formattedProfit = profitVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const isCurrentUser = currentUser && currentUser.uid === l.user_id;
+
+      let formattedProfit = '';
+      if (profitVal > 25000 && !isCurrentUser) {
+        formattedProfit = '25,000.00+';
+      } else {
+        formattedProfit = profitVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      }
           
       return {
         id: l.user_id,
@@ -5687,12 +5715,13 @@ const PROMOTED_ARTICLES = [
         profit: profitVal,
         country: l.country || 'United Kingdom',
         flagUrl: `https://flagcdn.com/w40/${countryCode}.png`,
-        isCurrentUser: currentUser && currentUser.uid === l.user_id,
-        rank: i + 1,
+        flagEmoji: l.flagEmoji || '🌐',
+        isCurrentUser,
+        rank: l._actualRank !== undefined ? l._actualRank : (i + 1),
         formattedProfit
       };
     });
-  }, [leaderboards, currentUser]);
+  }, [leaderboards, currentUser, userTodayProfit]);
 
   // Security Logging - Track IP and Device ID once per session
   useEffect(() => {
@@ -7320,7 +7349,7 @@ const PROMOTED_ARTICLES = [
     } else if (chartType === "Line") {
       series = chart.addSeries(LineSeries, { ...commonOptions, color: "#3b82f6", lineWidth: 3 });
     } else if (chartType === "Mountain") {
-      series = chart.addSeries(AreaSeries, { ...commonOptions, topColor: "rgba(59, 130, 246, 0.4)", bottomColor: "rgba(59, 130, 246, 0.0)", lineColor: "#3b82f6", lineWidth: 3 });
+      series = chart.addSeries(AreaSeries, { ...commonOptions, topColor: "rgba(41, 121, 255, 0.5)", bottomColor: "rgba(41, 121, 255, 0.0)", lineColor: "#2979ff", lineWidth: 3 });
     } else if (chartType === "Bar") {
       series = chart.addSeries(BarSeries, { ...commonOptions, upColor: "#00c0a3", downColor: "#ff5252" });
     }
@@ -7583,6 +7612,16 @@ const PROMOTED_ARTICLES = [
         
     const exactExpirationTime = is5STActive ? (freshNowMs + 5000) : freshExpirationDate.getTime();
     const tradeDurationSeconds = is5STActive ? 5 : Math.max(5, Math.floor((exactExpirationTime - freshNowMs) / 1000));
+
+    // Restriction: Cannot take more than one 5-second trade simultaneously
+    if (tradeDurationSeconds === 5) {
+      const active5sCount = activeTradesRef.current.filter(t => (t.timeLeft === 5 || (t.status === 'open' && t['duration'] === 5)) && t.status === 'open').length;
+      if (active5sCount > 0) {
+        toast.error("You already have an active 5-second trade. Please wait for it to complete.");
+        setIsPlacingTrade(false);
+        return;
+      }
+    }
 
     const newTradeId = Math.random().toString(36).substring(2, 12);
     const newTrade: Trade = {
@@ -9497,53 +9536,63 @@ const PROMOTED_ARTICLES = [
                 {isLoadingLeaderboard ? (
                    <div className="text-center text-white py-4">Loading...</div>
                 ) : (
-                  dynamicLeaderboard.map((trader, idx) => (
-                  <div
-                    key={`leaderboard-trader-${trader.rank || idx}`}
-                    className={`py-[10px] px-1 flex justify-between items-center border-b border-[#2C2D33]/40 last:border-0 transition-colors ${
-                      trader.isCurrentUser ? "bg-[#FFE24C]/10 rounded-lg px-3 -mx-2 hover:bg-[#FFE24C]/20" : "hover:bg-[#1a1b1f]"
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={`w-[24px] h-[24px] rounded-[6px] flex items-center justify-center text-[12px] font-bold ${
-                          trader.rank === 1 ? "bg-[#FFE24C] text-black shadow-[0_0_10px_rgba(255,226,76,0.3)]" : 
-                          trader.rank === 2 ? "bg-[#e0e0e0] text-black" : 
-                          trader.rank === 3 ? "bg-[#D3885D] text-white" : 
-                          trader.isCurrentUser ? "bg-[#FFE24C]/20 text-[#FFE24C]" :
-                          "bg-[#2C2D33]/50 text-[#a6aeb9]"
-                        }`}
-                      >
-                        {trader.rank}
-                      </div>
-                      <div className="w-[18px] h-[13px] rounded-[1px] overflow-hidden flex items-center justify-center text-[13px] bg-white/5">
-                        {trader.flagUrl ? (
-                          <img 
-                             src={trader.flagUrl} 
-                             alt="" 
-                             className="w-full h-full object-cover"
-                             onError={(e) => {
-                                (e.target as HTMLImageElement).style.display = 'none';
-                             }}
-                          />
-                        ) : (
-                          trader.flagEmoji || "🌐"
+                  dynamicLeaderboard.map((trader, idx) => {
+                    const isGap = idx > 0 && typeof trader.rank === 'number' && typeof dynamicLeaderboard[idx - 1].rank === 'number' && trader.rank > dynamicLeaderboard[idx - 1].rank + 1;
+                    const isMockGap = idx > 0 && trader.rank === '-' && dynamicLeaderboard[idx - 1].rank !== '-';
+                    return (
+                      <React.Fragment key={`trader-frag-${trader.id || idx}`}>
+                        {(isGap || isMockGap) && (
+                          <div className="flex items-center justify-center py-2 text-gray-500 text-[10px] tracking-[0.3em] font-black uppercase opacity-60">
+                            •••
+                          </div>
                         )}
-                      </div>
-                      <div className="flex flex-col min-w-0">
-                        <span className={`text-[13px] font-bold uppercase tracking-tight truncate ${trader.isCurrentUser ? 'text-[#FFE24C]' : 'text-white'}`}>
-                           {trader.name}
-                        </span>
-                        <span className="text-[9px] text-gray-500 font-medium truncate">
-                          {trader.country}
-                        </span>
-                      </div>
-                    </div>
-                    <span className={`font-bold text-[14px] tracking-tighter ${trader.isCurrentUser ? 'text-[#FFE24C]' : 'text-white'}`}>
-                      ${trader.formattedProfit}
-                    </span>
-                  </div>
-                  ))
+                        <div
+                          className={`py-[10px] px-1 flex justify-between items-center border-b border-[#2C2D33]/40 last:border-0 transition-colors ${
+                            trader.isCurrentUser ? "bg-[#FFE24C]/10 rounded-lg px-3 -mx-2 hover:bg-[#FFE24C]/20" : "hover:bg-[#1a1b1f]"
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div
+                              className={`w-[24px] h-[24px] rounded-[6px] flex items-center justify-center text-[12px] font-bold ${
+                                trader.rank === 1 ? "bg-[#FFE24C] text-black shadow-[0_0_10px_rgba(255,226,76,0.3)]" : 
+                                trader.rank === 2 ? "bg-[#e0e0e0] text-black" : 
+                                trader.rank === 3 ? "bg-[#D3885D] text-white" : 
+                                trader.isCurrentUser ? "bg-[#FFE24C]/20 text-[#FFE24C]" :
+                                "bg-[#2C2D33]/50 text-[#a6aeb9]"
+                              }`}
+                            >
+                              {trader.rank}
+                            </div>
+                            <div className="w-[18px] h-[13px] rounded-[1px] overflow-hidden flex items-center justify-center text-[13px] bg-white/5">
+                              {trader.flagUrl ? (
+                                <img 
+                                   src={trader.flagUrl} 
+                                   alt="" 
+                                   className="w-full h-full object-cover"
+                                   onError={(e) => {
+                                      (e.target as HTMLImageElement).style.display = 'none';
+                                   }}
+                                />
+                              ) : (
+                                trader.flagEmoji || "🌐"
+                              )}
+                            </div>
+                            <div className="flex flex-col min-w-0">
+                              <span className={`text-[13px] font-bold uppercase tracking-tight truncate ${trader.isCurrentUser ? 'text-[#FFE24C]' : 'text-white'}`}>
+                                 {trader.name}
+                              </span>
+                              <span className="text-[9px] text-gray-500 font-medium truncate">
+                                {trader.country}
+                              </span>
+                            </div>
+                          </div>
+                          <span className={`font-bold text-[14px] tracking-tighter ${trader.isCurrentUser ? 'text-[#FFE24C]' : 'text-white'}`}>
+                            ${trader.formattedProfit}
+                          </span>
+                        </div>
+                      </React.Fragment>
+                    );
+                  })
                 )}
               </div>
             </div>

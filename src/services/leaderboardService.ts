@@ -12,14 +12,16 @@ export const updateLeaderboardStats = async (userId: string, tradeStatus: 'won' 
       const won = isWin ? 1 : 0;
       const lost = tradeStatus === 'lost' ? 1 : 0;
       const draw = tradeStatus === 'draw' ? 1 : 0;
-      const roi = volume > 0 ? (profit / volume) * 100 : 0;
+      
+      const addedProfit = profit > 0 ? profit : 0;
+      const roi = volume > 0 ? (addedProfit / volume) * 100 : 0;
 
       await run(`
         INSERT INTO leaderboard_stats (
           user_id, total_profit, total_trades, won_trades, lost_trades, draw_trades,
           total_volume, current_streak, max_streak, roi, last_trade_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [userId, profit, 1, won, lost, draw, volume, currentStreak, isWin ? 1 : 0, roi, now], conn);
+      `, [userId, addedProfit, 1, won, lost, draw, volume, currentStreak, isWin ? 1 : 0, roi, now], conn);
     } else {
       let currentStreak = stat.current_streak || 0;
       let maxStreak = stat.max_streak || 0;
@@ -34,7 +36,9 @@ export const updateLeaderboardStats = async (userId: string, tradeStatus: 'won' 
       }
 
       const newVolume = (stat.total_volume || 0) + volume;
-      const newProfit = (stat.total_profit || 0) + profit;
+      // Only count positive profit (wins) for the leaderboard ranking as requested
+      const addedProfit = profit > 0 ? profit : 0;
+      const newProfit = (stat.total_profit || 0) + addedProfit;
       const newRoi = newVolume > 0 ? (newProfit / newVolume) * 100 : 0;
 
       await run(`
@@ -51,7 +55,7 @@ export const updateLeaderboardStats = async (userId: string, tradeStatus: 'won' 
           last_trade_at = ?
         WHERE user_id = ?
       `, [
-        profit, 
+        addedProfit, 
         tradeStatus === 'won' ? 1 : 0,
         tradeStatus === 'lost' ? 1 : 0,
         tradeStatus === 'draw' ? 1 : 0,
@@ -158,7 +162,7 @@ export const fetchLeaderboards = async () => {
       daily = await query(`
         SELECT * FROM (
           SELECT t.user_id, 
-                 SUM(CASE WHEN t.status = 'won' THEN (CAST(COALESCE(t.payout_amount, 0) AS REAL) - CAST(t.amount AS REAL)) ELSE -CAST(t.amount AS REAL) END) as profit,
+                 SUM(CASE WHEN t.status = 'won' THEN (CAST(COALESCE(t.payout_amount, 0) AS REAL) - CAST(t.amount AS REAL)) ELSE 0 END) as profit,
                  CAST(u.real_balance AS REAL) as balance,
                  COALESCE(u.nickname, u.display_name) as display_name, u.photo_url, u.country, u.country_code
           FROM trades t
@@ -181,7 +185,7 @@ export const fetchLeaderboards = async () => {
       weekly = await query(`
         SELECT * FROM (
           SELECT t.user_id, 
-                 SUM(CASE WHEN t.status = 'won' THEN (CAST(COALESCE(t.payout_amount, 0) AS REAL) - CAST(t.amount AS REAL)) ELSE -CAST(t.amount AS REAL) END) as profit,
+                 SUM(CASE WHEN t.status = 'won' THEN (CAST(COALESCE(t.payout_amount, 0) AS REAL) - CAST(t.amount AS REAL)) ELSE 0 END) as profit,
                  CAST(u.real_balance AS REAL) as balance,
                  COALESCE(u.nickname, u.display_name) as display_name, u.photo_url, u.country, u.country_code
           FROM trades t
@@ -204,7 +208,7 @@ export const fetchLeaderboards = async () => {
       monthly = await query(`
         SELECT * FROM (
           SELECT t.user_id, 
-                 SUM(CASE WHEN t.status = 'won' THEN (CAST(COALESCE(t.payout_amount, 0) AS REAL) - CAST(t.amount AS REAL)) ELSE -CAST(t.amount AS REAL) END) as profit,
+                 SUM(CASE WHEN t.status = 'won' THEN (CAST(COALESCE(t.payout_amount, 0) AS REAL) - CAST(t.amount AS REAL)) ELSE 0 END) as profit,
                  CAST(u.real_balance AS REAL) as balance,
                  COALESCE(u.nickname, u.display_name) as display_name, u.photo_url, u.country, u.country_code
           FROM trades t
