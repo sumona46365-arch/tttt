@@ -25,10 +25,9 @@ export const getCurrencySymbol = (code: string = 'USD') => {
 export const formatWithCurrency = (amount: number, currencyCode: string = 'USD') => {
   const currency = currencies.find(c => c.code === currencyCode) || currencies[0];
   const num = Number(amount || 0);
-  const converted = num * (currency.rate || 1);
-  const decimals = ['USD', 'USDT', 'EUR', 'GBP'].includes(currency.code) ? 2 : (Math.abs(converted) < 10 ? 2 : 0);
+  const decimals = ['USD', 'USDT', 'EUR', 'GBP'].includes(currency.code) ? 2 : (num % 1 !== 0 ? 2 : 0);
   
-  return `${currency.symbol}${converted.toLocaleString('en-US', { 
+  return `${currency.symbol}${num.toLocaleString('en-US', { 
     minimumFractionDigits: decimals, 
     maximumFractionDigits: decimals 
   })}`;

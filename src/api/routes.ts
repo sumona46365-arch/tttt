@@ -2375,9 +2375,16 @@ router.post('/trade', async (req, res) => {
   const isTournament = accountType === 'tournament';
 
   try {
+    let insertedTrade: any = null;
+    let updatedUserData: any = null;
+    const entryPrice = trade?.entryPrice || 0;
+    const duration = trade?.timeLeft || trade?.duration || 60;
+    const expiryTime = trade?.expirationTime ? Math.floor(trade.expirationTime / 1000) : Math.floor((Date.now() + duration * 1000) / 1000);
+    const createdAt = trade?.createdAt || Date.now();
+    const expirationTimeStr = trade?.expirationTime ? String(trade.expirationTime) : String(expiryTime * 1000);
+
     await transaction(async (conn) => {
       // 0. Check for existing 5s trade
-      let duration = trade?.timeLeft || 60;
       if (Number(duration) === 5) {
         const active5s = await get(
           'SELECT id FROM trades WHERE user_id = ? AND duration = 5 AND status = \'open\'',
@@ -2389,9 +2396,9 @@ router.post('/trade', async (req, res) => {
         }
       }
 
-      // 1. Check user balance
+      // 1. Ensure user exists in PostgreSQL
       let currentBalance = new Big(0);
-      let balanceField = 'real_balance';
+      let balanceField = isDemo ? 'demo_balance' : 'real_balance';
 
       if (isTournament) {
         if (!tournamentId) throw new Error('Tournament ID is required for tournament trades');
@@ -2399,54 +2406,97 @@ router.post('/trade', async (req, res) => {
         if (!participant) throw new Error('User is not joined in this tournament');
         currentBalance = new Big(participant.score || 0);
       } else {
-        const user = await get('SELECT real_balance, demo_balance FROM users WHERE uid = ?', [userId], conn) as any;
-        if (!user) throw new Error('User not found');
-        balanceField = isDemo ? 'demo_balance' : 'real_balance';
-        currentBalance = new Big(user[balanceField] || 0);
+        let user = await get('SELECT * FROM users WHERE uid = ?', [userId], conn) as any;
+        if (!user) {
+          const userEmail = trade?.userEmail || (trade as any)?.email || `${userId}@user.com`;
+          const userName = trade?.userName || (trade as any)?.displayName || 'Trader';
+          await run(
+            `INSERT INTO users (uid, email, display_name, real_balance, demo_balance, currency, is_verified, kyc_status, created_at)
+             VALUES (?, ?, ?, 0.00, 10000.00, 'USD', 1, 'verified', ?)`,
+            [userId, userEmail, userName, Date.now()],
+            conn
+          );
+          user = await get('SELECT * FROM users WHERE uid = ?', [userId], conn) as any;
+        }
+
+        if (user) {
+          currentBalance = new Big(user[balanceField] || (isDemo ? 10000 : 0));
+        }
       }
 
       const tradeAmount = new Big(amount);
       if (currentBalance.lt(tradeAmount)) {
-        throw new Error('Insufficient balance');
-      }
-
-      // 2. Deduct balance
-      const newBalanceStr = currentBalance.minus(tradeAmount).toFixed(2);
-      if (isTournament) {
-        await run(`UPDATE tournament_participants SET score = ? WHERE tournament_id = ? AND user_id = ?`, [newBalanceStr, tournamentId, userId], conn);
-        // Sync tournament score to Firestore
-        const { syncTournamentScoreToFirestore } = await import('../lib/firebase-admin.ts');
-        syncTournamentScoreToFirestore(tournamentId as string, userId, parseFloat(newBalanceStr)).catch(e => logger.error('Sync tournament balance failed:', e));
-      } else {
-        await run(`UPDATE users SET ${balanceField} = ? WHERE uid = ?`, [newBalanceStr, userId], conn);
-        const updatedUser = await get('SELECT * FROM users WHERE uid = ?', [userId], conn);
-        if (updatedUser) {
-          const mapped = mapUserForFrontend(updatedUser);
-          getIO().to(`user_${userId}`).emit('user_profile_update', mapped);
-          syncUserToFirestore(userId, mapped);
+        if (isDemo && currentBalance.lte(0)) {
+          currentBalance = new Big(10000);
+          await run(`UPDATE users SET demo_balance = 10000 WHERE uid = ?`, [userId], conn);
+        } else {
+          throw new Error('Insufficient balance');
         }
       }
 
-      // 3. Insert trade
-      const entryPrice = trade?.entryPrice || 0;
-      duration = trade?.timeLeft || 60;
-      const expiryTime = trade?.expirationTime ? Math.floor(trade.expirationTime / 1000) : Math.floor((Date.now() + duration * 1000) / 1000);
-      const createdAt = Date.now();
+      // 2. Deduct balance in PostgreSQL
+      const newBalanceStr = currentBalance.minus(tradeAmount).toFixed(2);
+      if (isTournament) {
+        await run(`UPDATE tournament_participants SET score = ? WHERE tournament_id = ? AND user_id = ?`, [newBalanceStr, tournamentId, userId], conn);
+      } else {
+        await run(`UPDATE users SET ${balanceField} = ? WHERE uid = ?`, [newBalanceStr, userId], conn);
+      }
 
+      // 3. Insert trade immediately into PostgreSQL
       const insertRes = await run(
-        `INSERT INTO trades (user_id, market_id, amount, direction, entry_price, duration, expiry_time, is_demo, status, account_type, tournament_id, created_at, firebase_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [userId, pair, amount.toString(), direction, entryPrice.toString(), duration, expiryTime, isDemo ? 1 : 0, 'open', accountType || (isDemo ? 'demo' : 'real'), tournamentId || null, createdAt, trade?.id || null],
+        `INSERT INTO trades (
+          user_id, market_id, asset, amount, direction, type, 
+          entry_price, duration, time_left, expiry_time, expiration_time, 
+          is_demo, account_type, tournament_id, status, created_at, firebase_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          userId,
+          pair,
+          pair,
+          amount.toString(),
+          direction,
+          direction,
+          entryPrice.toString(),
+          duration,
+          duration,
+          expiryTime,
+          expirationTimeStr,
+          isDemo ? 1 : 0,
+          accountType || (isDemo ? 'demo' : 'real'),
+          tournamentId || null,
+          'open',
+          createdAt,
+          trade?.id ? String(trade.id) : null
+        ],
         conn
       );
       
       const tradeId = (insertRes as any).lastInsertRowid;
+      insertedTrade = await get('SELECT * FROM trades WHERE user_id = ? ORDER BY id DESC LIMIT 1', [userId], conn);
+      updatedUserData = await get('SELECT * FROM users WHERE uid = ?', [userId], conn);
 
-      // Sync new trade to Firestore
+      return { id: tradeId, createdAt };
+    });
+
+    // 4. Non-blocking Background Syncs & Notifications (Executed after PostgreSQL transaction commits)
+    if (updatedUserData) {
+      const mapped = mapUserForFrontend(updatedUserData);
+      try {
+        getIO().to(`user_${userId}`).emit('user_profile_update', mapped);
+      } catch (e) {}
+      syncUserToFirestore(userId, mapped);
+    }
+
+    if (isTournament && tournamentId && updatedUserData) {
+      const { syncTournamentScoreToFirestore } = await import('../lib/firebase-admin.ts');
+      syncTournamentScoreToFirestore(tournamentId as string, userId, parseFloat(updatedUserData.score || '0')).catch(e => logger.error('Sync tournament balance failed:', e));
+    }
+
+    if (insertedTrade) {
       if (adminDb) {
         try {
           const mappedTrade = {
-            id: tradeId.toString(),
+            id: insertedTrade.id.toString(),
             firebaseId: trade?.id || null,
             firebase_id: trade?.id || null,
             userId,
@@ -2465,24 +2515,18 @@ router.post('/trade', async (req, res) => {
             createdAt: createdAt,
             payoutRate: trade?.payoutRate || 80
           };
-          await adminDb.collection('trades').doc(tradeId.toString()).set(mappedTrade);
+          adminDb.collection('trades').doc(insertedTrade.id.toString()).set(mappedTrade).catch((e: any) => {
+            logger.warn(`Failed to sync new trade to Firestore: ${e.message}`);
+          });
         } catch (e: any) {
-          logger.error(`Failed to sync new trade ${tradeId} to Firestore: ${e.message}`);
+          logger.warn(`Firestore sync trade exception: ${e.message}`);
         }
       }
 
-      // 4. Create Audit Log if not demo
       if (!isDemo) {
-        await createAuditLog(userId, 'trade_place', 'trade', null, { pair, amount, direction, entryPrice });
+        createAuditLog(userId, 'trade_place', 'trade', String(insertedTrade.id), { pair, amount, direction, entryPrice }).catch(() => {});
       }
 
-      // 5. Notify user of balance update via Socket.IO
-      const updatedUser = await get('SELECT * FROM users WHERE uid = ?', [userId], conn) as any;
-      const mapped = mapUserForFrontend(updatedUser);
-      getIO().to(`user_${userId}`).emit('user_profile_update', mapped);
-      syncUserToFirestore(userId, mapped);
-      
-      // 6. Trigger Copy Trading
       processCopyTrading(userId, {
         marketId: pair,
         amount: parseFloat(amount.toString()),
@@ -2490,15 +2534,11 @@ router.post('/trade', async (req, res) => {
         entryPrice: parseFloat(entryPrice.toString()),
         duration,
         isDemo,
-        tradeId
+        tradeId: insertedTrade.id
       }).catch(err => logger.error('Copy trading trigger failed:', err));
+    }
 
-      return { id: tradeId, createdAt };
-    });
-
-    const insertedTrade = await get('SELECT * FROM trades WHERE user_id = ? ORDER BY id DESC LIMIT 1', [userId]);
-    const updatedUser = await get('SELECT * FROM users WHERE uid = ?', [userId]);
-    const mapped = mapUserForFrontend(updatedUser);
+    const mapped = updatedUserData ? mapUserForFrontend(updatedUserData) : null;
     res.json({ success: true, trade: mapTrade(insertedTrade), user: mapped });
   } catch (err: any) {
     logger.error(`Trade placement failed: ${err.message}`);
@@ -2767,8 +2807,17 @@ router.post('/trades/place',
         }
       }
 
-      // 1. Check balance with lock
-      const user = await get('SELECT real_balance, demo_balance FROM users WHERE uid = ?', [uid], conn) as any;
+      // 1. Check balance with lock (Ensure user exists in PostgreSQL)
+      let user = await get('SELECT * FROM users WHERE uid = ?', [uid], conn) as any;
+      if (!user) {
+        await run(
+          `INSERT INTO users (uid, email, display_name, real_balance, demo_balance, currency, is_verified, kyc_status, created_at)
+           VALUES (?, ?, ?, 0.00, 10000.00, 'USD', 1, 'verified', ?)`,
+          [uid, (req.user as any)?.email || `${uid}@user.com`, (req.user as any)?.displayName || 'Trader', Date.now()],
+          conn
+        );
+        user = await get('SELECT * FROM users WHERE uid = ?', [uid], conn) as any;
+      }
       
       let currentBalance;
       const isTournament = accountType === 'tournament' && tournamentId;
@@ -2779,13 +2828,18 @@ router.post('/trades/place',
         currentBalance = new Big(participant.score || 0);
       } else {
         const balanceField = (isDemo || accountType === 'demo') ? 'demo_balance' : 'real_balance';
-        currentBalance = new Big(user[balanceField] || 0);
+        currentBalance = new Big(user?.[balanceField] || ((isDemo || accountType === 'demo') ? 10000 : 0));
       }
       
       const tradeAmount = new Big(amount);
 
       if (currentBalance.lt(tradeAmount)) {
-        throw new Error('Insufficient balance');
+        if ((isDemo || accountType === 'demo') && currentBalance.lte(0)) {
+          currentBalance = new Big(10000);
+          await run(`UPDATE users SET demo_balance = 10000 WHERE uid = ?`, [uid], conn);
+        } else {
+          throw new Error('Insufficient balance');
+        }
       }
 
       // 2. Deduct balance
@@ -2810,59 +2864,84 @@ router.post('/trades/place',
         created_at: now
       }, conn);
 
-      // 4. Insert trade
+      // 4. Insert trade immediately into PostgreSQL
       const expiryTime = Math.floor((now + duration * 1000) / 1000);
       await run(
-        `INSERT INTO trades (user_id, market_id, amount, direction, entry_price, duration, expiry_time, is_demo, status, target_result, account_type, tournament_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [uid, marketId, amount.toString(), direction, entryPrice.toString(), duration, expiryTime, (isDemo || accountType === 'demo') ? 1 : 0, 'open', targetResult, accountType || (isDemo ? 'demo' : 'real'), isTournament ? tournamentId : null, now],
+        `INSERT INTO trades (
+          user_id, market_id, asset, amount, direction, type, 
+          entry_price, duration, time_left, expiry_time, expiration_time, 
+          is_demo, account_type, tournament_id, status, target_result, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          uid, 
+          marketId, 
+          marketId, 
+          amount.toString(), 
+          direction, 
+          direction, 
+          entryPrice.toString(), 
+          duration, 
+          duration, 
+          expiryTime, 
+          String(now + duration * 1000), 
+          (isDemo || accountType === 'demo') ? 1 : 0, 
+          accountType || (isDemo ? 'demo' : 'real'), 
+          isTournament ? tournamentId : null, 
+          'open', 
+          targetResult, 
+          now
+        ],
         conn
       );
-
-      const inserted = await get('SELECT id, created_at FROM trades WHERE user_id = ? ORDER BY id DESC LIMIT 1', [uid], conn) as any;
-      if (inserted && adminDb) {
-        try {
-          await adminDb.collection('trades').doc(inserted.id.toString()).set({
-            userId: uid,
-            marketId,
-            amount: parseFloat(amount.toString()),
-            direction,
-            entryPrice: parseFloat(entryPrice.toString()),
-            exitPrice: null,
-            duration,
-            expiryTime,
-            isDemo: isDemo ? 1 : 0,
-            status: 'open',
-            payoutAmount: 0,
-            settledAt: null,
-            createdAt: inserted.created_at || Date.now()
-          });
-        } catch (fsErr: any) {
-          logger.warn(`Failed to sync trade ${inserted.id} creation to Firestore: ${fsErr.message}`);
-        }
-      }
-
-      if (!isDemo) {
-        await createAuditLog(uid, 'trade_place', 'trade', null, { marketId, amount, direction, entryPrice });
-      }
-
-      // Notify balance update
-      const updatedUser = await get('SELECT * FROM users WHERE uid = ?', [uid], conn) as any;
-      const mapped = mapUserForFrontend(updatedUser);
-      getIO().to(`user_${uid}`).emit('user_profile_update', mapped);
-      syncUserToFirestore(uid, mapped);
-
-      // Trigger Copy Trading
-      processCopyTrading(uid, {
-        marketId,
-        direction,
-        duration,
-        entryPrice,
-        isDemo
-      }).catch(err => logger.error('Copy trading trigger failed:', err));
     });
 
-    const trade = await get('SELECT * FROM trades WHERE user_id = ? ORDER BY id DESC LIMIT 1', [uid]);
+    const trade = await get('SELECT * FROM trades WHERE user_id = ? ORDER BY id DESC LIMIT 1', [uid]) as any;
+
+    if (trade && adminDb) {
+      try {
+        adminDb.collection('trades').doc(trade.id.toString()).set({
+          userId: uid,
+          marketId,
+          asset: marketId,
+          amount: parseFloat(amount.toString()),
+          direction,
+          type: direction,
+          entryPrice: parseFloat(entryPrice.toString()),
+          exitPrice: null,
+          duration,
+          expiryTime: trade.expiry_time,
+          isDemo: (isDemo || accountType === 'demo') ? 1 : 0,
+          status: 'open',
+          payoutAmount: 0,
+          settledAt: null,
+          createdAt: trade.created_at || Date.now()
+        }).catch(() => {});
+      } catch (fsErr: any) {}
+    }
+
+    if (!isDemo && accountType !== 'demo') {
+      createAuditLog(uid, 'trade_place', 'trade', trade?.id ? String(trade.id) : null, { marketId, amount, direction, entryPrice }).catch(() => {});
+    }
+
+    // Notify balance update
+    const updatedUser = await get('SELECT * FROM users WHERE uid = ?', [uid]) as any;
+    if (updatedUser) {
+      const mapped = mapUserForFrontend(updatedUser);
+      try {
+        getIO().to(`user_${uid}`).emit('user_profile_update', mapped);
+      } catch (e) {}
+      syncUserToFirestore(uid, mapped);
+    }
+
+    // Trigger Copy Trading
+    processCopyTrading(uid, {
+      marketId,
+      direction,
+      duration,
+      entryPrice,
+      isDemo: (isDemo || accountType === 'demo'),
+      tradeId: trade?.id
+    }).catch(err => logger.error('Copy trading trigger failed:', err));
     res.json(trade);
   } catch (err: any) {
     res.status(400).json({ error: err.message });

@@ -2229,11 +2229,14 @@ export default function TradeTerminal() {
     if (currency === 'BDT') return 100;
     if (['USD', 'USDT', 'EUR', 'GBP'].includes(currency)) return 1.00;
     if (currency === 'INR') return 80;
-    const baseUsdMin = 1.00;
-    return Math.max(1, Math.round(convertFromBase(baseUsdMin, currency)));
+    if (currency === 'PKR') return 250;
+    if (currency === 'BRL') return 5;
+    if (currency === 'TRY') return 30;
+    if (currency === 'NGN') return 1500;
+    return 1.00;
   };
   const minConvertedAmount = getMinConvertedAmount(userCurrency);
-  const minBaseAmount = convertToBase(minConvertedAmount, userCurrency);
+  const minBaseAmount = minConvertedAmount;
   
   const [amount, _setAmount] = useState(() => {
     try {
@@ -7616,7 +7619,7 @@ const PROMOTED_ARTICLES = [
     setIsPlacingTrade(true);
     try {
         console.log("placeTrade called", type);
-        const baseAmount = convertToBase(amount, userCurrency);
+        const tradeAmount = Number(amount);
         
         if (!systemActive) {
           console.log("placeTrade failed: !systemActive");
@@ -7639,28 +7642,28 @@ const PROMOTED_ARTICLES = [
           return;
         }
 
-        if (isNaN(baseAmount) || baseAmount < minBaseAmount - 0.001) {
-          console.log("placeTrade failed: baseAmount < minBaseAmount or NaN");
+        if (isNaN(tradeAmount) || tradeAmount < minConvertedAmount - 0.001) {
+          console.log("placeTrade failed: tradeAmount < minConvertedAmount or NaN");
           toast.error(`Minimum trade amount is ${getCurrencySymbol(userCurrency)}${minConvertedAmount}`, { id: "trade-error" });
           setIsPlacingTrade(false);
           return;
         }
 
-    if (accountType === 'real' && realBalance < baseAmount) {
+    if (accountType === 'real' && realBalance < tradeAmount) {
       console.log("placeTrade failed: real balance");
       toast.error("Insufficient balance. Please deposit funds.", { id: "trade-error" });
       setIsPlacingTrade(false);
       return;
     }
     
-    if (accountType === 'demo' && demoBalance < baseAmount) {
+    if (accountType === 'demo' && demoBalance < tradeAmount) {
       console.log("placeTrade failed: demo balance");
       toast.error("Insufficient demo balance.", { id: "trade-error" });
       setIsPlacingTrade(false);
       return;
     }
 
-    if (accountType === 'tournament' && tournamentBalance < baseAmount) {
+    if (accountType === 'tournament' && tournamentBalance < tradeAmount) {
       console.log("placeTrade failed: tournament balance");
       toast.error("Insufficient tournament funds. You can rebuy in the account switcher!", { id: "trade-error" });
       setIsPlacingTrade(false);
@@ -7708,7 +7711,7 @@ const PROMOTED_ARTICLES = [
       id: newTradeId,
       type,
       entryPrice: currentPrice,
-      amount: Number(baseAmount),
+      amount: Number(tradeAmount),
       timeLeft: tradeDurationSeconds,
       expirationTime: exactExpirationTime,
       entryTime,
@@ -7723,7 +7726,7 @@ const PROMOTED_ARTICLES = [
     activeTradesRef.current = newActiveTrades; 
     setActiveTrades(newActiveTrades);
 
-    updateBalance(-baseAmount);
+    updateBalance(-tradeAmount);
     
     if (auth.currentUser) {
       try {
@@ -7732,12 +7735,16 @@ const PROMOTED_ARTICLES = [
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             pair: activeAsset,
-            amount: baseAmount,
+            amount: tradeAmount,
             direction: type,
             accountType,
             userId: auth.currentUser.uid,
             tournamentId: accountType === 'tournament' ? activeTournamentId : null,
-            trade: newTrade
+            trade: {
+              ...newTrade,
+              userEmail: auth.currentUser.email || '',
+              userName: auth.currentUser.displayName || 'Trader'
+            }
           })
         });
 
@@ -7811,7 +7818,7 @@ const PROMOTED_ARTICLES = [
         toast.success(`Trade opened ${type === 'up' ? 'UP' : 'DOWN'} at ${currentPrice.toFixed(5)}`);
       } catch (err: any) {
         console.log("Trade placement rejected:", err.message);
-        updateBalance(baseAmount); // Revert local balance update
+        updateBalance(tradeAmount); // Revert local balance update
         setActiveTrades(prev => prev.filter(t => t.id !== newTradeId)); // Remove phantom trade
         toast.error(err.message || "Failed to place trade on server. Verification failed.");
         setIsPlacingTrade(false);
@@ -8497,7 +8504,7 @@ const PROMOTED_ARTICLES = [
               <span className="text-[12px] text-gray-500 font-bold mb-0.5">{t('amount')}</span>
               <div className="flex items-center justify-between w-full px-1">
                 <button 
-                  onClick={() => setAmount(Math.max(minConvertedAmount, amount - (['USD', 'USDT', 'EUR', 'GBP'].includes(userCurrency) ? 1 : 10)))} 
+                  onClick={() => setAmount(Math.max(minConvertedAmount, amount - (['USD', 'USDT', 'EUR', 'GBP'].includes(userCurrency) ? 1 : (userCurrency === 'BDT' ? 50 : 10))))} 
                   className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-white transition-colors active:scale-90"
                 >
                   <Minus size={20} strokeWidth={3} />
@@ -8514,13 +8521,13 @@ const PROMOTED_ARTICLES = [
                       const num = Number(val);
                       if (!isNaN(num) && num >= 0) setAmount(num);
                     }}
-                    onBlur={() => setAmount(Math.max(convertFromBase(minBaseAmount, userCurrency), amount))}
+                    onBlur={() => setAmount(Math.max(minConvertedAmount, amount))}
                     className="bg-transparent border-none outline-none text-center w-20 p-0 text-white font-bold text-[22px] tracking-tight [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                   />
                 </div>
 
                 <button 
-                  onClick={() => setAmount(amount + (['USD', 'USDT', 'EUR', 'GBP'].includes(userCurrency) ? 1 : 10))} 
+                  onClick={() => setAmount(amount + (['USD', 'USDT', 'EUR', 'GBP'].includes(userCurrency) ? 1 : (userCurrency === 'BDT' ? 50 : 10)))} 
                   className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-white transition-colors active:scale-90"
                 >
                   <Plus size={20} strokeWidth={3} />
@@ -8988,7 +8995,7 @@ const PROMOTED_ARTICLES = [
                     </div>
                   )}
                   <div className="flex-1 bg-[#33353b] h-[44px] rounded-lg flex items-center justify-between px-3">
-                      <button onClick={() => setAmount(Math.max(convertFromBase(minBaseAmount, userCurrency), amount - (['USD', 'USDT', 'EUR', 'GBP'].includes(userCurrency) ? 1 : 10)))} className="text-[#9ea0a5] active:scale-95 transition-transform"><Minus size={18} strokeWidth={1.5} /></button>
+                      <button onClick={() => setAmount(Math.max(minConvertedAmount, amount - (['USD', 'USDT', 'EUR', 'GBP'].includes(userCurrency) ? 1 : (userCurrency === 'BDT' ? 50 : 10))))} className="text-[#9ea0a5] active:scale-95 transition-transform"><Minus size={18} strokeWidth={1.5} /></button>
                       <div className="flex flex-col items-center justify-center h-full">
                           <span className="text-[8px] text-[#9ea0a5] tracking-wide leading-none mb-[2px]">{t('amount')} ({t('balance')}: {formatWithCurrency(balance, userCurrency)})</span>
                           <input 
@@ -9005,11 +9012,11 @@ const PROMOTED_ARTICLES = [
                                 setAmount(num);
                               }
                             }} 
-                            onBlur={() => setAmount(Math.max(convertFromBase(minBaseAmount, userCurrency), amount))} 
+                            onBlur={() => setAmount(Math.max(minConvertedAmount, amount))} 
                             className="font-sans font-bold text-[14px] tracking-tight text-white leading-none w-16 bg-transparent text-center outline-none" 
                           />
                       </div>
-                      <button onClick={() => setAmount(amount + (['USD', 'USDT', 'EUR', 'GBP'].includes(userCurrency) ? 1 : 10))} className="text-[#9ea0a5] active:scale-95 transition-transform"><Plus size={18} strokeWidth={1.5} /></button>
+                      <button onClick={() => setAmount(amount + (['USD', 'USDT', 'EUR', 'GBP'].includes(userCurrency) ? 1 : (userCurrency === 'BDT' ? 50 : 10)))} className="text-[#9ea0a5] active:scale-95 transition-transform"><Plus size={18} strokeWidth={1.5} /></button>
                   </div>
                </div>
 
