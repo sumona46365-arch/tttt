@@ -782,7 +782,7 @@ function initSqliteTables(db: Database.Database) {
     current_profit NUMERIC DEFAULT 0,
     win_rate NUMERIC DEFAULT 0,
     copied_trades INTEGER DEFAULT 0,
-    status TEXT DEFAULT "active",
+    status TEXT DEFAULT 'active',
     started_at INTEGER
   );
 

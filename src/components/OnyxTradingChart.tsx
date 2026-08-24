@@ -100,6 +100,8 @@ export const OnyxTradingChart: React.FC = () => {
     let lastTickTime = Date.now();
     let currentVolatility = 0.00035;
     let volatilityBurstTimer = 0;
+    let internalTrend = 0;
+    let trendTimer = 0;
     const requestRef = useRef<number>(0);
 
     const updateLoop = () => {
@@ -108,36 +110,49 @@ export const OnyxTradingChart: React.FC = () => {
       const now = Date.now();
       const candleTime = Math.floor(now / (timeframeSeconds * 1000)) * timeframeSeconds;
       
-      // 1. Tick Update (Simulate market ticks with varied behavior)
-      if (now - lastTickTime > 150) { // Faster ticks for real-time response
+      // 1. Tick Update (Erratic Market Behavior)
+      if (now - lastTickTime > 80) { 
         lastTickTime = now;
 
-        if (volatilityBurstTimer <= 0) {
-          if (Math.random() > 0.92) {
-            volatilityBurstTimer = Math.random() * 4000 + 1000;
-            currentVolatility = 0.0008; // High spike
-          } else {
-            currentVolatility = 0.0002 + Math.random() * 0.0003;
-          }
+        if (trendTimer <= 0) {
+          internalTrend = (Math.random() - 0.5) * 0.0006;
+          trendTimer = Math.random() * 4000 + 1000;
         } else {
-          volatilityBurstTimer -= 150;
+          trendTimer -= 80;
         }
 
-        const jump = (Math.random() - 0.5) * currentVolatility;
-        targetPrice += jump;
+        if (volatilityBurstTimer <= 0) {
+          if (Math.random() > 0.95) {
+            volatilityBurstTimer = Math.random() * 3000 + 1000;
+            currentVolatility = 0.0012; 
+          } else {
+            currentVolatility = 0.0001 + Math.random() * 0.0003;
+          }
+        } else {
+          volatilityBurstTimer -= 80;
+        }
+
+        const randomJump = (Math.random() - 0.5) * currentVolatility;
+        targetPrice += randomJump + internalTrend;
+
+        // "Wick Logic": Random pullbacks within the same 5s cycle
+        if (Math.random() > 0.9) {
+          const open = lastCandle ? lastCandle.open : targetPrice;
+          targetPrice = targetPrice + (open - targetPrice) * 0.5;
+        }
       }
 
-      // 2. Micro-Jitter (Live noise)
-      const microJitter = (Math.random() - 0.5) * 0.00003;
+      // 2. Micro-Jitter
+      const microJitter = (Math.random() - 0.5) * 0.00002;
       const effectiveTarget = targetPrice + microJitter;
 
-      // 3. Interpolation (Lerp) - Buttery smooth at 60FPS
-      const lerpFactor = 0.25;
+      // 3. Interpolation
+      const lerpFactor = 0.30;
       visualPrice = visualPrice + (effectiveTarget - visualPrice) * lerpFactor;
 
       let updatedCandle;
 
-      // 4. Natural Candle Formation (OHLC)
+      // 4. Natural OHLC Tracking
       if (!lastCandle || Number(candleTime) > Number(lastCandle.time)) {
         const openPrice = lastCandle ? lastCandle.close : visualPrice;
         

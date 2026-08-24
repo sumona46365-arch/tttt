@@ -2325,7 +2325,7 @@ router.post('/trade', async (req, res) => {
       let duration = trade?.timeLeft || 60;
       if (Number(duration) === 5) {
         const active5s = await get(
-          'SELECT id FROM trades WHERE user_id = ? AND duration = 5 AND status = "open"',
+          'SELECT id FROM trades WHERE user_id = ? AND duration = 5 AND status = \'open\'',
           [userId],
           conn
         );
@@ -2703,7 +2703,7 @@ router.post('/trades/place',
       // 0. Check for existing 5s trade if this is a 5s trade
       if (Number(duration) === 5) {
         const active5s = await get(
-          'SELECT id FROM trades WHERE user_id = ? AND duration = 5 AND status = "open"',
+          'SELECT id FROM trades WHERE user_id = ? AND duration = 5 AND status = \'open\'',
           [uid],
           conn
         );
