@@ -38,6 +38,7 @@ import * as OTPAuth from 'otpauth';
 import QRCode from 'qrcode';
 import { DrawingOverlay } from "../components/DrawingOverlay";
 import { useSupport } from "../contexts/SupportContext";
+import { navigateToBlog } from "../lib/blog-navigation";
 
 import CopyTradingPage from "./CopyTrading";
 import { 
@@ -8564,9 +8565,23 @@ const PROMOTED_ARTICLES = [
                                 <td className="px-6 py-4 font-mono text-[13px] text-gray-300">{trade.exitPrice?.toFixed(5) || (trade.status === 'open' ? <span className="animate-pulse">Live...</span> : '---')}</td>
                                 <td className="px-6 py-4">
                                    {trade.status === 'open' ? (
-                                      <div className="flex items-center gap-2">
-                                         <div className="w-2 h-2 rounded-full bg-yellow-500 animate-ping"></div>
-                                         <span className="text-yellow-500 text-[12px] font-bold uppercase">Pending</span>
+                                      <div className="flex items-center gap-2 px-2.5 py-1 bg-[#ffe24c]/10 border border-[#ffe24c]/30 rounded-full w-fit">
+                                         <Clock size={12} className="text-[#ffe24c] animate-pulse" />
+                                         <span className="text-[#ffe24c] font-mono text-[12px] font-black tracking-wider">
+                                            {(() => {
+                                              const currentMs = nowMs || Date.now();
+                                              const expMs = trade.expirationTime || (trade.expiryTime ? (trade.expiryTime < 10000000000 ? trade.expiryTime * 1000 : trade.expiryTime) : null);
+                                              let sec = 0;
+                                              if (expMs && typeof expMs === 'number') {
+                                                sec = Math.max(0, Math.ceil((expMs - currentMs) / 1000));
+                                              } else if (typeof trade.timeLeft === 'number') {
+                                                sec = Math.max(0, trade.timeLeft);
+                                              }
+                                              const m = Math.floor(sec / 60);
+                                              const s = sec % 60;
+                                              return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+                                            })()}
+                                         </span>
                                       </div>
                                    ) : (
                                       <div className={`text-[12px] font-black uppercase tracking-wider ${trade.status === 'won' ? 'text-[#00C980]' : 'text-red-500'}`}>
@@ -9323,7 +9338,7 @@ const PROMOTED_ARTICLES = [
                           if (link === "Statuses") {
                             setActiveTab("statuses");
                           } else if (link === "Platform Blog") {
-                            navigate("/blog");
+                            navigateToBlog(navigate);
                           } else if (link === "About us") {
                             navigate("/about-us");
                           } else if (link === "Regulations") {
@@ -10914,6 +10929,29 @@ const PROMOTED_ARTICLES = [
                              const isOpen = trade.status === 'open';
                              const profit = trade.payoutAmount || (trade.amount * (trade.payout / 100 + 1));
                              
+                             // Calculate real-time remaining seconds for open trades
+                             const currentMs = nowMs || Date.now();
+                             let expTimeMs = trade.expirationTime || (trade.expiryTime ? (trade.expiryTime < 10000000000 ? trade.expiryTime * 1000 : trade.expiryTime) : null);
+                             
+                             if (!expTimeMs && trade.createdAt && trade.duration) {
+                               const createdMs = typeof trade.createdAt === 'number' ? (trade.createdAt < 10000000000 ? trade.createdAt * 1000 : trade.createdAt) : new Date(trade.createdAt).getTime();
+                               expTimeMs = createdMs + (trade.duration * 1000);
+                             }
+
+                             let remainingSeconds = 0;
+                             if (expTimeMs && typeof expTimeMs === 'number') {
+                               remainingSeconds = Math.max(0, Math.ceil((expTimeMs - currentMs) / 1000));
+                             } else if (typeof trade.timeLeft === 'number') {
+                               remainingSeconds = Math.max(0, trade.timeLeft);
+                             }
+
+                             const formatCountdownStr = (sec: number) => {
+                               if (sec <= 0) return '00:00';
+                               const m = Math.floor(sec / 60);
+                               const s = sec % 60;
+                               return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+                             };
+
                              return (
                                <div
                                  key={`trade-list-item-${trade.id || 'no-id'}-${idx}`}
@@ -10936,9 +10974,18 @@ const PROMOTED_ARTICLES = [
                                          </div>
                                      </div>
                                      <div className="flex flex-col items-end">
-                                        <span className={`text-[16px] font-black tracking-tight ${isWin ? "text-white" : (isOpen ? "text-white" : "text-gray-500")}`}>
-                                           {isOpen ? '--' : (isWin ? `${formatWithCurrency(profit, userCurrency)}` : (isDraw ? formatWithCurrency(trade.amount, userCurrency) : formatWithCurrency(0, userCurrency)))}
-                                        </span>
+                                        {isOpen ? (
+                                           <div className="flex items-center gap-1.5 px-3 py-1 bg-[#ffe24c]/15 border border-[#ffe24c]/40 rounded-full shadow-[0_0_12px_rgba(255,226,76,0.25)]">
+                                              <Clock size={13} className="text-[#ffe24c] animate-pulse" />
+                                              <span className="text-[13px] font-black text-[#ffe24c] font-mono tracking-wider">
+                                                 {formatCountdownStr(remainingSeconds)}
+                                              </span>
+                                           </div>
+                                        ) : (
+                                           <span className={`text-[16px] font-black tracking-tight ${isWin ? "text-white" : "text-gray-500"}`}>
+                                              {isWin ? `${formatWithCurrency(profit, userCurrency)}` : (isDraw ? formatWithCurrency(trade.amount, userCurrency) : formatWithCurrency(0, userCurrency))}
+                                           </span>
+                                        )}
                                      </div>
                                  </div>
 
@@ -10969,8 +11016,16 @@ const PROMOTED_ARTICLES = [
                                           })()}
                                        </span>
                                    </div>
-                                   <div className="text-[13px] text-gray-500 font-bold">
-                                      {formatWithCurrency(trade.amount, userCurrency)}
+                                   <div className="flex items-center gap-2">
+                                      {isOpen && (
+                                         <div className="flex items-center gap-1.5 bg-[#00ff88]/10 text-[#00ff88] px-2.5 py-0.5 rounded-full border border-[#00ff88]/20">
+                                           <div className="w-1.5 h-1.5 rounded-full bg-[#00ff88] animate-ping" />
+                                           <span className="text-[11px] font-black tracking-wider uppercase">Live</span>
+                                         </div>
+                                      )}
+                                      <div className="text-[13px] text-gray-300 font-bold">
+                                         {formatWithCurrency(trade.amount, userCurrency)}
+                                      </div>
                                    </div>
                                  </div>
                                </div>
@@ -11258,6 +11313,36 @@ const PROMOTED_ARTICLES = [
                 </div>
 
                 <div className="flex flex-col gap-6 mb-8 px-2">
+                   {selectedTrade.status === 'open' && (
+                     <div className="bg-[#ffe24c]/10 border border-[#ffe24c]/30 rounded-[20px] p-5 flex items-center justify-between">
+                       <div className="flex items-center gap-3">
+                         <div className="w-10 h-10 rounded-full bg-[#ffe24c]/20 flex items-center justify-center">
+                           <Clock size={20} className="text-[#ffe24c] animate-spin" style={{ animationDuration: '4s' }} />
+                         </div>
+                         <div>
+                           <div className="text-[13px] font-black uppercase text-[#ffe24c] tracking-wider">Expiration Countdown</div>
+                           <div className="text-[12px] text-gray-400 font-bold">Auto-closes when timer reaches 00:00</div>
+                         </div>
+                       </div>
+                       <div className="text-right">
+                         <div className="text-[22px] font-black font-mono text-[#ffe24c] tracking-wider">
+                           {(() => {
+                             const currentMs = nowMs || Date.now();
+                             const expMs = selectedTrade.expirationTime || (selectedTrade.expiryTime ? (selectedTrade.expiryTime < 10000000000 ? selectedTrade.expiryTime * 1000 : selectedTrade.expiryTime) : null);
+                             let sec = 0;
+                             if (expMs && typeof expMs === 'number') {
+                               sec = Math.max(0, Math.ceil((expMs - currentMs) / 1000));
+                             } else if (typeof selectedTrade.timeLeft === 'number') {
+                               sec = Math.max(0, selectedTrade.timeLeft);
+                             }
+                             const m = Math.floor(sec / 60);
+                             const s = sec % 60;
+                             return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+                           })()}
+                         </div>
+                       </div>
+                     </div>
+                   )}
                    <div className="flex justify-between items-center">
                       <span className="text-gray-500 text-[16px] font-bold">Amount</span>
                       <span className="text-white text-[16px] font-black">{formatWithCurrency(selectedTrade.amount, userCurrency)}</span>

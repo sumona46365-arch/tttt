@@ -10,6 +10,7 @@ import { auth, db, onSnapshot, doc, collection, query, where, orderBy, limit } f
 import { formatWithCurrency, convertToBase } from '../lib/currencies';
 import ReferralStatsCard from '../components/ReferralStatsCard';
 import { useAuth } from '../contexts/AuthContext';
+import { navigateToBlog } from '../lib/blog-navigation';
 
 export default function Homepage() {
   const navigate = useNavigate();
@@ -791,13 +792,13 @@ export default function Homepage() {
                 </div>
                 <h2 className="text-4xl md:text-5xl font-black uppercase tracking-tighter">Latest Updates & <br/><span className="text-[#ffcf00]">App Mechanics</span></h2>
               </div>
-              <Link 
-                to="/blog" 
+              <button 
+                onClick={() => navigateToBlog(navigate)} 
                 className="inline-flex items-center gap-2 text-[#ffcf00] font-bold hover:gap-3 transition-all group"
               >
                 <span>View Full Blog</span>
                 <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
-              </Link>
+              </button>
             </div>
 
             <div className="grid md:grid-cols-3 gap-6">
@@ -830,13 +831,13 @@ export default function Homepage() {
                     <p className="text-gray-500 text-sm line-clamp-2 leading-relaxed mb-6">
                       {story.description}
                     </p>
-                    <Link 
-                      to="/blog"
-                      className="text-[10px] font-black uppercase tracking-widest text-[#ffcf00] flex items-center gap-2 group/btn"
+                    <button 
+                      onClick={() => navigateToBlog(navigate)}
+                      className="text-[10px] font-black uppercase tracking-widest text-[#ffcf00] flex items-center gap-2 group/btn cursor-pointer"
                     >
                       <span>Read Details</span>
                       <ArrowRight size={14} className="group-hover/btn:translate-x-1 transition-transform" />
-                    </Link>
+                    </button>
                   </div>
                 </motion.div>
               ))}
@@ -982,7 +983,7 @@ export default function Homepage() {
                 <h4 className="font-black text-sm uppercase tracking-widest text-white mb-6">Company</h4>
                 <ul className="space-y-4 text-gray-500 text-sm font-bold">
                   <li><Link to="/about-us" className="hover:text-[#ffcf00] transition-colors">About Us</Link></li>
-                  <li><Link to="/blog" className="hover:text-[#ffcf00] transition-colors">Platform Blog</Link></li>
+                  <li><button onClick={() => navigateToBlog(navigate)} className="hover:text-[#ffcf00] transition-colors cursor-pointer text-left">Platform Blog</button></li>
                   <li><Link to="/page/contact" className="hover:text-[#ffcf00] transition-colors">Contact</Link></li>
                   <li><Link to="/page/legal-agreement" className="hover:text-[#ffcf00] transition-colors">Legal Agreement</Link></li>
                   <li><Link to="/page/risk-disclosure" className="hover:text-[#ffcf00] transition-colors">Risk Disclosure</Link></li>

@@ -5,7 +5,8 @@ import {
   ArrowLeft, Calendar, ExternalLink, Image as ImageIcon, Zap, Award, 
   Gift, Info, BookOpen, ShieldCheck, ChevronDown, CheckCircle, 
   HelpCircle, Users, TrendingUp, DollarSign, Smartphone, Laptop, 
-  ChevronRight, Star, Lock, Activity, ArrowRight, Play
+  ChevronRight, Star, Lock, Activity, ArrowRight, Play, Search,
+  Globe, Coins, Shield, FileText, Check, Cpu, Layers, RefreshCw
 } from 'lucide-react';
 import { db, collection, getDocs, query, where, orderBy } from '../firebase';
 import SEO from '../components/SEO';
@@ -25,13 +26,14 @@ export default function BlogPage() {
   const navigate = useNavigate();
   const [blogs, setBlogs] = useState<BlogItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'all' | 'showcase' | 'bonuses'>('all');
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [activeFeature, setActiveFeature] = useState<number>(0);
+  const [activeAssetCat, setActiveAssetCat] = useState<'forex' | 'crypto' | 'commodities' | 'stocks'>('forex');
 
   const handleNavigation = (path: string) => {
     const hostname = window.location.hostname;
-    // Keep local, sandbox and dev-server previews running inside the preview iframe
     if (
       hostname.includes('localhost') || 
       hostname.includes('127.0.0.1') || 
@@ -44,7 +46,6 @@ export default function BlogPage() {
       return;
     }
     
-    // For production subdomains, redirect to the corresponding page on the main domain
     const mainHost = hostname
       .replace(/^bloge\./, '')
       .replace(/^blog\./, '')
@@ -78,91 +79,146 @@ export default function BlogPage() {
   };
 
   const filteredBlogs = blogs.filter(blog => {
-    if (activeTab === 'all') return true;
-    if (activeTab === 'bonuses') return blog.title.toLowerCase().includes('bonus') || blog.description.toLowerCase().includes('bonus');
-    if (activeTab === 'showcase') return !blog.title.toLowerCase().includes('bonus') && !blog.description.toLowerCase().includes('bonus');
-    return true;
+    const matchesTab = 
+      activeTab === 'all' ? true :
+      activeTab === 'bonuses' ? (blog.title.toLowerCase().includes('bonus') || blog.description.toLowerCase().includes('bonus')) :
+      (!blog.title.toLowerCase().includes('bonus') && !blog.description.toLowerCase().includes('bonus'));
+    
+    const matchesSearch = 
+      blog.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+      blog.description.toLowerCase().includes(searchQuery.toLowerCase());
+
+    return matchesTab && matchesSearch;
   });
 
   const features = [
     {
-      title: "Real-Time Advanced Charting",
-      desc: "Experience zero-lag live market feeds with responsive charts, interactive drawing tools, and standard indicators (RSI, MACD, Bollinger Bands) to help you predict movements accurately.",
+      title: "Real-Time Advanced Charting & Indicators",
+      desc: "Experience zero-lag live market feeds with responsive candles, tick charts, custom drawing tools, and built-in technical indicators (RSI, MACD, Bollinger Bands, Moving Averages, Stochastic) to help you predict market movements with surgical precision.",
       icon: <Activity className="text-[#FFE24C]" size={24} />,
-      metric: "0.01s Refresh Rate"
+      metric: "0.01s Price Sync Rate"
     },
     {
-      title: "1-Click Lightning Execution",
-      desc: "Never miss a market entry. Execute Binary and Digital Option contracts instantly at exact prices. Super low-latency servers guarantee fast order routing.",
+      title: "1-Click Lightning Execution Engine",
+      desc: "Never miss a fast-moving trend. Execute High/Low digital option contracts instantly at exact real-time prices with zero slippage. Optimized edge servers ensure super low latency order routing worldwide.",
       icon: <Zap className="text-[#FFE24C]" size={24} />,
-      metric: "50ms Execution Time"
+      metric: "<50ms Routing Speed"
     },
     {
-      title: "Secure Fast Deposits & Withdrawals",
-      desc: "Fund your account and withdraw your profits via secure channels like BinancePay, local bank transfers, and popular crypto wallets with round-the-clock manual and automated processing.",
+      title: "24/7 Secure Deposits & Express Cashout",
+      desc: "Fund your account and withdraw your profits hassle-free via secure gateways like BinancePay, USDT (TRC20/BEP20), BTC, ETH, and local payment methods with instant automated verification.",
       icon: <DollarSign className="text-[#FFE24C]" size={24} />,
       metric: "Instant & 24/7 Processing"
     },
     {
-      title: "Multi-Tier VIP Loyalty Statuses",
-      desc: "Grow your trading volume to unlock high-yield profitability (up to 95%+ payout rates), weekly cashbacks, private account managers, and express withdrawals.",
+      title: "7-Tier VIP Loyalty & Payout Matrix",
+      desc: "Advance through account tiers (Starter to VIP) to unlock up to 95%+ trade payout yields, weekly cashback refunds, dedicated personal account managers, and express priority withdrawals.",
       icon: <Award className="text-[#FFE24C]" size={24} />,
-      metric: "Up to 95% Yield"
+      metric: "Up to 95%+ Payout"
     }
   ];
+
+  const vipTiers = [
+    { name: "Starter", minDeposit: "$10", payout: "Up to 80%", perk: "Standard Execution & Free Demo" },
+    { name: "Basic", minDeposit: "$50", payout: "Up to 82%", perk: "24/7 Live Support & Basic Bonus" },
+    { name: "Pro", minDeposit: "$100", payout: "Up to 85%", perk: "Faster Cashouts & 50% Deposit Bonus" },
+    { name: "Silver", minDeposit: "$250", payout: "Up to 88%", perk: "Higher Max Trade Limit & Signals" },
+    { name: "Gold", minDeposit: "$500", payout: "Up to 90%", perk: "Weekly Cashback & Express Payouts" },
+    { name: "Platinum", minDeposit: "$1,000", payout: "Up to 92%", perk: "Priority Support & VIP Promos" },
+    { name: "VIP", minDeposit: "$2,500+", payout: "Up to 95%+", perk: "Personal VIP Manager & Unlimited Express" }
+  ];
+
+  const assetsList = {
+    forex: [
+      { pair: "EUR/USD", payout: "92%", status: "Open 24/5", otc: "95% OTC Weekend" },
+      { pair: "GBP/USD", payout: "90%", status: "Open 24/5", otc: "93% OTC Weekend" },
+      { pair: "USD/JPY", payout: "88%", status: "Open 24/5", otc: "92% OTC Weekend" },
+      { pair: "AUD/CAD", payout: "87%", status: "Open 24/5", otc: "90% OTC Weekend" }
+    ],
+    crypto: [
+      { pair: "BTC/USDT", payout: "95%", status: "Open 24/7", otc: "High Volatility" },
+      { pair: "ETH/USDT", payout: "93%", status: "Open 24/7", otc: "High Volatility" },
+      { pair: "SOL/USDT", payout: "91%", status: "Open 24/7", otc: "High Volatility" },
+      { pair: "DOGE/USDT", payout: "89%", status: "Open 24/7", otc: "High Volatility" }
+    ],
+    commodities: [
+      { pair: "Gold (XAU/USD)", payout: "91%", status: "Open Market", otc: "94% OTC" },
+      { pair: "Silver (XAG/USD)", payout: "88%", status: "Open Market", otc: "90% OTC" },
+      { pair: "US Crude Oil (WTI)", payout: "86%", status: "Open Market", otc: "89% OTC" },
+      { pair: "Brent Oil", payout: "85%", status: "Open Market", otc: "88% OTC" }
+    ],
+    stocks: [
+      { pair: "Apple Inc (AAPL)", payout: "89%", status: "US Market Hours", otc: "92% OTC" },
+      { pair: "Tesla Motors (TSLA)", payout: "90%", status: "US Market Hours", otc: "93% OTC" },
+      { pair: "Amazon.com (AMZN)", payout: "88%", status: "US Market Hours", otc: "91% OTC" },
+      { pair: "Alphabet (GOOGL)", payout: "87%", status: "US Market Hours", otc: "90% OTC" }
+    ]
+  };
 
   const tradingSteps = [
     {
       step: "01",
       title: "Create Free Account",
-      desc: "Fill in the simple sign-up form in under 30 seconds. Choose your currency and instantly get access to a free $10,000 demo trading account."
+      desc: "Register your trading profile in under 30 seconds. Choose your preferred currency and immediately receive a free $10,000 demo practice account."
     },
     {
       step: "02",
-      title: "Learn & Practice",
-      desc: "Analyze global assets. Choose your expiration time (from 30 seconds up to several hours), select trade amount, and predict if the price will go High or Low."
+      title: "Analyze & Predict Market",
+      desc: "Select your trading asset (Forex, Crypto, Commodities, Stocks), pick an expiration time (from 30 seconds up to hours), set your trade amount, and click High or Low."
     },
     {
       step: "03",
-      title: "Fast Funding",
-      desc: "Deposit using BinancePay, Crypto, or local payment methods. All transactions are fully secured. Unlock custom deposit bonuses up to 100%."
+      title: "Instant Secure Funding",
+      desc: "Deposit funds seamlessly using BinancePay, Crypto, or local bank channels. Claim available deposit bonuses up to 100% to boost your initial trading balance."
     },
     {
       step: "04",
-      title: "Withdraw Profits",
-      desc: "Earn high payout rates up to 95%+ on winning trades. Submit a fast withdrawal request and receive your profits instantly in your wallet."
+      title: "Harvest Profits & Cashout",
+      desc: "Earn high payout rates up to 95%+ on winning predictions. Submit a fast cashout request and receive your profits directly into your personal wallet."
     }
   ];
 
   const faqs = [
     {
-      question: "What is Bivaax Trade and how does it work?",
-      answer: "Bivaax Trade is a next-generation binary and digital options trading platform. Users can predict the price movements of various assets (currencies, crypto, stocks, commodities) within a custom time-frame (e.g., 30s, 1m, 5m). If your prediction is correct at the expiration time, you earn a high payout of up to 95% of your trade size."
+      question: "What is Bivaax Trade and how does binary option trading work?",
+      answer: "Bivaax Trade is a premier digital and binary options trading platform. Users predict whether the price of a global asset (Forex, Crypto, Commodities, Stocks) will rise or fall within a specified time window (e.g. 30s, 1m, 5m). If your prediction is correct at contract expiration, you earn a high fixed profit yield of up to 95%+ of your trade value."
     },
     {
-      question: "How do I make a deposit and get a bonus?",
-      answer: "To make a deposit, go to the Cashier/Deposit section, choose your preferred method (such as BinancePay, USDT, or local payments), enter the amount, and proceed. You can also apply available promo codes or deposit bonuses (e.g., 50% or 100% bonuses) that increase your trading balance immediately."
+      question: "How do I make a deposit and claim a deposit bonus?",
+      answer: "Navigate to the Cashier/Deposit section in your account drawer, choose your payment method (such as BinancePay, USDT, Bitcoin, or local channels), enter your deposit amount, and apply any promo code (e.g., BIVAAXFAST50 or 100% deposit bonus codes). Your balance will update instantly upon confirmation."
     },
     {
-      question: "Are there any hidden fees or commission charges?",
-      answer: "No! Bivaax is proud to offer fully transparent trading with absolutely zero fees on trades, commissions, or maintenance. What you invest is exactly what is placed on the market."
+      question: "Are there any hidden fees, trade commissions, or maintenance charges?",
+      answer: "No! Bivaax Trade provides 100% zero-fee trading. There are no commissions on opening or closing contracts, no hidden spreads, and no monthly account maintenance fees. Your full trade amount is invested directly into the contract."
     },
     {
-      question: "How does the VIP status system work?",
-      answer: "We offer multiple account statuses (Starter, Basic, Pro, Silver, Gold, Platinum, VIP) based on your total deposit volume or account balance. Higher tiers unlock major perks: higher payout percentages, faster processing, higher maximum trade limits, and cashback rewards."
+      question: "How does the 7-Tier VIP Status program work?",
+      answer: "Your account automatically upgrades through our VIP tiers (Starter, Basic, Pro, Silver, Gold, Platinum, VIP) based on your total deposit volume or balance. Higher tiers grant higher payout percentages (up to 95%+), express priority withdrawals, weekly cashback refunds, and a dedicated personal account manager."
     },
     {
-      question: "Is my personal data and funds secure with Bivaax?",
-      answer: "Yes, Bivaax implements state-of-the-art security, including 256-bit SSL encryption, 2-Factor Authentication (2FA via Google Authenticator or Email OTP), and fully segregated customer fund wallets to ensure complete protection for your transactions and identity."
+      question: "Is my personal data, trading capital, and wallet safe?",
+      answer: "Yes! Bivaax Trade utilizes enterprise-grade 256-bit SSL encryption, mandatory Two-Factor Authentication (2FA via Google Authenticator or Email OTP), and fully segregated client fund accounts to guarantee maximum security for your transactions and identity."
+    },
+    {
+      question: "Can I practice with a risk-free Demo account first?",
+      answer: "Absolutely! Every registered user gets a free $10,000 Demo Account loaded with virtual funds. You can test your trading strategies, learn technical indicators, and practice market timing without risking real funds. The demo balance can be refilled for free anytime."
+    },
+    {
+      question: "What expiration times are available for binary options?",
+      answer: "We support flexible contract expiration times ranging from ultra-fast 30-second scalping options, 1-minute, 5-minute, 15-minute intervals up to several hours, allowing traders to execute short-term momentum or long-term trend strategies."
+    },
+    {
+      question: "How fast are withdrawal requests processed?",
+      answer: "Withdrawal requests are processed 24/7. VIP and higher-tier account holders receive express priority processing within minutes, while standard accounts are typically processed within 1 to 24 hours depending on the chosen payment gateway."
     }
   ];
 
   return (
     <div className="min-h-screen bg-[#07080b] text-white selection:bg-[#FFE24C] selection:text-black pb-24 font-sans">
       <SEO 
-        title="Official Blog & Platform Hub | Bivaax Trade"
-        description="The ultimate guide to Bivaax Trade platform mechanics, VIP statuses, step-by-step guides, live updates, and secure options trading."
-        keywords="Bivaax blog, Bivaax official hub, binary options guide, how to trade, bivaax bonuses, vip statuses, crypto deposits, withdraw profit, trading tutorial"
+        title="Official Blog & Platform Intelligence Hub | Bivaax Trade"
+        description="The ultimate comprehensive guide to Bivaax Trade: platform specifications, asset yields, 7-tier VIP statuses, 1-click execution engine, security policies, and official updates."
+        keywords="Bivaax blog, Bivaax official hub, binary options trading guide, bivaax vip statuses, crypto deposits, withdraw profit, trading tutorial, bivaax platform specs"
       />
 
       {/* Floating Header */}
@@ -174,13 +230,13 @@ export default function BlogPage() {
             id="back_to_home_btn"
           >
             <ArrowLeft size={18} className="group-hover:-translate-x-1 transition-transform" />
-            <span className="font-bold uppercase tracking-widest text-[11px]">Back to Trading</span>
+            <span className="font-bold uppercase tracking-widest text-[11px]">Back to Terminal</span>
           </button>
           
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <div className="w-2 h-2 bg-yellow-400 rounded-full animate-ping" />
             <span className="text-[10px] font-black uppercase tracking-widest text-[#FFE24C] bg-white/5 border border-white/10 px-3 py-1 rounded-full">
-              Official Hub
+              Official Platform Hub
             </span>
           </div>
         </div>
@@ -196,7 +252,7 @@ export default function BlogPage() {
             className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest text-[#FFE24C] mb-6"
           >
             <BookOpen size={12} />
-            <span>Complete Platform Intelligence Center</span>
+            <span>Official Platform Intelligence & Documentation</span>
           </motion.div>
           
           <motion.h1 
@@ -213,9 +269,9 @@ export default function BlogPage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
-            className="text-gray-400 max-w-2xl mx-auto text-base sm:text-lg leading-relaxed mb-10"
+            className="text-gray-400 max-w-3xl mx-auto text-base sm:text-lg leading-relaxed mb-10"
           >
-            Everything you need to master our trading engine, unlock high-yield loyalty bonuses, study step-by-step guides, and view official app announcements. Fully indexed for real-time clarity.
+            Explore our complete platform architecture, asset payout rates, VIP loyalty matrix, step-by-step trading tutorials, and official admin updates. Built for transparent, high-yield options trading.
           </motion.p>
 
           <motion.div 
@@ -247,19 +303,19 @@ export default function BlogPage() {
         <div className="max-w-7xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-8">
           <div className="text-center p-4">
             <p className="text-3xl sm:text-4xl font-black tracking-tight text-[#FFE24C]">95%+</p>
-            <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mt-1">Maximum Payout</p>
+            <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mt-1">Maximum Payout Yield</p>
           </div>
           <div className="text-center border-l border-white/5 p-4">
-            <p className="text-3xl sm:text-4xl font-black tracking-tight">50ms</p>
-            <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mt-1">Execution Speed</p>
+            <p className="text-3xl sm:text-4xl font-black tracking-tight">&lt;50ms</p>
+            <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mt-1">Order Execution Latency</p>
           </div>
           <div className="text-center border-l border-white/5 p-4">
             <p className="text-3xl sm:text-4xl font-black tracking-tight">100%</p>
-            <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mt-1">SSL & Fund Safety</p>
+            <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mt-1">Segregated Fund Protection</p>
           </div>
           <div className="text-center border-l border-white/5 p-4">
             <p className="text-3xl sm:text-4xl font-black tracking-tight">24/7</p>
-            <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mt-1">Support & Cashier</p>
+            <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mt-1">Support & Cashier Processing</p>
           </div>
         </div>
       </section>
@@ -269,14 +325,14 @@ export default function BlogPage() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-16 items-center">
           <div className="lg:col-span-5">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-yellow-500/10 text-[#FFE24C] text-[10px] font-black uppercase tracking-widest mb-4">
-              <Star size={10} fill="currentColor" />
-              <span>Core Trading Engine</span>
+              <Cpu size={10} fill="currentColor" />
+              <span>Core Trading Architecture</span>
             </div>
             <h2 className="text-3xl sm:text-4xl font-black uppercase tracking-tight mb-6">
-              Designed For High-Performance Option Execution
+              Engineered For High-Precision Digital Options
             </h2>
             <p className="text-gray-400 mb-8 text-base leading-relaxed">
-              Our trading engine is optimized to deliver seamless transaction security, exact pricing feeds, and instantaneous response rates. Choose from multiple assets and execute predictions flawlessly.
+              Our trading core combines low-latency price feeds, instant order routing algorithms, and customized charting tools to give you the ultimate edge in financial market predictions.
             </p>
 
             <div className="space-y-4">
@@ -322,7 +378,7 @@ export default function BlogPage() {
                     {features[activeFeature].icon}
                   </div>
                   <div>
-                    <span className="text-[10px] text-[#FFE24C] font-black uppercase tracking-widest block mb-1">Feature Highlight</span>
+                    <span className="text-[10px] text-[#FFE24C] font-black uppercase tracking-widest block mb-1">Specification Detail</span>
                     <h3 className="text-2xl font-black uppercase tracking-tight">{features[activeFeature].title}</h3>
                   </div>
                 </div>
@@ -333,11 +389,11 @@ export default function BlogPage() {
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-white/5 p-4 rounded-xl border border-white/5">
-                    <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wider block">Standard Rating</span>
-                    <span className="text-lg font-black text-white uppercase">Grade A Elite</span>
+                    <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wider block">Security Grade</span>
+                    <span className="text-lg font-black text-white uppercase">Grade A+ SSL</span>
                   </div>
                   <div className="bg-white/5 p-4 rounded-xl border border-white/5">
-                    <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wider block">Network Spec</span>
+                    <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wider block">Performance Spec</span>
                     <span className="text-lg font-black text-[#FFE24C] uppercase">{features[activeFeature].metric}</span>
                   </div>
                 </div>
@@ -347,13 +403,104 @@ export default function BlogPage() {
         </div>
       </section>
 
+      {/* Asset Explorer & Payout Rates */}
+      <section className="py-24 px-6 bg-[#090a0e] border-y border-white/5">
+        <div className="max-w-7xl mx-auto">
+          <div className="text-center max-w-2xl mx-auto mb-16">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-yellow-500/10 text-[#FFE24C] text-[10px] font-black uppercase tracking-widest mb-4">
+              <Globe size={10} fill="currentColor" />
+              <span>Global Assets & Payout Yields</span>
+            </div>
+            <h2 className="text-3xl sm:text-5xl font-black uppercase tracking-tight">Tradable Asset Specification</h2>
+            <p className="text-gray-400 mt-3 text-sm">Trade over 100+ global instruments across Forex, Crypto, Commodities, and Stocks with competitive payouts.</p>
+
+            {/* Category Selectors */}
+            <div className="flex flex-wrap gap-2 justify-center mt-8">
+              {(['forex', 'crypto', 'commodities', 'stocks'] as const).map(cat => (
+                <button
+                  key={cat}
+                  onClick={() => setActiveAssetCat(cat)}
+                  className={`px-6 py-2.5 rounded-full text-[10px] font-black uppercase tracking-wider transition-all border ${
+                    activeAssetCat === cat 
+                      ? 'bg-[#FFE24C] text-black border-[#FFE24C]' 
+                      : 'bg-white/5 text-gray-400 border-white/5 hover:bg-white/10'
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            {assetsList[activeAssetCat].map((asset, idx) => (
+              <div 
+                key={idx}
+                className="bg-[#0c0d12] border border-white/5 hover:border-[#FFE24C]/30 p-6 rounded-2xl transition-all"
+              >
+                <div className="flex justify-between items-center mb-4">
+                  <span className="text-xs font-black uppercase tracking-wider text-white">{asset.pair}</span>
+                  <span className="text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded font-bold uppercase">{asset.status}</span>
+                </div>
+                <div className="bg-black/40 p-4 rounded-xl border border-white/5 mb-3 flex justify-between items-center">
+                  <span className="text-[10px] text-gray-500 uppercase font-bold">Standard Payout</span>
+                  <span className="text-xl font-black text-[#FFE24C]">{asset.payout}</span>
+                </div>
+                <div className="text-[10px] text-gray-400 flex justify-between">
+                  <span>Weekend OTC Mode:</span>
+                  <span className="text-white font-bold">{asset.otc}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* VIP Status Tier Matrix */}
+      <section className="py-24 px-6 max-w-7xl mx-auto">
+        <div className="text-center max-w-2xl mx-auto mb-16">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-yellow-500/10 text-[#FFE24C] text-[10px] font-black uppercase tracking-widest mb-4">
+            <Award size={10} fill="currentColor" />
+            <span>7-Tier Account Levels</span>
+          </div>
+          <h2 className="text-3xl sm:text-5xl font-black uppercase tracking-tight">VIP Loyalty Program</h2>
+          <p className="text-gray-400 mt-3 text-sm">Unlock higher payout yields, faster cashout priority, and dedicated account manager support as your volume grows.</p>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse min-w-[700px]">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5 text-[10px] font-black uppercase tracking-widest text-[#FFE24C]">
+                <th className="p-4 rounded-tl-2xl">Tier Level</th>
+                <th className="p-4">Min Deposit</th>
+                <th className="p-4">Max Profit Payout</th>
+                <th className="p-4 rounded-tr-2xl">Key Benefits & Priority</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5 text-xs">
+              {vipTiers.map((tier, idx) => (
+                <tr key={idx} className="hover:bg-white/[0.02] transition-colors">
+                  <td className="p-4 font-black uppercase text-white flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-[#FFE24C]" />
+                    <span>{tier.name}</span>
+                  </td>
+                  <td className="p-4 font-bold text-gray-300">{tier.minDeposit}</td>
+                  <td className="p-4 font-black text-[#FFE24C]">{tier.payout}</td>
+                  <td className="p-4 text-gray-400">{tier.perk}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       {/* Getting Started Interactive Steps */}
       <section className="bg-white/[0.01] border-y border-white/5 py-24 px-6">
         <div className="max-w-7xl mx-auto">
           <div className="text-center max-w-xl mx-auto mb-16">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-yellow-500/10 text-[#FFE24C] text-[10px] font-black uppercase tracking-widest mb-4">
               <CheckCircle size={10} fill="currentColor" />
-              <span>Easy Guide</span>
+              <span>Step-By-Step Guide</span>
             </div>
             <h2 className="text-3xl sm:text-4xl font-black uppercase tracking-tight">How To Start Earning</h2>
             <p className="text-gray-400 mt-3 text-sm">Become a master options trader in 4 seamless, secure steps.</p>
@@ -377,35 +524,48 @@ export default function BlogPage() {
         </div>
       </section>
 
-      {/* Blog & Showcase Posts */}
+      {/* Official Updates & Stories Section with Search */}
       <section className="py-24 px-6 max-w-5xl mx-auto" id="showcase">
         <div className="text-center mb-16">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-yellow-500/10 text-[#FFE24C] text-[10px] font-black uppercase tracking-widest mb-4">
             <Zap size={10} fill="currentColor" />
-            <span>Updates & Spotlights</span>
+            <span>Official Admin Posts & Stories</span>
           </div>
           <h2 className="text-3xl sm:text-5xl font-black uppercase tracking-tight mb-4">
-            App Screenshots & <span className="text-[#FFE24C]">Bonuses</span>
+            App Spotlights & <span className="text-[#FFE24C]">Promotions</span>
           </h2>
           <p className="text-gray-400 max-w-lg mx-auto text-sm">
-            Read direct visual insights, promotion highlights, and screen updates posted by our admin panel.
+            Explore direct visual insights, app feature releases, and promotional offers published directly by our administration panel.
           </p>
 
-          {/* Tab Filters */}
-          <div className="flex gap-2 justify-center mt-8">
-            {(['all', 'showcase', 'bonuses'] as const).map(tab => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`px-5 py-2.5 rounded-full text-[10px] font-black uppercase tracking-wider transition-all border ${
-                  activeTab === tab 
-                    ? 'bg-[#FFE24C] text-black border-[#FFE24C]' 
-                    : 'bg-white/5 text-gray-400 border-white/5 hover:bg-white/10'
-                }`}
-              >
-                {tab === 'all' ? 'All Updates' : tab === 'showcase' ? 'App Showcase' : 'Promo & Bonuses'}
-              </button>
-            ))}
+          {/* Search & Tab Filters */}
+          <div className="flex flex-col sm:flex-row gap-4 justify-between items-center mt-10 max-w-2xl mx-auto">
+            <div className="relative w-full sm:w-64">
+              <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500" />
+              <input 
+                type="text" 
+                placeholder="Search updates..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-full pl-9 pr-4 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#FFE24C]"
+              />
+            </div>
+
+            <div className="flex gap-2">
+              {(['all', 'showcase', 'bonuses'] as const).map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-wider transition-all border ${
+                    activeTab === tab 
+                      ? 'bg-[#FFE24C] text-black border-[#FFE24C]' 
+                      : 'bg-white/5 text-gray-400 border-white/5 hover:bg-white/10'
+                  }`}
+                >
+                  {tab === 'all' ? 'All Updates' : tab === 'showcase' ? 'App Showcase' : 'Promo & Bonuses'}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -419,7 +579,7 @@ export default function BlogPage() {
           <div className="text-center py-16 bg-white/5 rounded-[32px] border border-dashed border-white/10">
             <Info className="mx-auto text-gray-600 mb-4" size={40} />
             <h3 className="text-lg font-bold">No posts found</h3>
-            <p className="text-gray-500 text-xs mt-1">There are currently no updates listed under this category.</p>
+            <p className="text-gray-500 text-xs mt-1">There are currently no updates matching your search query.</p>
           </div>
         ) : (
           <div className="space-y-16">
@@ -468,7 +628,7 @@ export default function BlogPage() {
                       <span>{blog.createdAt ? new Date(blog.createdAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'Official Update'}</span>
                     </div>
                     <div className="w-1.5 h-1.5 rounded-full bg-gray-800" />
-                    <span className="text-[#FFE24C]">Verified Showcase</span>
+                    <span className="text-[#FFE24C]">Verified Spotlight</span>
                   </div>
                   
                   <h3 className="text-xl sm:text-2xl font-black uppercase tracking-tight mb-3 group-hover:text-[#FFE24C] transition-colors">
@@ -497,31 +657,31 @@ export default function BlogPage() {
         )}
       </section>
 
-      {/* Security Banner */}
+      {/* Regulatory Compliance & AML Policies Banner */}
       <section className="py-16 px-6 max-w-5xl mx-auto mb-16">
-        <div className="bg-gradient-to-r from-yellow-500/5 to-transparent border border-white/10 rounded-[32px] p-8 sm:p-12 flex flex-col md:flex-row gap-8 items-center">
+        <div className="bg-gradient-to-r from-yellow-500/5 via-white/[0.02] to-transparent border border-white/10 rounded-[32px] p-8 sm:p-12 flex flex-col md:flex-row gap-8 items-center">
           <div className="p-5 bg-[#FFE24C]/10 rounded-2xl text-[#FFE24C] shrink-0">
-            <Lock size={36} />
+            <ShieldCheck size={40} />
           </div>
           <div>
-            <h3 className="text-xl sm:text-2xl font-black uppercase tracking-tight mb-2">Segregated Funds & 2FA Secured</h3>
+            <h3 className="text-xl sm:text-2xl font-black uppercase tracking-tight mb-2">AML Compliance & Segregated Custody</h3>
             <p className="text-gray-400 text-xs sm:text-sm leading-relaxed">
-              We separate customer funds from operation budgets, protecting your deposits. Activate Two-Factor Authentication (2FA) inside your personal settings panel for secure logins, deposits, and withdrawal orders.
+              Bivaax Trade enforces strict Anti-Money Laundering (AML) standards and Know Your Customer (KYC) verification protocols. All client funds are deposited into segregated financial accounts separate from company operations budgets, guaranteeing maximum financial security.
             </p>
           </div>
         </div>
       </section>
 
-      {/* Deep FAQ Section for Ultimate Google Crawl/SEO */}
+      {/* Extended FAQ Section for Ultimate SEO */}
       <section className="py-20 px-6 bg-[#090a0e] border-y border-white/5">
         <div className="max-w-4xl mx-auto">
           <div className="text-center mb-16">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-yellow-500/10 text-[#FFE24C] text-[10px] font-black uppercase tracking-widest mb-4">
               <HelpCircle size={10} fill="currentColor" />
-              <span>Questions & Answers</span>
+              <span>Comprehensive Knowledge Base</span>
             </div>
             <h2 className="text-3xl sm:text-4xl font-black uppercase tracking-tight">Platform Mechanics FAQ</h2>
-            <p className="text-gray-400 text-xs mt-3">Detailed answers about Bivaax Trade accounts, binary rules, and secure options.</p>
+            <p className="text-gray-400 text-xs mt-3">Detailed technical answers about Bivaax Trade accounts, contract rules, deposits, and VIP statuses.</p>
           </div>
 
           <div className="space-y-4">
@@ -569,7 +729,7 @@ export default function BlogPage() {
             <span className="text-[#FFE24C]">First Contract?</span>
           </h2>
           <p className="text-gray-400 text-sm leading-relaxed mb-8">
-            Create an account today to claim your free $10,000 demo funds, try our charting engine, and master binary trading.
+            Create an account today to claim your free $10,000 demo funds, test our real-time trading engine, and master binary options trading.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
             <button
