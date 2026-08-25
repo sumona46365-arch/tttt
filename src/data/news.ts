@@ -224,5 +224,30 @@ export const NEWS_DATA: Record<string, NewsItem> = {
         <a href="/crypto-deposit?promoCode=BIVAAXFAST50" style="display: inline-block; padding: 1rem 2rem; background-color: #FFE24C; color: black; font-weight: 800; border-radius: 0.75rem; text-decoration: none;">DEPOSIT NOW</a>
       </div>
     `
+  },
+  'activities-hub': {
+    id: 'activities-hub',
+    title: 'Activities Hub Overview',
+    subtitle: 'Your centralized command center for tournaments, deposit bonuses, economic calendar, and trading tools.',
+    date: 'August 25, 2026',
+    category: 'Features',
+    imageUrl: 'https://i.postimg.cc/NFXnXHrw/file-00000000110081fa8ffe4ae74614b59a.png',
+    content: `
+      <h2>Welcome to the Bivaax Activities Hub</h2>
+      <p>The Activities Hub brings together all your platform utilities, reward systems, competitive events, and educational resources into one streamlined mobile and desktop dashboard interface.</p>
+      
+      <h3>Key Sections Available in Activities</h3>
+      <ul>
+        <li><strong>Tournaments:</strong> Compete with global traders in real-time trading contests to win huge prize pools and climb the leaderboards.</li>
+        <li><strong>Deposit Bonuses:</strong> Unlock 50% to 100% deposit bonus codes, cashback rewards, and special promotional offers to maximize your trading capital.</li>
+        <li><strong>Economic Calendar:</strong> Track global economic news, interest rate decisions, and high-impact financial events that move market prices.</li>
+        <li><strong>Top-20 Leaderboard:</strong> View the highest-performing traders of the week, analyze their payout volumes, and follow top market strategies.</li>
+        <li><strong>What's New:</strong> Stay updated with the latest platform mechanics, chart tool additions, and release notes.</li>
+        <li><strong>Invite Friends:</strong> Access your personal referral link to invite fellow traders and earn recurring affiliate commissions on their trading volume.</li>
+        <li><strong>Education:</strong> Access free trading courses, candlestick pattern guides, risk management strategies, and video tutorials.</li>
+      </ul>
+
+      <p>Explore the Activities menu anytime from your side navigation drawer or mobile bottom bar to stay ahead of market opportunities!</p>
+    `
   }
 };
