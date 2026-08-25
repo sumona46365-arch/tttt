@@ -326,15 +326,40 @@ export default function ProfilePage() {
   // Bind edit properties when user document loads
   useEffect(() => {
     if (user) {
-      if (!firstName && !lastName) {
-        const nameParts = (user.name || '').split(' ');
-        setFirstName(user.firstName || nameParts[0] || '');
-        setLastName(user.lastName || nameParts.slice(1).join(' ') || '');
+      if (user.firstName || user.first_name) {
+        setFirstName(user.firstName || user.first_name);
+      } else if (!firstName || firstName === 'Trader') {
+        const nameParts = (user.name || user.displayName || '').split(' ');
+        if (nameParts[0] && nameParts[0] !== 'Trader') {
+          setFirstName(nameParts[0]);
+        }
       }
-      setGender(prev => prev === '---' ? (user.gender || '---') : prev);
-      setDobDay(prev => prev === '---' ? (user.dob?.day || '---') : prev);
-      setDobMonth(prev => prev === '---' ? (user.dob?.month || '---') : prev);
-      setDobYear(prev => prev === '---' ? (user.dob?.year || '---') : prev);
+
+      if (user.lastName || user.last_name) {
+        setLastName(user.lastName || user.last_name);
+      } else if (!lastName) {
+        const nameParts = (user.name || user.displayName || '').split(' ');
+        if (nameParts.length > 1) {
+          setLastName(nameParts.slice(1).join(' '));
+        }
+      }
+
+      if (user.gender && user.gender !== '---') {
+        setGender(user.gender);
+      }
+
+      if (user.dob) {
+        const dobObj = typeof user.dob === 'string' ? (() => { try { return JSON.parse(user.dob); } catch { return null; } })() : user.dob;
+        if (dobObj) {
+          if (dobObj.day && dobObj.day !== '---') setDobDay(dobObj.day);
+          if (dobObj.month && dobObj.month !== '---') setDobMonth(dobObj.month);
+          if (dobObj.year && dobObj.year !== '---') setDobYear(dobObj.year);
+        }
+      }
+
+      if (user.nickname) {
+        setNickname(user.nickname);
+      }
       setEmailNewsletter(user.newsletter ?? true);
       setAllowNotifications(user.allowNotifications ?? true);
       

@@ -1627,6 +1627,11 @@ router.patch('/users/:id', requireAuth, async (req: AuthRequest, res) => {
       realBalance: 'real_balance',
       demoBalance: 'demo_balance',
       balance: 'real_balance',
+      isVerified: 'is_verified',
+      is_verified: 'is_verified',
+      isEmailVerified: 'is_email_verified',
+      emailVerified: 'is_email_verified',
+      is_email_verified: 'is_email_verified'
     };
 
     let hasPersonalChanges = false;

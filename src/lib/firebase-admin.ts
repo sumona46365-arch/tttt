@@ -576,9 +576,33 @@ export async function syncUserToFirestore(uid: string, data: any) {
   if (!adminDb || !uid) return;
   try {
     const userRef = adminDb.collection('users').doc(uid);
-    // Remove fields that shouldn't be in Firestore if any, 
-    // but here we just want to ensure balance and profile are synced.
-    await userRef.set(data, { merge: true });
+    const docSnap = await userRef.get().catch(() => null);
+    const existing = docSnap && docSnap.exists ? docSnap.data() : {};
+
+    const cleanData: any = {};
+    for (const [key, value] of Object.entries(data || {})) {
+      if (value !== undefined && value !== null) {
+        cleanData[key] = value;
+      }
+    }
+
+    // Preserve true verification status if already verified in Firestore
+    if (existing && (existing.isVerified || existing.is_verified || existing.emailVerified || existing.isEmailVerified)) {
+      cleanData.isVerified = true;
+      cleanData.is_verified = true;
+      cleanData.emailVerified = true;
+      cleanData.isEmailVerified = true;
+    }
+
+    // Preserve existing personal fields if incoming cleanData is missing or placeholder
+    if (existing?.firstName && (!cleanData.firstName || cleanData.firstName === 'Trader')) cleanData.firstName = existing.firstName;
+    if (existing?.lastName && !cleanData.lastName) cleanData.lastName = existing.lastName;
+    if (existing?.gender && (!cleanData.gender || cleanData.gender === '---')) cleanData.gender = existing.gender;
+    if (existing?.dob && !cleanData.dob) cleanData.dob = existing.dob;
+    if (existing?.nickname && (!cleanData.nickname || cleanData.nickname === 'User')) cleanData.nickname = existing.nickname;
+    if (existing?.phone && !cleanData.phone) cleanData.phone = existing.phone;
+
+    await userRef.set(cleanData, { merge: true });
   } catch (err) {
     console.error(`[FirebaseSync] Failed to sync user ${uid}:`, err);
   }

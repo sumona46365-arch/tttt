@@ -138,9 +138,11 @@ export async function syncUserKycFromFirestore(userId: string) {
     if (userDoc.exists) {
       const userData = userDoc.data();
       if (userData) {
+        const existingUser = await get('SELECT is_verified, is_email_verified FROM users WHERE uid = ?', [userId]) as any;
+        const isVer = (userData.is_verified || userData.isVerified || userData.emailVerified || userData.isEmailVerified || userData.is_email_verified || existingUser?.is_verified || existingUser?.is_email_verified) ? 1 : 0;
         await run(
-          'UPDATE users SET kyc_status = ?, is_verified = ? WHERE uid = ?',
-          [userData.kycStatus || 'unverified', (userData.is_verified || userData.isVerified || userData.emailVerified) ? 1 : 0, userId]
+          'UPDATE users SET kyc_status = ?, is_verified = ?, is_email_verified = ? WHERE uid = ?',
+          [userData.kycStatus || 'unverified', isVer, isVer, userId]
         );
       }
     }
@@ -213,22 +215,38 @@ export async function authoritativeSync(userId: string, emitSocket = true) {
 
     const fireRefCode = fireData.referralCode || fireData.referral_code || fireData.affiliateId || fireData.affiliate_id || '';
 
+    const fireFirstName = fireData.firstName || fireData.first_name || (user ? user.first_name : null);
+    const fireLastName = fireData.lastName || fireData.last_name || (user ? user.last_name : null);
+    const fireGender = fireData.gender || (user ? user.gender : null);
+    const fireDob = typeof fireData.dob === 'object' && fireData.dob !== null ? JSON.stringify(fireData.dob) : (fireData.dob || (user ? user.dob : null));
+    const fireNickname = fireData.nickname || (user ? user.nickname : null);
+    const firePhone = fireData.phone || fireData.phoneNumber || (user ? user.phone : null);
+    const isVerifiedVal = (fireData.is_verified || fireData.isVerified || fireData.emailVerified || fireData.isEmailVerified || fireData.is_email_verified || (user && (user.is_verified || user.is_email_verified))) ? 1 : 0;
+    const isEmailVerifiedVal = (fireData.is_email_verified || fireData.isEmailVerified || fireData.emailVerified || fireData.is_verified || fireData.isVerified || (user && (user.is_email_verified || user.is_verified))) ? 1 : 0;
+
     if (!user) {
       // Restore basic profile
       await run(
         `INSERT OR IGNORE INTO users (
-          uid, email, display_name, real_balance, demo_balance, 
-          kyc_status, is_verified, country, referral_code, referred_by_uid,
-          affiliate_balance, total_affiliate_earnings, referral_count
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          uid, email, display_name, first_name, last_name, gender, dob, nickname, phone,
+          real_balance, demo_balance, kyc_status, is_verified, is_email_verified, country, 
+          referral_code, referred_by_uid, affiliate_balance, total_affiliate_earnings, referral_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           userId,
           fireData.email || '',
           fireData.displayName || fireData.name || '',
+          fireFirstName,
+          fireLastName,
+          fireGender,
+          fireDob,
+          fireNickname,
+          firePhone,
           finalRealBal,
           finalDemoBal,
           fireData.kycStatus || fireData.kyc_status || 'unverified',
-          (fireData.is_verified || fireData.isVerified || fireData.emailVerified) ? 1 : 0,
+          isVerifiedVal,
+          isEmailVerifiedVal,
           fireData.country || '',
           fireRefCode,
           fireData.referredBy || fireData.referred_by_uid || '',
@@ -240,19 +258,26 @@ export async function authoritativeSync(userId: string, emitSocket = true) {
       user = await get('SELECT * FROM users WHERE uid = ?', [userId]);
     } else {
       const finalRefCode = fireRefCode || user.referral_code || '';
-      // Authoritatively update existing record without wiping positive balances
+      // Authoritatively update existing record without wiping positive balances or personal info
       await run(
         `UPDATE users SET 
-          real_balance = ?, demo_balance = ?, kyc_status = ?, is_verified = ?,
-          display_name = ?, country = ?, affiliate_balance = ?, 
-          total_affiliate_earnings = ?, referral_count = ?, referral_code = ?
+          real_balance = ?, demo_balance = ?, kyc_status = ?, is_verified = ?, is_email_verified = ?,
+          display_name = ?, first_name = ?, last_name = ?, gender = ?, dob = ?, nickname = ?, phone = ?,
+          country = ?, affiliate_balance = ?, total_affiliate_earnings = ?, referral_count = ?, referral_code = ?
         WHERE uid = ?`,
         [
           finalRealBal,
           finalDemoBal,
           fireData.kycStatus || fireData.kyc_status || user.kyc_status || 'unverified',
-          (fireData.is_verified || fireData.isVerified || fireData.emailVerified || user.is_verified) ? 1 : 0,
+          isVerifiedVal,
+          isEmailVerifiedVal,
           fireData.displayName || fireData.name || user.display_name,
+          fireFirstName,
+          fireLastName,
+          fireGender,
+          fireDob,
+          fireNickname,
+          firePhone,
           fireData.country || user.country,
           finalAffBal,
           fireData.totalAffiliateEarnings || fireData.total_affiliate_earnings || user.total_affiliate_earnings || 0,
