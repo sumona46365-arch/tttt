@@ -1,6 +1,6 @@
 {
-  "name": "Bivaax",
-  "description": "Bivaax Trade - Professional Binary Options Trading Platform with Secure Persistence and Advanced Charting.",
+  "name": "Bivaax Trade",
+  "description": "Bivaax Trade - The world's leading binary options trading platform. Experience professional trading with secure deposits (bKash, Nagad), instant payouts, and 24/7 expert support. Trade global markets with Bivaax.",
   "requestFramePermissions": [
     "camera",
     "microphone"

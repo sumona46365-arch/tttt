@@ -13,7 +13,7 @@ import {
   Youtube, Instagram, Send, Facebook, Music2, Share, Award, Copy, ShieldOff, UserX, Smartphone
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { currencies, formatWithCurrency, getCurrencySymbol } from '../lib/currencies';
+import { currencies, formatWithCurrency, getCurrencySymbol, formatRawCurrency } from '../lib/currencies';
 import { io } from 'socket.io-client';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'react-hot-toast';
@@ -1551,14 +1551,14 @@ export default function AdminDashboard() {
                                   {depositRequests.filter(d => d.status === 'pending').slice(0, 5).map(d => (
                                       <tr key={d.id} className="border-t border-white/5">
                                           <td className="py-4 text-white">Deposit</td>
-                                          <td className="py-4 text-white">{formatWithCurrency(d.amount, d.currency || 'BDT')}</td>
+                                          <td className="py-4 text-white">{formatRawCurrency(d.amount, d.currency || 'BDT')}</td>
                                           <td className="py-4 text-yellow-500">Pending</td>
                                       </tr>
                                   ))}
                                   {withdrawals.filter(w => w.status === 'pending').slice(0, 5).map(w => (
                                       <tr key={w.id} className="border-t border-white/5">
                                           <td className="py-4 text-white">Withdrawal</td>
-                                          <td className="py-4 text-white">{formatWithCurrency(w.amount, w.currency || 'BDT')}</td>
+                                          <td className="py-4 text-white">{formatRawCurrency(w.amount, w.currency || 'BDT')}</td>
                                           <td className="py-4 text-yellow-500">Pending</td>
                                       </tr>
                                   ))}

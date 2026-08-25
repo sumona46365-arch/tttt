@@ -1,48 +1,14 @@
 User-agent: *
-
-# Allow crawling of public pages & news
-Allow: /$
-Allow: /about-us$
-Allow: /docs$
-Allow: /news/
-Allow: /page/
-Allow: /affiliate$
-Allow: /help-center$
-Allow: /support$
-
-# Allow crawling of assets & bundles required for Google page rendering
-Allow: /assets/
-Allow: /public/
-Allow: /images/
-Allow: /favicon.jpg
-Allow: /icon-512.png
-Allow: /manifest.json
-
-# Disallow authentication & private internal app paths
+Allow: /
 Disallow: /trade
-Disallow: /leaderboard
-Disallow: /promotions
-Disallow: /calendar
-Disallow: /tournaments
-Disallow: /education
-Disallow: /statuses
 Disallow: /profile
+Disallow: /admin
+Disallow: /deposit
+Disallow: /withdraw
+Disallow: /affiliate
 Disallow: /signals
 Disallow: /copytrading
-Disallow: /crypto-deposit
-Disallow: /mfs-deposit
-Disallow: /deposit/
-Disallow: /Bivaaxpay
-Disallow: /login
-Disallow: /register
-Disallow: /signup
+Disallow: /kyc
 
-# Disallow admin panels & sensitive support interfaces
-Disallow: /admin
-Disallow: /support-center
-
-# Disallow all backend API endpoints & internal system logic
-Disallow: /api/
-
-# Specify the absolute URL to the sitemap
 Sitemap: https://bivaax.com/sitemap.xml
+Sitemap: https://bivaax.trade/sitemap.xml

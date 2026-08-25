@@ -223,15 +223,39 @@ export async function getUserByAffiliateId(id: string | number) {
  * so links lead traders directly to the main trading platform (e.g. bivaax.com).
  */
 export function getTraderPlatformOrigin(customDomain?: string): string {
+  // Use custom domain if provided in app settings
   if (customDomain) {
     return customDomain.startsWith('http') ? customDomain : `https://${customDomain}`;
   }
-  if (typeof window === 'undefined') return '';
+  
+  if (typeof window === 'undefined') return 'https://bivaax.com';
+  
   const { protocol, host, hostname } = window.location;
-  if (hostname.startsWith('partner.') || hostname.startsWith('affiliate.')) {
-    const mainHost = host.replace(/^partner\./, '').replace(/^affiliate\./, '');
+  
+  // Strictly remove partner, affiliate, market, blog subdomains for trader links
+  if (
+    hostname.startsWith('partner.') || 
+    hostname.startsWith('affiliate.') || 
+    hostname.startsWith('market.') || 
+    hostname.startsWith('blog.') ||
+    hostname.startsWith('bloge.') ||
+    hostname.includes('asia-southeast1.run.app') // Handle dev environment safely
+  ) {
+    // If we are on bivaax.com or its subdomains, always point to the main domain
+    if (hostname.includes('bivaax.com')) {
+      return `${protocol}//bivaax.com`;
+    }
+    
+    // Fallback for other environments: strip common subdomains
+    const mainHost = host
+      .replace(/^partner\./, '')
+      .replace(/^affiliate\./, '')
+      .replace(/^market\./, '')
+      .replace(/^blog\./, '')
+      .replace(/^bloge\./, '');
     return `${protocol}//${mainHost}`;
   }
+  
   return window.location.origin;
 }
 

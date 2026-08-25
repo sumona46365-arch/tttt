@@ -17,6 +17,11 @@
     0% { transform: translateX(-100%); }
     100% { transform: translateX(300%); }
   }
+
+  @keyframes pulse-glow {
+    0%, 100% { opacity: 1; filter: drop-shadow(0 0 8px rgba(255,255,255,0.05)); }
+    50% { opacity: 0.7; filter: drop-shadow(0 0 15px rgba(255,255,255,0.15)); }
+  }
 }
 
 /* Custom Scrollbar for Dark Theme */
@@ -55,4 +60,47 @@ a[href*="tradingview.com"] {
 #tv-attr-logo,
 a[href*="tradingview.com"] {
   display: none !important;
+}
+
+@layer utilities {
+  .premium-shimmer-container {
+    position: relative;
+    overflow: hidden;
+    background-color: #222226; /* Dark gray skeleton surface */
+    isolation: isolate;
+  }
+
+  .premium-shimmer-container::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background-image: linear-gradient(
+      105deg,
+      transparent 20%,
+      rgba(255, 255, 255, 0.04) 40%,
+      rgba(255, 255, 255, 0.1) 50%,
+      rgba(255, 255, 255, 0.04) 60%,
+      transparent 80%
+    );
+    animation: premium-shimmer 2s infinite cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 10;
+    pointer-events: none;
+  }
+
+  @keyframes premium-shimmer {
+    100% {
+      transform: translateX(100%);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .premium-shimmer-container::after {
+      animation: none;
+      background-image: none;
+    }
+    .premium-shimmer-container {
+      animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+  }
 }

@@ -2426,16 +2426,11 @@ router.post('/trade', async (req, res) => {
 
       const tradeAmount = new Big(amount);
       if (currentBalance.lt(tradeAmount)) {
-        if (isDemo && currentBalance.lte(0)) {
-          currentBalance = new Big(10000);
-          await run(`UPDATE users SET demo_balance = 10000 WHERE uid = ?`, [userId], conn);
-        } else {
-          throw new Error('Insufficient balance');
-        }
+        throw new Error('Insufficient balance. Please recharge your account.');
       }
 
       // 2. Deduct balance in PostgreSQL
-      const newBalanceStr = currentBalance.minus(tradeAmount).toFixed(2);
+      const newBalanceStr = currentBalance.minus(tradeAmount).toFixed(6);
       if (isTournament) {
         await run(`UPDATE tournament_participants SET score = ? WHERE tournament_id = ? AND user_id = ?`, [newBalanceStr, tournamentId, userId], conn);
       } else {
@@ -2834,16 +2829,11 @@ router.post('/trades/place',
       const tradeAmount = new Big(amount);
 
       if (currentBalance.lt(tradeAmount)) {
-        if ((isDemo || accountType === 'demo') && currentBalance.lte(0)) {
-          currentBalance = new Big(10000);
-          await run(`UPDATE users SET demo_balance = 10000 WHERE uid = ?`, [uid], conn);
-        } else {
-          throw new Error('Insufficient balance');
-        }
+        throw new Error('Insufficient balance. Please recharge your account.');
       }
 
       // 2. Deduct balance
-      const newBalance = currentBalance.minus(tradeAmount).toFixed(2);
+      const newBalance = currentBalance.minus(tradeAmount).toFixed(6);
       if (isTournament) {
         await run(`UPDATE tournament_participants SET score = ? WHERE tournament_id = ? AND user_id = ?`, [newBalance, tournamentId, uid], conn);
       } else {
@@ -3133,13 +3123,13 @@ router.post('/wallet/withdraw',
       }
 
       // Deduct balance immediately for withdrawal
-      const newBalance = currentBalance.minus(withdrawAmount).toFixed(2);
+      const newBalance = currentBalance.minus(withdrawAmount).toFixed(6);
       await run(`UPDATE users SET real_balance = ? WHERE uid = ?`, [newBalance, uid], conn);
 
       // DR & Audit Logging
       try {
         const { SnapshotService } = await import('../services/snapshotService.ts');
-        await SnapshotService.logFinancialAudit(uid, 'withdraw_request', withdrawAmount.toFixed(2), currentBalance.toFixed(2), newBalance, `withdraw_${Date.now()}`);
+        await SnapshotService.logFinancialAudit(uid, 'withdraw_request', withdrawAmount.toFixed(6), currentBalance.toFixed(6), newBalance, `withdraw_${Date.now()}`);
         await SnapshotService.syncUserForDR(uid);
       } catch (drErr) {
         logger.error('Failed to initiate DR/Audit logging for withdrawal request:', drErr);
@@ -3260,7 +3250,7 @@ router.post('/payment/webhook', async (req, res) => {
         if (user) {
           const currentBalance = new Big(user.real_balance || 0);
           const depositAmount = new Big(money);
-          const newBalance = currentBalance.plus(depositAmount).toFixed(2);
+          const newBalance = currentBalance.plus(depositAmount).toFixed(6);
           await run('UPDATE users SET real_balance = ? WHERE uid = ?', [newBalance, uid]);
           
           const mapped = mapUserForFrontend(await get('SELECT * FROM users WHERE uid = ?', [uid]));
@@ -3421,7 +3411,7 @@ router.post('/admin/deposits/update', requireAuth, async (req: AuthRequest, res)
 
       if (user) {
         const currentBalance = new Big(user.real_balance || 0);
-        const newBalance = currentBalance.plus(depositAmountWithBonus).toFixed(2);
+        const newBalance = currentBalance.plus(depositAmountWithBonus).toFixed(6);
         await run('UPDATE users SET real_balance = ?, total_deposits = total_deposits + ? WHERE uid = ?', [newBalance, rawDepositAmount, userId]);
         
         // Affiliate Commission (10%) - based on base deposit amount (excluding bonus)
@@ -3637,7 +3627,7 @@ router.post('/admin/withdrawals/update', requireAuth, async (req: AuthRequest, r
       if (user) {
         const currentBalance = new Big(user.real_balance || 0);
         const refundAmount = new Big(amount);
-        const newBalance = currentBalance.plus(refundAmount).toFixed(2);
+        const newBalance = currentBalance.plus(refundAmount).toFixed(6);
         await run('UPDATE users SET real_balance = ? WHERE uid = ?', [newBalance, userId]);
         
         const updatedUser = await get('SELECT * FROM users WHERE uid = ?', [userId]);
@@ -3994,13 +3984,13 @@ router.post('/admin/transactions/approve', requireAuth, async (req: AuthRequest,
         const user = await get('SELECT * FROM users WHERE uid = ?', [tx.user_id], conn) as any;
         const currentBalance = new Big(user.real_balance || 0);
         const depositAmount = new Big(tx.amount);
-        const newBalance = currentBalance.plus(depositAmount).toFixed(2);
+        const newBalance = currentBalance.plus(depositAmount).toFixed(6);
         await run('UPDATE users SET real_balance = ?, total_deposits = total_deposits + ? WHERE uid = ?', [newBalance, depositAmount.toNumber(), tx.user_id], conn);
 
         // DR & Audit Logging
         try {
           const { SnapshotService } = await import('../services/snapshotService.ts');
-          await SnapshotService.logFinancialAudit(tx.user_id, 'deposit_approval', depositAmount.toFixed(2), currentBalance.toFixed(2), newBalance, `tx_${id}`);
+          await SnapshotService.logFinancialAudit(tx.user_id, 'deposit_approval', depositAmount.toFixed(6), currentBalance.toFixed(6), newBalance, `tx_${id}`);
           await SnapshotService.syncUserForDR(tx.user_id);
         } catch (drErr) {
           logger.error('Failed to initiate DR/Audit logging for deposit approval:', drErr);
@@ -4109,13 +4099,13 @@ router.post('/admin/transactions/reject', requireAuth, async (req: AuthRequest, 
         const user = await get('SELECT real_balance FROM users WHERE uid = ?', [tx.user_id], conn) as any;
         const currentBalance = new Big(user.real_balance || 0);
         const refundAmount = new Big(tx.amount);
-        const newBalance = currentBalance.plus(refundAmount).toFixed(2);
+        const newBalance = currentBalance.plus(refundAmount).toFixed(6);
         await run('UPDATE users SET real_balance = ? WHERE uid = ?', [newBalance, tx.user_id], conn);
 
         // DR & Audit Logging
         try {
           const { SnapshotService } = await import('../services/snapshotService.ts');
-          await SnapshotService.logFinancialAudit(tx.user_id, 'withdrawal_refund', refundAmount.toFixed(2), currentBalance.toFixed(2), newBalance, `tx_${id}`);
+          await SnapshotService.logFinancialAudit(tx.user_id, 'withdrawal_refund', refundAmount.toFixed(6), currentBalance.toFixed(6), newBalance, `tx_${id}`);
           await SnapshotService.syncUserForDR(tx.user_id);
         } catch (drErr) {
           logger.error('Failed to initiate DR/Audit logging for withdrawal refund:', drErr);

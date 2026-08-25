@@ -393,9 +393,9 @@ export default function AffiliateLandingPage() {
   return (
     <div className="min-h-screen bg-[#07080a] text-white font-sans selection:bg-[#ffcf00]/30 selection:text-black overflow-x-hidden">
       <SEO 
-        title="Bivaax Partners | The Elite Trading Affiliate Network"
-        description="Join the Bivaax Partner Network and earn industry-leading commissions. Lifetime recurring income, high conversion rates, and dedicated support."
-        keywords="Bivaax affiliate, Bivaax partner, trading affiliate program, binary options affiliate, earn money trading"
+        title="Bivaax Partners | Official Affiliate & IB Program"
+        description="Join the Bivaax Partner Network and earn industry-leading commissions. Earn up to 80% revenue share, lifetime recurring income, and high conversion rates. The best trading affiliate program for binary options."
+        keywords="Bivaax affiliate, Bivaax partner, trading affiliate program, binary options affiliate, earn money trading, introducing broker program, trading commissions, IB program"
       />
 
       {/* FIXED FLOATING NAVBAR */}

@@ -19,6 +19,8 @@ import {
 
 import { 
   getFirestore, 
+  initializeFirestore,
+  setLogLevel,
   doc as fbDoc, 
   getDocFromServer,
   collection as fbCollection,
@@ -36,6 +38,11 @@ import firebaseConfig from "../firebase-applet-config.json";
 // Initialize Firebase
 const firebaseApp = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0];
 
+// Silence noisy client-side webchannel transport connection warnings
+try {
+  setLogLevel('error');
+} catch {}
+
 // Use initializeAuth with persistence for more stability in iframe/preview environments
 let realFirebaseAuth: any;
 try {
@@ -51,22 +58,26 @@ try {
   });
 }
 
-export const dbInstance = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
+export let dbInstance: any;
+try {
+  dbInstance = initializeFirestore(firebaseApp, {
+    experimentalForceLongPolling: true,
+    ignoreUndefinedProperties: true
+  }, firebaseConfig.firestoreDatabaseId);
+} catch {
+  dbInstance = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
+}
 
 // Test connection
 async function testConnection() {
   try {
-    await getDocFromServer(fbDoc(dbInstance, 'test', 'connection'));
-    console.log("✅ Firebase connection established");
+    if (dbInstance) {
+      await getDocFromServer(fbDoc(dbInstance, 'test', 'connection'));
+      console.log("✅ Firebase connection established");
+    }
   } catch (error: any) {
-    // Suppress confusing client-side direct firestore connection logs
-    // since the client successfully routes all persistent state via server-proxied API endpoints.
-    console.debug("Firebase direct client connection check status:", error.message || error);
-    
-    // If we see network-request-failed, it's a hint that the client's network/ISP or browser 
-    // might be blocking Google services.
-    if (error.message?.includes('network-request-failed') || error.code === 'auth/network-request-failed') {
-      console.error("CRITICAL: Firebase network request failed. This usually means Google services are being blocked by your network, browser extension, or ISP.");
+    if (error?.message?.includes('the client is offline') || error?.code === 'unavailable') {
+      console.warn("Cloud Firestore client is operating in offline/proxied mode.");
     }
   }
 }

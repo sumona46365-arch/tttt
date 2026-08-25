@@ -259,7 +259,7 @@ import { signOut, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCrede
 import { useNavigate, useSearchParams, useLocation } from "react-router-dom";
 
 import { doc, getDoc, onSnapshot, query, collection, orderBy, where, collectionGroup, setDoc, updateDoc, deleteDoc, increment, limit, addDoc, serverTimestamp, getDocs } from "../firebase";
-import { currencies, formatWithCurrency, convertToBase, convertFromBase, getCurrencySymbol } from "../lib/currencies";
+import { currencies, formatWithCurrency, convertToBase, convertFromBase, getCurrencySymbol, formatRawCurrency } from "../lib/currencies";
 import { TimeZoneModal } from "../components/TimeZoneModal";
 import PaymentMethodsStatus from "../components/PaymentMethodsStatus";
 import { useTranslation, LanguageCode } from "../lib/translations";
@@ -512,22 +512,24 @@ const AnimatedBalance = ({ value, currency, accountType, isHidden }: { value: nu
       setDisplayValue(value);
       if (animationRef.current) {
         window.cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
       }
       return;
     }
 
     // Round both values to avoid noise-triggered animations
-    const roundedValue = parseFloat(value.toFixed(4));
-    const roundedPrev = parseFloat(prevValueRef.current.toFixed(4));
+    const roundedValue = parseFloat(Number(value || 0).toFixed(2));
+    const roundedPrev = parseFloat(Number(prevValueRef.current || 0).toFixed(2));
 
-    if (roundedValue !== roundedPrev) {
+    if (Math.abs(roundedValue - roundedPrev) >= 0.01) {
       if (animationRef.current) {
         window.cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
       }
 
-      const start = prevValueRef.current;
-      const end = value;
-      const duration = 400; // Responsive animation duration
+      const start = displayValue;
+      const end = roundedValue;
+      const duration = 300; // Smooth 300ms transition
       let startTimestamp: number | null = null;
       
       const step = (timestamp: number) => {
@@ -540,16 +542,23 @@ const AnimatedBalance = ({ value, currency, accountType, isHidden }: { value: nu
         
         if (progress < 1) {
           animationRef.current = window.requestAnimationFrame(step);
+        } else {
+          setDisplayValue(end);
+          animationRef.current = null;
         }
       };
       
       animationRef.current = window.requestAnimationFrame(step);
-      prevValueRef.current = value;
+      prevValueRef.current = roundedValue;
+    } else {
+      setDisplayValue(roundedValue);
+      prevValueRef.current = roundedValue;
     }
     
     return () => {
       if (animationRef.current) {
         window.cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
       }
     };
   }, [value, accountType]);
@@ -1089,6 +1098,7 @@ interface Transaction {
   timestamp?: number;
   orderId?: string;
   trxId?: string;
+  currency?: string;
 }
 
 const MOCK_TRANSACTIONS: Transaction[] = [
@@ -1431,6 +1441,44 @@ export const mapTimeframeToBinanceInterval = (tf: string): string => {
   }
 };
 
+const DepositSkeleton = () => {
+  return (
+    <motion.div 
+      className="flex flex-col gap-2 relative z-10"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.3 }}
+    >
+      {[1, 2, 3, 4, 5, 6].map((i, index) => (
+        <motion.div 
+          key={i} 
+          className="premium-shimmer-container rounded-[16px] flex items-center min-h-[64px] px-4"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: index * 0.05, ease: "easeOut" }}
+        >
+          <div className="w-11 h-11 rounded-full bg-[#323236] shrink-0 z-10 shadow-inner" />
+          <div className="flex flex-col ml-4 gap-2.5 w-full z-10">
+            <div className="w-32 h-3.5 rounded-full bg-[#323236]" />
+            <div className="w-20 h-2.5 rounded-full bg-[#2a2a2e]" />
+          </div>
+        </motion.div>
+      ))}
+    </motion.div>
+  );
+};
+
+const DEFAULT_DEPOSIT_METHODS = [
+  { id: "bkash", name: "bKash", provider: "bKash", logo: "bkash", logoType: 'text', category: "E-wallets", bgColor: "#E2136E", time: "Instant", instant: true, minDeposit: 500, maxDeposit: 25000, isPopular: true, currency: "BDT", isActive: true },
+  { id: "nagad", name: "Nagad", provider: "Nagad", logo: "nagad", logoType: 'text', category: "E-wallets", bgColor: "#EC2A24", time: "Instant", instant: true, minDeposit: 500, maxDeposit: 25000, isPopular: true, currency: "BDT", isActive: true },
+  { id: "rocket", name: "Rocket", provider: "Rocket", logo: "rocket", logoType: 'text', category: "E-wallets", bgColor: "#8B2E88", time: "Instant", instant: true, minDeposit: 500, maxDeposit: 25000, isPopular: true, currency: "BDT", isActive: true },
+  { id: "binance-pay", name: "Binance Pay", provider: "Binance", logo: "https://i.postimg.cc/RVJPryCQ/images-(1).jpg", logoType: 'image', category: "Crypto", bgColor: "#FCD535", time: "Instant", instant: true, minDeposit: 10, maxDeposit: 40000, isPopular: true, currency: "USDT", isActive: true },
+  { id: "usdt-trc20", name: "USDT (TRC-20)", provider: "Tether", logo: "https://cryptologos.cc/logos/tether-usdt-logo.png", logoType: 'image', category: "Crypto", bgColor: "#26A17B", time: "30-60 Min", instant: false, minDeposit: 1, maxDeposit: 10000, isPopular: true, currency: "USDT", isActive: true },
+  { id: "bitcoin", name: "Bitcoin", provider: "BTC", logo: "https://s2.coinmarketcap.com/static/img/coins/200x200/1.png", logoType: 'image', category: "Crypto", bgColor: "#F7931A", time: "30-60 Min", instant: false, minDeposit: 0.0001, maxDeposit: 10, currency: "BTC", isActive: true },
+  { id: "perfect-money", name: "Perfect Money", provider: "Perfect Money", logo: "https://uxwing.com/wp-content/themes/uxwing/download/brands-and-social-media/perfect-money-icon.png", logoType: 'image', category: "E-wallets", bgColor: "#E61A24", time: "Instant", instant: true, minDeposit: 10, maxDeposit: 5000, currency: "USD", isActive: true }
+];
+
 export default function TradeTerminal() {
   const { openSupport } = useSupport();
   const failedFetchRef = useRef(new Set<string>());
@@ -1438,6 +1486,16 @@ export default function TradeTerminal() {
   const navigate = useNavigate();
   const [showDeposit, setShowDeposit] = useState(false);
   const [cashierTab, setCashierTab] = useState<"deposits" | "withdrawals" | "history">("deposits");
+  const [currentWithdrawStory, setCurrentWithdrawStory] = useState(0);
+
+  useEffect(() => {
+    if (cashierTab === 'withdrawals') {
+      const timer = setInterval(() => {
+        setCurrentWithdrawStory((prev) => (prev + 1) % 4);
+      }, 4000);
+      return () => clearInterval(timer);
+    }
+  }, [cashierTab]);
   const [showCashierMenu, setShowCashierMenu] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const actionParam = searchParams.get('action');
@@ -1478,16 +1536,32 @@ export default function TradeTerminal() {
       const notifId = String(tradeNotif.id || tradeNotif.tradeId || Math.random());
       const tId = tradeNotif.tradeId ? String(tradeNotif.tradeId) : notifId;
       
-      const exists = prev.some(n => {
-        if (String(n.id) === notifId || String(n.id) === tId || (n.tradeId && String(n.tradeId) === tId)) return true;
-        const sameAsset = n.asset === tradeNotif.asset;
-        const sameAmt = Math.abs(Number(n.amount) - Number(tradeNotif.amount)) < 0.01;
-        const sameStatus = n.status === tradeNotif.status;
-        const recent = Math.abs(now - (n.timestamp || 0)) < 4000;
-        return sameAsset && sameAmt && sameStatus && recent;
+      let foundGroup = false;
+      const updated = prev.map(n => {
+        // Group if same asset, same status, and within a recent time window
+        if (n.asset === tradeNotif.asset && n.status === tradeNotif.status && Math.abs(now - (n.timestamp || 0)) < 3500) {
+          foundGroup = true;
+          // Avoid duplicate processing of the exact same trade ID
+          if (n.processedIds && n.processedIds.includes(tId)) {
+            return n;
+          }
+          return {
+            ...n,
+            amount: n.amount + tradeNotif.amount,
+            count: (n.count || 1) + 1,
+            processedIds: [...(n.processedIds || [n.id || n.tradeId]), tId],
+            timestamp: now // reset timestamp to keep it alive slightly longer
+          };
+        }
+        return n;
       });
 
-      if (exists) return prev;
+      if (foundGroup) {
+        return updated.filter(n => now - (n.timestamp || 0) < 4000).slice(-5);
+      }
+
+      // Check if exact ID already exists (shouldn't if not grouped, but just in case)
+      if (prev.some(n => String(n.id) === notifId || String(n.id) === tId || (n.tradeId && String(n.tradeId) === tId))) return prev;
 
       const newNotif = {
         id: notifId,
@@ -1495,10 +1569,12 @@ export default function TradeTerminal() {
         status: tradeNotif.status,
         asset: tradeNotif.asset,
         amount: tradeNotif.amount,
-        timestamp: now
+        timestamp: now,
+        count: 1,
+        processedIds: [tId]
       };
 
-      const fresh = prev.filter(n => now - (n.timestamp || 0) < 2500);
+      const fresh = prev.filter(n => now - (n.timestamp || 0) < 4000);
       return [newNotif, ...fresh].slice(0, 3);
     });
   }, []);
@@ -1555,9 +1631,9 @@ export default function TradeTerminal() {
     const timer = setInterval(() => {
         setTradeNotifications(prev => {
           const now = Date.now();
-          const next = prev.filter(n => now - (n.timestamp || 0) < 2500);
+          const next = prev.filter(n => now - (n.timestamp || 0) < 4000);
           if (next.length === prev.length) {
-            const allSame = next.every((n, i) => n.id === prev[i].id);
+            const allSame = next.every((n, i) => n.id === prev[i].id && n.amount === prev[i].amount && n.count === prev[i].count);
             if (allSame) return prev;
           }
           return next;
@@ -1611,13 +1687,16 @@ export default function TradeTerminal() {
         console.warn("Failed to fetch API tournaments", err);
       }
       
-      const deps = depMethodsSnap.docs.map((d: any) => ({id: d.id, ...d.data()}));
-      
-      setDepositMethods(deps);
-      console.log("Terminal Boot Success. Methods:", deps.length);
+      if (depMethodsSnap && depMethodsSnap.docs.length > 0) {
+        const deps = depMethodsSnap.docs.map((d: any) => ({id: d.id, ...d.data()}));
+        setDepositMethods(deps);
+        console.log("Terminal Boot Success. Methods:", deps.length);
+      }
+      setIsDepositMethodsLoading(false);
 
     } catch (e: any) {
       console.warn("Application boot issue:", e.message);
+      setIsDepositMethodsLoading(false);
     }
   };
 
@@ -1626,9 +1705,14 @@ export default function TradeTerminal() {
     
     // Real-time subscription to deposit methods
     const unsub = onSnapshot(collection(db, 'depositMethods'), (snap) => {
-      const deps = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-      setDepositMethods(deps);
-      console.log("Real-time Methods Update:", deps.length);
+      if (!snap.empty) {
+        const deps = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+        setDepositMethods(deps);
+      }
+      setIsDepositMethodsLoading(false);
+    }, (err) => {
+      console.warn("Real-time Methods Update error:", err);
+      setIsDepositMethodsLoading(false);
     });
 
     return () => unsub();
@@ -2266,15 +2350,21 @@ export default function TradeTerminal() {
     const targetType = type || accountType;
     const bigDelta = new Big(delta);
     
-    if (targetType === 'demo') {
+    if (targetType === 'real') {
+      setRealBalance(prev => {
+        const newVal = parseFloat(new Big(prev).plus(bigDelta).toFixed(6));
+        realBalanceRef.current = newVal;
+        return newVal;
+      });
+    } else if (targetType === 'demo') {
       setDemoBalance(prev => {
-        const newVal = parseFloat(new Big(prev).plus(bigDelta).toFixed(2));
+        const newVal = parseFloat(new Big(prev).plus(bigDelta).toFixed(6));
         demoBalanceRef.current = newVal;
         return newVal;
       });
     } else if (targetType === 'tournament') {
       setTournamentBalance(prev => {
-        const newVal = Math.max(0, parseFloat(new Big(prev).plus(bigDelta).toFixed(2)));
+        const newVal = Math.max(0, parseFloat(new Big(prev).plus(bigDelta).toFixed(6)));
         if (auth.currentUser && activeTournamentId) {
           import('../firebase.ts').then(({ doc, updateDoc }) => {
             updateDoc(doc(db, 'tournaments', activeTournamentId, 'participants', auth.currentUser!.uid), {
@@ -2330,6 +2420,7 @@ export default function TradeTerminal() {
     if (path === '/help-center') return 'help-center';
     if (path === '/trade/history') return 'history';
     if (path === '/trade/assets') return 'assets';
+    if (path === '/activities') return 'activities';
     return 'trade';
   };
 
@@ -2361,7 +2452,7 @@ export default function TradeTerminal() {
 
   useEffect(() => {
     const newTab = getInitialTab();
-    if (newTab !== activeTabRaw && ['top-20', 'promotions', 'calendar', 'support', 'tournaments', 'education', 'statuses', 'help-center', 'trade', 'history', 'assets', 'strategies'].includes(newTab)) {
+    if (newTab !== activeTabRaw && ['top-20', 'promotions', 'calendar', 'support', 'tournaments', 'education', 'statuses', 'help-center', 'trade', 'history', 'assets', 'strategies', 'activities'].includes(newTab)) {
       setActiveTabRaw(newTab as any);
     }
   }, [location.pathname]);
@@ -2376,10 +2467,20 @@ export default function TradeTerminal() {
           setCashierTab(sub);
         }
       }
-    } else if (path === '/cashier') {
-      if (!showDeposit) {
+    } else if (path === '/cashier' || path === '/deposit') {
+      if (!showDeposit || cashierTab !== 'deposits') {
         setShowDeposit(true);
         setCashierTab('deposits');
+      }
+    } else if (path === '/withdraw') {
+      if (!showDeposit || cashierTab !== 'withdrawals') {
+        setShowDeposit(true);
+        setCashierTab('withdrawals');
+      }
+    } else if (path === '/transactions') {
+      if (!showDeposit || cashierTab !== 'history') {
+        setShowDeposit(true);
+        setCashierTab('history');
       }
     } else {
       // If we are not on a cashier path, ensure cashier is closed
@@ -2391,12 +2492,16 @@ export default function TradeTerminal() {
 
   useEffect(() => {
     if (showDeposit) {
-      const currentPath = `/cashier/${cashierTab}`;
-      if (location.pathname !== currentPath) {
+      let currentPath = `/cashier/${cashierTab}`;
+      if (cashierTab === 'deposits') currentPath = '/deposit';
+      else if (cashierTab === 'withdrawals') currentPath = '/withdraw';
+      else if (cashierTab === 'history') currentPath = '/transactions';
+
+      if (location.pathname !== currentPath && !location.pathname.startsWith('/cashier/')) {
         navigate(currentPath);
       }
     } else {
-      if (location.pathname.startsWith('/cashier')) {
+      if (location.pathname.startsWith('/cashier') || location.pathname === '/deposit' || location.pathname === '/withdraw' || location.pathname === '/transactions') {
         navigate('/trade');
       }
     }
@@ -2419,8 +2524,9 @@ export default function TradeTerminal() {
     else if (tab === 'education') navigate('/education');
     else if (tab === 'statuses') navigate('/statuses');
     else if (tab === 'help-center') navigate('/help-center');
+    else if (tab === 'activities') navigate('/activities');
     else if (tab === 'trade' || tab === 'history' || tab === 'assets') {
-      if (!location.pathname.startsWith('/cashier')) {
+      if (!location.pathname.startsWith('/cashier') && location.pathname !== '/deposit' && location.pathname !== '/withdraw' && location.pathname !== '/transactions') {
         const targetPath = tab === 'history' ? '/trade/history' : (tab === 'assets' ? '/trade/assets' : '/trade');
         if (location.pathname !== targetPath) {
           navigate(targetPath);
@@ -2541,9 +2647,8 @@ export default function TradeTerminal() {
   const [newsSearchQuery, setNewsSearchQuery] = useState("");
   const [marketNewsCategory, setMarketNewsCategory] = useState<"All" | "Crypto" | "Forex" | "Regulations">("All");
   const [newsRefreshing, setNewsRefreshing] = useState(false);
-  const [depositMethods, setDepositMethods] = useState<any[]>([
-    { id: 'btc', name: 'Bitcoin', provider: 'BTC', logo: 'https://s2.coinmarketcap.com/static/img/coins/200x200/1.png', logoType: 'image', category: 'Crypto', bgColor: '#F7931A', time: '30-60 MIN', instant: false, minDeposit: 0.0001, maxDeposit: 10, currency: 'BTC', isActive: true },
-  ]);
+  const [isDepositMethodsLoading, setIsDepositMethodsLoading] = useState(false);
+  const [depositMethods, setDepositMethods] = useState<any[]>(DEFAULT_DEPOSIT_METHODS);
   const [educationData, setEducationData] = useState<any[]>([]);
   const [activeVideoTitle, setActiveVideoTitle] = useState<string | null>(null);
   const [masterTraders, setMasterTraders] = useState<any[]>([]);
@@ -2828,7 +2933,7 @@ const PROMOTED_ARTICLES = [
            if (data && data.country_name) {
                const code = data.country_code?.toLowerCase() || "";
                setDetectedCountryCode(code);
-               if (personalData && !personalData.country) {
+               if (personalData && (!personalData.country || personalData.country === "Global" || personalData.country === "United Kingdom")) {
                    setPersonalData(prev => ({ ...prev, country: data.country_name }));
                }
                // Persist automatically to Firestore users document if missing
@@ -4517,6 +4622,7 @@ const PROMOTED_ARTICLES = [
                 type: (t.type || 'Deposit').toLowerCase() === 'deposit' ? 'Deposit' : 'Withdrawal',
                 method: t.method || (t.type === 'deposit' ? 'Deposit' : 'Withdrawal'),
                 amount: Number(t.amount) || 0,
+                currency: t.currency || 'BDT',
                 status: statusDisplay,
                 timestamp: date.getTime()
               };
@@ -5388,7 +5494,7 @@ const PROMOTED_ARTICLES = [
   }, [activeTab]);
 
   const [depositStep, setDepositStep] = useState<"methods" | "amount" | "payment">("methods");
-  const [withdrawStep, setWithdrawStep] = useState<"methods" | "form">("methods");
+  const [withdrawStep, setWithdrawStep] = useState<"methods" | "form" | "locked_method">("methods");
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const currentMinWithdrawal = 10;
   const [withdrawAccountHolder, setWithdrawAccountHolder] = useState("");
@@ -5547,10 +5653,10 @@ const PROMOTED_ARTICLES = [
 
   const lastRechargeRef = useRef(0);
   useEffect(() => {
-    const demoBalanceInUserCurrency = convertFromBase(demoBalance, userCurrency);
-    if (accountType === 'demo' && demoBalanceInUserCurrency < minConvertedAmount && auth.currentUser) {
+    // Only auto-recharge demo if balance is completely zero AND user has NO active trades running
+    if (accountType === 'demo' && demoBalance <= 0 && activeTrades.length === 0 && auth.currentUser) {
         const now = Date.now();
-        if (now - lastRechargeRef.current > 5000) {
+        if (now - lastRechargeRef.current > 10000) {
             lastRechargeRef.current = now;
             const rechargeAmount = 10000;
             setDemoBalance(rechargeAmount);
@@ -5564,7 +5670,7 @@ const PROMOTED_ARTICLES = [
             }).catch((err) => console.error("Error recharging demo balance:", err));
         }
     }
-  }, [demoBalance, accountType, minConvertedAmount, userCurrency, auth.currentUser?.uid]);
+  }, [demoBalance, accountType, activeTrades.length, auth.currentUser?.uid]);
   
   const visibleActiveTrades = React.useMemo(() => {
     const filtered = activeTrades.filter(t => {
@@ -5719,37 +5825,26 @@ const PROMOTED_ARTICLES = [
         const mapping: Record<string, string> = {
             "India": "in", "Pakistan": "pk", "United States": "us", "United Kingdom": "gb", 
             "Canada": "ca", "Australia": "au", "Malaysia": "my", "Indonesia": "id", "Brazil": "br", "Mexico": "mx",
-            "Colombia": "co", "Spain": "es", "South Africa": "za", "Argentina": "ar"
+            "Colombia": "co", "Spain": "es", "South Africa": "za", "Argentina": "ar", "Bangladesh": "bd", "Nigeria": "ng",
+            "Vietnam": "vn", "Thailand": "th", "Philippines": "ph", "Turkey": "tr", "Russia": "ru", "Germany": "de",
+            "France": "fr", "Italy": "it", "Japan": "jp", "South Korea": "kr", "China": "cn"
         };
         const exact = mapping[countryName];
         if (exact) return exact;
         const partial = Object.keys(mapping).find(k => k.toLowerCase().includes(countryName.toLowerCase()) || countryName.toLowerCase().includes(k.toLowerCase()));
         if (partial) return mapping[partial];
         
-        return "gb";
+        return "un"; // Unknown
     };
 
     const top20 = sortedAll.slice(0, 20);
     const currentUserIndexInAll = currentUser ? sortedAll.findIndex((l: any) => l.user_id === currentUser.uid) : -1;
 
+    // User requested to REMOVE their own entry if not in top 20
     let displayList = [...top20];
 
-    if (currentUser && currentUserIndexInAll >= 20) {
-      displayList.push({
-        ...sortedAll[currentUserIndexInAll],
-        _actualRank: currentUserIndexInAll + 1
-      });
-    } else if (currentUser && currentUserIndexInAll === -1) {
-      const todayProfit = userTodayProfit || 0;
-      displayList.push({
-        user_id: currentUser.uid,
-        display_name: currentUser.displayName || currentUser.email?.split('@')[0] || 'You',
-        profit: todayProfit,
-        country: 'United Kingdom',
-        country_code: 'gb',
-        _actualRank: '-'
-      });
-    }
+    // If current user is in top 20, they are already there. 
+    // If they are not in top 20, we DO NOT add them at the bottom anymore as requested.
 
     return displayList.map((l: any, i: number) => {
       const countryCode = (l.country_code || "").toLowerCase() || getCountryCode(l.country);
@@ -5769,8 +5864,8 @@ const PROMOTED_ARTICLES = [
         id: l.user_id,
         name: l.display_name || l.nickname || 'Trader',
         profit: profitVal,
-        country: l.country || 'United Kingdom',
-        flagUrl: `https://flagcdn.com/w40/${countryCode}.png`,
+        country: l.country || 'Global',
+        flagUrl: countryCode && countryCode !== 'un' ? `https://flagcdn.com/w40/${countryCode}.png` : null,
         flagEmoji: l.flagEmoji || '🌐',
         isCurrentUser,
         rank: l._actualRank !== undefined ? l._actualRank : (i + 1),
@@ -7620,6 +7715,7 @@ const PROMOTED_ARTICLES = [
     try {
         console.log("placeTrade called", type);
         const tradeAmount = Number(amount);
+        const tradeAmountInBase = convertToBase(tradeAmount, userCurrency);
         
         if (!systemActive) {
           console.log("placeTrade failed: !systemActive");
@@ -7649,21 +7745,21 @@ const PROMOTED_ARTICLES = [
           return;
         }
 
-    if (accountType === 'real' && realBalance < tradeAmount) {
+    if (accountType === 'real' && realBalance < tradeAmountInBase) {
       console.log("placeTrade failed: real balance");
       toast.error("Insufficient balance. Please deposit funds.", { id: "trade-error" });
       setIsPlacingTrade(false);
       return;
     }
     
-    if (accountType === 'demo' && demoBalance < tradeAmount) {
+    if (accountType === 'demo' && demoBalance < tradeAmountInBase) {
       console.log("placeTrade failed: demo balance");
       toast.error("Insufficient demo balance.", { id: "trade-error" });
       setIsPlacingTrade(false);
       return;
     }
 
-    if (accountType === 'tournament' && tournamentBalance < tradeAmount) {
+    if (accountType === 'tournament' && tournamentBalance < tradeAmountInBase) {
       console.log("placeTrade failed: tournament balance");
       toast.error("Insufficient tournament funds. You can rebuy in the account switcher!", { id: "trade-error" });
       setIsPlacingTrade(false);
@@ -7707,11 +7803,12 @@ const PROMOTED_ARTICLES = [
     }
 
     const newTradeId = Math.random().toString(36).substring(2, 12);
+    
     const newTrade: Trade = {
       id: newTradeId,
       type,
       entryPrice: currentPrice,
-      amount: Number(tradeAmount),
+      amount: tradeAmountInBase, // Store in base currency for consistent balance logic
       timeLeft: tradeDurationSeconds,
       expirationTime: exactExpirationTime,
       entryTime,
@@ -7726,7 +7823,7 @@ const PROMOTED_ARTICLES = [
     activeTradesRef.current = newActiveTrades; 
     setActiveTrades(newActiveTrades);
 
-    updateBalance(-tradeAmount);
+    updateBalance(-tradeAmountInBase);
     
     if (auth.currentUser) {
       try {
@@ -7735,7 +7832,7 @@ const PROMOTED_ARTICLES = [
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             pair: activeAsset,
-            amount: tradeAmount,
+            amount: tradeAmountInBase,
             direction: type,
             accountType,
             userId: auth.currentUser.uid,
@@ -7814,11 +7911,9 @@ const PROMOTED_ARTICLES = [
             }
           }
         }
-
-        toast.success(`Trade opened ${type === 'up' ? 'UP' : 'DOWN'} at ${currentPrice.toFixed(5)}`);
       } catch (err: any) {
         console.log("Trade placement rejected:", err.message);
-        updateBalance(tradeAmount); // Revert local balance update
+        updateBalance(tradeAmountInBase); // Revert local balance update
         setActiveTrades(prev => prev.filter(t => t.id !== newTradeId)); // Remove phantom trade
         toast.error(err.message || "Failed to place trade on server. Verification failed.");
         setIsPlacingTrade(false);
@@ -7954,7 +8049,7 @@ const PROMOTED_ARTICLES = [
                    >
                      <div className={`flex items-center gap-2.5 h-[40px] min-w-[240px] pr-2 rounded-[6px] shadow-[0_10px_30px_rgba(0,0,0,0.5)] border border-white/5 overflow-hidden transition-all duration-300 ${notif.status === 'won' ? 'bg-[#00C980]' : (notif.status === 'draw' ? 'bg-[#eeeeee]' : 'bg-[#222328] border border-rose-500/30')}`}>
                         <div className={`ml-1.5 w-[22px] h-[22px] rounded-full flex items-center justify-center text-[12px] font-black shrink-0 ${notif.status === 'won' ? 'bg-white text-[#00C980]' : (notif.status === 'draw' ? 'bg-[#111111] text-white' : 'bg-rose-500/20 text-rose-400')}`}>
-                           {tradeNotifications.length - nIdx}
+                           {notif.count || 1}
                         </div>
                         
                         <div className="flex-1 flex items-center justify-between gap-4 overflow-hidden">
@@ -8671,18 +8766,6 @@ const PROMOTED_ARTICLES = [
           </div>
 
         </div>
-
-        {/* Sidebar History Section */}
-        <div className="flex-1 min-h-0 flex flex-col overflow-hidden border-t border-white/5 mt-2">
-          <SidebarTradeHistory 
-            activeTrades={visibleActiveTrades}
-            userTrades={userTrades}
-            sidebarTab={sidebarTradeTab}
-            setSidebarTab={setSidebarTradeTab}
-            userCurrency={userCurrency}
-            markets={markets}
-          />
-        </div>
       </aside>
     </div>
     );
@@ -8867,7 +8950,7 @@ const PROMOTED_ARTICLES = [
                </div>
                
                <button 
-                 onClick={() => { navigate("/cashier/deposits"); bootApp(); }}
+                 onClick={() => { navigate("/deposit"); bootApp(); }}
                  className="bg-[#ffe24c] hover:bg-[#fff080] text-[#131417] h-[36px] px-4 rounded-[10px] font-black text-[13px] flex items-center gap-2 transition-all active:scale-95 shadow-lg"
                >
                  <Icons.Wallet size={18} fill="currentColor" className="opacity-80" />
@@ -8875,7 +8958,7 @@ const PROMOTED_ARTICLES = [
                </button>
 
                <button 
-                 onClick={() => { navigate("/cashier/withdrawals"); bootApp(); }}
+                 onClick={() => { navigate("/withdraw"); bootApp(); }}
                  className="bg-[#2a2c31] hover:bg-[#32343a] text-white h-[36px] px-4 rounded-[10px] font-black text-[13px] flex items-center gap-2 transition-all active:scale-95 border border-white/5"
                >
                  <Icons.CreditCard size={18} className="text-gray-400" />
@@ -8936,7 +9019,7 @@ const PROMOTED_ARTICLES = [
                          <div className={`flex items-center gap-2.5 h-[38px] min-w-[200px] max-w-[90vw] pr-2 rounded-[6px] shadow-[0_10px_30px_rgba(0,0,0,0.5)] border border-white/5 overflow-hidden transition-all duration-300 ${notif.status === 'won' ? 'bg-[#00C980]' : (notif.status === 'draw' ? 'bg-[#eeeeee]' : 'bg-[#222328] border border-rose-500/30')}`}>
                             {/* Counter/Index - Binomo Style circle */}
                             <div className={`ml-1.5 w-[20px] h-[20px] rounded-full flex items-center justify-center text-[11px] font-black shrink-0 ${notif.status === 'won' ? 'bg-white text-[#00C980]' : (notif.status === 'draw' ? 'bg-[#111111] text-white' : 'bg-rose-500/20 text-rose-400')}`}>
-                               {tradeNotifications.length - idx}
+                               {notif.count || 1}
                             </div>
                             
                             {/* Text Content */}
@@ -9224,7 +9307,7 @@ const PROMOTED_ARTICLES = [
                 </button>
                 {openInformation && (
                   <div className="flex flex-col bg-[#1a1b1f]">
-                    {["Statuses", "About us", "Regulations", "Client Agreement", "AML policy"].map(link => (
+                    {["Statuses", "Platform Blog", "About us", "Regulations", "Client Agreement", "AML policy"].map(link => (
                       <button 
                         key={`sidebar-info-${link}`} 
                         className="flex items-center px-6 h-[50px] text-left text-[14px] text-gray-400 hover:text-white transition-colors border-t border-white/5"
@@ -9232,6 +9315,8 @@ const PROMOTED_ARTICLES = [
                           setShowSidebar(false); // Always close sidebar
                           if (link === "Statuses") {
                             setActiveTab("statuses");
+                          } else if (link === "Platform Blog") {
+                            navigate("/blog");
                           } else if (link === "About us") {
                             navigate("/about-us");
                           } else if (link === "Regulations") {
@@ -12021,7 +12106,7 @@ const PROMOTED_ARTICLES = [
                                 </div>
                                 <div className="text-right">
                                    <p className={`font-black text-[18px] tracking-tighter mb-1 ${tx.type === 'Deposit' ? 'text-white' : 'text-gray-300'}`}>
-                                      {tx.type === 'Deposit' ? '+' : '-'}{formatWithCurrency(tx.amount, userCurrency)}
+                                      {tx.type === 'Deposit' ? '+' : '-'}{formatRawCurrency(tx.amount, tx.currency || userCurrency)}
                                    </p>
                                    <div className="flex items-center justify-end gap-2">
                                       <div className={`w-2 h-2 rounded-full ${
@@ -13166,7 +13251,7 @@ const PROMOTED_ARTICLES = [
                 </button>
 
                 <button 
-                  onClick={() => { navigate("/cashier/deposits"); bootApp(); }}
+                  onClick={() => { navigate("/deposit"); bootApp(); }}
                   className="w-full flex items-center gap-4 px-6 py-3.5 hover:bg-white/5 transition-colors group"
                 >
                   <Wallet size={22} className="text-gray-400 group-hover:text-gray-300" strokeWidth={1.5} />
@@ -13646,220 +13731,235 @@ const PROMOTED_ARTICLES = [
             <div className="flex-1 overflow-y-auto px-0 custom-scrollbar flex flex-col">
                
                {depositStep === "methods" ? (
-                 <div className="px-4 pb-[100px]">
-                    {/* Select Methods */}
-                    <div className="mb-6 relative">
-                       <div 
-                         className="bg-[#2A2B31] border border-[#3b3b3f]/50 hover:border-gray-500 transition-colors rounded-[12px] p-3.5 flex justify-between items-center cursor-pointer shadow-sm group"
-                         onClick={() => setShowDepositCategoryDropdown(true)}
-                       >
-                         <div className="flex flex-col gap-1">
-                           <p className="text-gray-500 text-[12px] font-medium leading-none">Methods</p>
-                           <p className="text-white text-[16px] font-medium leading-none group-hover:text-yellow-400 transition-colors">{depositCategory}</p>
-                         </div>
-                         <ChevronDown size={22} className="text-white group-hover:text-yellow-400 transition-colors" />
+                 <div className="px-4 pb-[100px] w-full max-w-2xl mx-auto">
+                    {/* Select Methods - Pill Tabs */}
+                    <div className="mb-6 overflow-x-auto scrollbar-hide pb-2">
+                       <div className="flex gap-2 min-w-max">
+                         {["All", "Popular", "Crypto", "E-wallets"].map(cat => (
+                           <button
+                             key={cat}
+                             onClick={() => setDepositCategory(cat)}
+                             className={`px-3.5 py-1.5 rounded-md text-[14px] font-medium transition-colors ${
+                               depositCategory === cat 
+                                 ? 'bg-white text-black' 
+                                 : 'bg-[#2A2B31] text-white hover:bg-[#323338]'
+                             }`}
+                           >
+                             {cat}
+                           </button>
+                         ))}
                        </div>
                     </div>
 
-                    {/* Promo Banner */}
-                    {depositCategory === "All" && (
-                      <div className="bg-gradient-to-r from-[#164E63] via-[#0891B2] to-[#22D3EE] rounded-2xl p-5 relative overflow-hidden mb-8 shadow-lg border border-cyan-400/20">
-                        <div className="relative z-10 w-[70%]">
-                          <h2 className="text-white text-xl font-bold leading-tight mb-2 tracking-tight">Get 20% back in Bivaax Coins</h2>
-                          <p className="text-white/80 text-[13px] leading-snug">Deposit in crypto to get Bivaax Coins from the deposit amount converted to USD</p>
-                        </div>
-                        {/* Coin image placeholder abstract */}
-                        <div className="absolute right-[-15px] top-1/2 -translate-y-1/2 w-[120px] h-[120px] rounded-full border-[8px] border-cyan-400 bg-gradient-to-br from-cyan-300 to-blue-600 shadow-xl rotate-[15deg] flex items-center justify-center -mr-2">
-                          <div className="flex gap-2 transform -rotate-[15deg]">
-                             <span className="text-cyan-950 font-black text-5xl">X</span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                    
                     {/* Payment Methods Sections */}
-                    <PaymentMethodsStatus />
-                    {(depositCategory === "All" || depositCategory === "Popular") && (
-                      <div className="mb-6 relative">
-                        {/* Background light effect for Popular */}
-                        <div className="absolute top-0 left-0 w-full h-[150px] bg-gradient-to-br from-red-500/20 via-blue-500/20 to-transparent blur-3xl pointer-events-none rounded-full"></div>
-                        
-                        <div className="flex items-center gap-2 mb-3 relative z-10">
-                          <Star size={16} className="text-[#FFE24C]" fill="currentColor" />
-                          <h3 className="text-white font-bold text-[16px]">Popular</h3>
-                          <div className="ml-auto bg-[#ff4a5c] text-white px-3 py-1 rounded-[12px] text-[12px] font-medium">98% choice</div>
-                        </div>
-                        
-                        <div className="flex flex-col gap-2 relative z-10">
-                          {depositMethods.filter(m => m.isActive !== false && (m.category?.toLowerCase() === 'popular' || m.isPopular)).map((method, idx) => (
-                            <div 
-                              key={`popular-${idx}-${method.name}`}
-                              onClick={(e) => { 
-                                e.stopPropagation(); 
-                                if (method.id === 'btc') {
-                                  navigate(`/deposit/bitcoin?amount=0.0015&currency=Bitcoin (BTC)&amountBdt=${depositAmount}`);
-                                } else {
-                                  setSelectedMethod(method); 
-                                  setDepositStep("amount"); 
-                                }
-                              }}
-                              className="bg-[#2A2B31] hover:bg-[#323338] transition-colors rounded-[16px] flex items-center cursor-pointer border border-[#3b3b3f]/30 relative overflow-hidden min-h-[70px] px-4"
-                            >
-                              
-                              <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-md z-10 overflow-hidden" style={{ backgroundColor: method.bgColor || '#1e1e1e' }}>
-                                 {method.logoType === 'image' || !method.logoType ? (
-                                    method.logo ? (
-                                      <img src={method.logo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer"  loading="lazy" />
-                                    ) : (
-                                      <div className="text-white font-bold">{method.name?.[0] || '?'}</div>
-                                    )
-                                 ) : (
-                                    <span className="text-white font-bold">{method.logo}</span>
-                                 )}
-                              </div>
-                              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                                <p className="text-[#E0E0E0] text-[15px] font-normal leading-tight">{method.name}</p>
-                                <p className="text-gray-500 text-[12px] font-normal leading-none mt-1">{method.instant ? 'instant' : method.time || '5 minutes'}</p>
-                              </div>
+                    <AnimatePresence mode="wait">
+                      {isDepositMethodsLoading ? (
+                        <DepositSkeleton key="deposit-skeleton" />
+                      ) : (
+                        <motion.div key="deposit-content" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }}>
+                          {(depositCategory === "All" || depositCategory === "Popular") && (
+                          <div className="mb-6 relative">
+                            {/* Background light effect for Popular */}
+                            <div className="flex items-center mb-3 mt-1 relative z-10">
+                              <h3 className="text-[#FFE24C] font-black text-[22px] tracking-tight">Popular</h3>
                             </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {(depositCategory === "All" || depositCategory === "Crypto") && (
-                      <div className="mb-6 relative">
-                        <div className="absolute top-0 left-0 w-full h-[150px] bg-gradient-to-br from-blue-500/10 to-transparent blur-3xl pointer-events-none rounded-full"></div>
-                        <div className="flex items-center gap-2 mb-3 relative z-10">
-                          <div className="w-[18px] h-[18px] flex items-center justify-center rounded-full border border-[#FFF] text-[#FFE24C] bg-transparent">
-                            <span className="font-bold text-[10px]">C</span>
+                            
+                            <div className="flex flex-col gap-2 relative z-10">
+                              {depositMethods.filter(m => m.isActive !== false && (m.category?.toLowerCase() === 'popular' || m.isPopular)).map((method, idx) => (
+                                <div 
+                                  key={`popular-${idx}-${method.name}`}
+                                  onClick={(e) => { 
+                                    e.stopPropagation(); 
+                                    if (method.id === 'btc') {
+                                      navigate(`/deposit/bitcoin?amount=0.0015&currency=Bitcoin (BTC)&amountBdt=${depositAmount}`);
+                                    } else {
+                                      setSelectedMethod(method); 
+                                      setDepositStep("amount"); 
+                                    }
+                                  }}
+                                  className="bg-[#24252a] hover:bg-[#2c2d33] transition-colors rounded-[16px] flex items-center cursor-pointer border-none relative min-h-[64px] px-4"
+                                >
+                                  <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-sm z-10 overflow-hidden" style={{ backgroundColor: method.bgColor || '#1e1e1e' }}>
+                                    {method.logoType === 'image' || !method.logoType ? (
+                                        method.logo ? (
+                                          <img src={method.logo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer"  loading="lazy" />
+                                        ) : (
+                                          <div className="text-white font-bold">{method.name?.[0] || '?'}</div>
+                                        )
+                                    ) : (
+                                        <span className="text-white font-bold">{method.logo}</span>
+                                    )}
+                                  </div>
+                                  <div className="ml-3 flex flex-col justify-center z-10 py-2">
+                                    <p className="text-white text-[15px] font-bold leading-tight tracking-wide">{method.name}</p>
+                                    <div className="flex items-center gap-1 mt-0.5">
+                                      <Zap size={12} className="text-[#FFE24C]" fill="currentColor" />
+                                      <span className="text-[#FFE24C] text-[11px] font-bold uppercase">{method.instant ? 'instant' : method.time || 'instant'}</span>
+                                      <span className="text-gray-500 text-[11px] font-medium tracking-wide"> • from {['crypto', 'other'].includes(method.category?.toLowerCase() || '') ? `${method.minDeposit || 10}` : formatRawCurrency(method.minDeposit || 10, userCurrency)}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
                           </div>
-                          <h3 className="text-white font-bold text-[16px]">Crypto</h3>
-                          <div className="ml-auto bg-[#3269FF]/90 text-white px-3 py-1 rounded-[12px] text-[12px] font-medium border border-[#FF4A5C]">Global</div>
-                        </div>
+                        )}
                         
-                        <div className="flex flex-col gap-2 relative z-10">
-                          {depositMethods.filter(m => m.isActive !== false && (m.category?.toLowerCase() === 'crypto' || m.name?.toLowerCase().includes('binance'))).map((method, idx) => (
-                            <div 
-                              key={`crypto-${idx}-${method.name}`}
-                              onClick={(e) => { 
-                                e.stopPropagation(); 
-                                if (method.id === 'btc') {
-                                  navigate(`/deposit/bitcoin?amount=0.0015&currency=Bitcoin (BTC)&amountBdt=${depositAmount}`);
-                                } else {
-                                  setSelectedMethod(method); 
-                                  setDepositStep("amount"); 
-                                }
-                              }}
-                              className="bg-[#2A2B31] hover:bg-[#323338] transition-colors rounded-[16px] flex items-center cursor-pointer border border-[#3b3b3f]/30 relative overflow-hidden min-h-[70px] px-4"
-                            >
-                              
-                              <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-md z-10 overflow-hidden" style={{ backgroundColor: method.bgColor || '#1e1e1e' }}>
-                                 {method.logoType === 'image' || !method.logoType ? (
-                                    method.logo ? (
-                                      <img src={method.logo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer"  loading="lazy" />
-                                    ) : (
-                                      <div className="text-white font-bold">{method.name?.[0] || '?'}</div>
-                                    )
-                                 ) : (
-                                    <span className="text-white font-bold text-lg">{method.logo}</span>
-                                 )}
+                        {(depositCategory === "All" || depositCategory === "Crypto") && (
+                          <div className="mb-6 relative">
+                            <div className="absolute top-0 left-0 w-full h-[150px] bg-gradient-to-br from-blue-500/10 to-transparent blur-3xl pointer-events-none rounded-full"></div>
+                            <div className="flex items-center gap-2 mb-3 relative z-10">
+                              <div className="w-[18px] h-[18px] flex items-center justify-center rounded-full border border-[#FFF] text-[#FFE24C] bg-transparent">
+                                <span className="font-bold text-[10px]">C</span>
                               </div>
-                              <div className="flex flex-col ml-4">
-                                 <p className="text-[#E0E0E0] text-[15px] font-bold leading-tight">{method.name}</p>
-                                 <div className="flex items-center gap-2 mt-1">
-                                   <p className="text-[#00C980] text-[10px] font-black uppercase tracking-widest">{method.instant ? 'instant' : method.time || '15 mins'}</p>
-                                   <span className="text-white/10 text-[10px]">•</span>
-                                   <p className="text-gray-500 text-[10px] font-bold uppercase tracking-widest">Min: {isCryptoDeposit ? `${method.minDeposit || 10}` : formatWithCurrency(method.minDeposit || 500, userCurrency)}</p>
-                                 </div>
-                               </div>
+                              <h3 className="text-white font-bold text-[16px]">Crypto</h3>
+                              <div className="ml-auto bg-[#3269FF]/90 text-white px-3 py-1 rounded-[12px] text-[12px] font-medium border border-[#FF4A5C]">Global</div>
                             </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {(depositCategory === "All" || depositCategory === "E-wallets") && (
-                      <div className="mb-6 relative z-10">
-                        <div className="flex items-center gap-2 mb-3">
-                          <Wallet size={16} className="text-[#888]" />
-                          <h3 className="text-white font-bold text-[16px]">E-wallets / Mobile Banking</h3>
-                        </div>
+                            
+                            <div className="flex flex-col gap-2 relative z-10">
+                              {depositMethods.filter(m => m.isActive !== false && (m.category?.toLowerCase() === 'crypto' || m.name?.toLowerCase().includes('binance'))).map((method, idx) => (
+                                <div 
+                                  key={`crypto-${idx}-${method.name}`}
+                                  onClick={(e) => { 
+                                    e.stopPropagation(); 
+                                    if (method.id === 'btc') {
+                                      navigate(`/deposit/bitcoin?amount=0.0015&currency=Bitcoin (BTC)&amountBdt=${depositAmount}`);
+                                    } else {
+                                      setSelectedMethod(method); 
+                                      setDepositStep("amount"); 
+                                    }
+                                  }}
+                                  className="bg-[#2A2B31] hover:bg-[#323338] transition-colors rounded-[16px] flex items-center cursor-pointer border border-[#3b3b3f]/30 relative overflow-hidden min-h-[70px] px-4"
+                                >
+                                  
+                                  <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-md z-10 overflow-hidden" style={{ backgroundColor: method.bgColor || '#1e1e1e' }}>
+                                    {method.logoType === 'image' || !method.logoType ? (
+                                        method.logo ? (
+                                          <img src={method.logo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer"  loading="lazy" />
+                                        ) : (
+                                          <div className="text-white font-bold">{method.name?.[0] || '?'}</div>
+                                        )
+                                    ) : (
+                                        <span className="text-white font-bold text-lg">{method.logo}</span>
+                                    )}
+                                  </div>
+                                  <div className="flex flex-col ml-4">
+                                    <p className="text-[#E0E0E0] text-[15px] font-bold leading-tight">{method.name}</p>
+                                    <div className="flex items-center gap-2 mt-1">
+                                      <p className="text-[#00C980] text-[10px] font-black uppercase tracking-widest">{method.instant ? 'instant' : method.time || '15 mins'}</p>
+                                      <span className="text-white/10 text-[10px]">•</span>
+                                      <p className="text-gray-500 text-[10px] font-bold uppercase tracking-widest">Min: {isCryptoDeposit ? `${method.minDeposit || 10}` : formatRawCurrency(method.minDeposit || 500, userCurrency)}</p>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         
-                        <div className="flex flex-col gap-2">
-                          {depositMethods.filter(m => {
-                            if (m.isActive === false) return false;
-                            const cat = m.category?.toLowerCase() || '';
-                            return cat === 'e-wallets' || cat === 'mobile banking' || cat.includes('wallet') || cat.includes('mobile');
-                          }).map((method, idx) => (
-                            <div 
-                              key={`ewallet-${idx}-${method.name}`}
-                              onClick={(e) => { e.stopPropagation(); setSelectedMethod(method); setDepositStep("amount"); }}
-                              className="bg-[#2A2B31] hover:bg-[#323338] transition-colors rounded-[16px] flex items-center cursor-pointer border border-[#3b3b3f]/30 relative overflow-hidden min-h-[70px] px-4"
-                            >
-                              
-                              <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-md z-10 overflow-hidden" style={{ backgroundColor: method.bgColor || '#1e1e1e' }}>
-                                 {method.logoType === 'image' || !method.logoType ? (
-                                    method.logo ? (
-                                      <img src={method.logo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer"  loading="lazy" />
-                                    ) : (
-                                      <div className="text-white font-bold">{method.name?.[0] || '?'}</div>
-                                    )
-                                 ) : (
-                                    <span className="text-white font-bold">{method.logo}</span>
-                                 )}
-                              </div>
-                              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                                <p className="text-[#E0E0E0] text-[15px] font-normal leading-tight">{method.name}</p>
-                                <p className="text-gray-500 text-[12px] font-normal leading-none mt-1">{method.instant ? 'instant' : method.time || '15 minutes'}</p>
-                              </div>
+                        {(depositCategory === "All" || depositCategory === "E-wallets") && (
+                          <div className="mb-6 relative z-10">
+                            <div className="flex items-center mb-3 mt-6 relative z-10">
+                              <h3 className="text-[#34d399] font-black text-[22px] tracking-tight">E-wallets</h3>
                             </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {(depositCategory === "All" || depositCategory === "Other") && (
-                      <div className="mb-[20px] relative z-10">
-                        <div className="flex items-center gap-2 mb-3">
-                          <Wallet size={16} className="text-[#888]" />
-                          <h3 className="text-white font-bold text-[16px]">Other</h3>
-                        </div>
+                            
+                            <div className="flex flex-col gap-2">
+                              {depositMethods.filter(m => {
+                                if (m.isActive === false) return false;
+                                const cat = m.category?.toLowerCase() || '';
+                                return cat === 'e-wallets' || cat === 'mobile banking' || cat.includes('wallet') || cat.includes('mobile');
+                              }).map((method, idx) => (
+                                <div 
+                                  key={`ewallet-${idx}-${method.name}`}
+                                  onClick={(e) => { 
+                                    e.stopPropagation(); 
+                                    if (method.id === 'btc') {
+                                      navigate(`/deposit/bitcoin?amount=0.0015&currency=Bitcoin (BTC)&amountBdt=${depositAmount}`);
+                                    } else {
+                                      setSelectedMethod(method); 
+                                      setDepositStep("amount"); 
+                                    }
+                                  }}
+                                  className="bg-[#24252a] hover:bg-[#2c2d33] transition-colors rounded-[16px] flex items-center cursor-pointer border-none relative min-h-[64px] px-4"
+                                >
+                                  <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-sm z-10 overflow-hidden" style={{ backgroundColor: method.bgColor || '#1e1e1e' }}>
+                                    {method.logoType === 'image' || !method.logoType ? (
+                                        method.logo ? (
+                                          <img src={method.logo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer"  loading="lazy" />
+                                        ) : (
+                                          <div className="text-white font-bold">{method.name?.[0] || '?'}</div>
+                                        )
+                                    ) : (
+                                        <span className="text-white font-bold">{method.logo}</span>
+                                    )}
+                                  </div>
+                                  <div className="ml-3 flex flex-col justify-center z-10 py-2">
+                                    <p className="text-white text-[15px] font-bold leading-tight tracking-wide">{method.name}</p>
+                                    <div className="flex items-center gap-1 mt-0.5">
+                                      <Zap size={12} className="text-[#FFE24C]" fill="currentColor" />
+                                      <span className="text-[#FFE24C] text-[11px] font-bold uppercase">{method.instant ? 'instant' : method.time || 'instant'}</span>
+                                      <span className="text-gray-500 text-[11px] font-medium tracking-wide"> • from {['crypto', 'other'].includes(method.category?.toLowerCase() || '') ? `${method.minDeposit || 10}` : formatRawCurrency(method.minDeposit || 10, userCurrency)}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         
-                        <div className="flex flex-col gap-2">
-                           {depositMethods.filter(m => m.isActive !== false && m.category?.toLowerCase() === 'other').map((method, idx) => (
-                            <div 
-                              key={`other-${idx}-${method.name}`}
-                              onClick={(e) => { e.stopPropagation(); setSelectedMethod(method); setDepositStep("amount"); }}
-                              className="bg-[#2A2B31] hover:bg-[#323338] transition-colors rounded-[16px] flex items-center cursor-pointer border border-[#3b3b3f]/30 relative overflow-hidden min-h-[70px] px-4"
-                            >
-                              
-                              <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-md z-10 overflow-hidden" style={{ backgroundColor: method.bgColor || '#1e1e1e' }}>
-                                 {method.logoType === 'image' || !method.logoType ? (
-                                    method.logo ? (
-                                      <img src={method.logo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer"  loading="lazy" />
-                                    ) : (
-                                      <div className="text-white font-bold">{method.name?.[0] || '?'}</div>
-                                    )
-                                 ) : (
-                                    <span className="text-white font-bold">{method.logo}</span>
-                                 )}
-                              </div>
-                              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                                <p className="text-[#E0E0E0] text-[15px] font-normal leading-tight">{method.name}</p>
-                                <p className="text-gray-500 text-[12px] font-normal leading-none mt-1">{method.instant ? 'instant' : method.time || '15 minutes'}</p>
-                              </div>
+                        {(depositCategory === "All" || depositCategory === "Other") && (
+                          <div className="mb-[20px] relative z-10">
+                            <div className="flex items-center mb-3 mt-6 relative z-10">
+                              <h3 className="text-[#9ca3af] font-black text-[22px] tracking-tight">Other</h3>
                             </div>
-                          ))}
-                        </div>
-                      </div>
+                            
+                            <div className="flex flex-col gap-2">
+                              {depositMethods.filter(m => m.isActive !== false && m.category?.toLowerCase() === 'other').map((method, idx) => (
+                                <div 
+                                  key={`other-${idx}-${method.name}`}
+                                  onClick={(e) => { 
+                                    e.stopPropagation(); 
+                                    if (method.id === 'btc') {
+                                      navigate(`/deposit/bitcoin?amount=0.0015&currency=Bitcoin (BTC)&amountBdt=${depositAmount}`);
+                                    } else {
+                                      setSelectedMethod(method); 
+                                      setDepositStep("amount"); 
+                                    }
+                                  }}
+                                  className="bg-[#24252a] hover:bg-[#2c2d33] transition-colors rounded-[16px] flex items-center cursor-pointer border-none relative min-h-[64px] px-4"
+                                >
+                                  <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-sm z-10 overflow-hidden" style={{ backgroundColor: method.bgColor || '#1e1e1e' }}>
+                                    {method.logoType === 'image' || !method.logoType ? (
+                                        method.logo ? (
+                                          <img src={method.logo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer"  loading="lazy" />
+                                        ) : (
+                                          <div className="text-white font-bold">{method.name?.[0] || '?'}</div>
+                                        )
+                                    ) : (
+                                        <span className="text-white font-bold">{method.logo}</span>
+                                    )}
+                                  </div>
+                                  <div className="ml-3 flex flex-col justify-center z-10 py-2">
+                                    <p className="text-white text-[15px] font-bold leading-tight tracking-wide">{method.name}</p>
+                                    <div className="flex items-center gap-1 mt-0.5">
+                                      <Zap size={12} className="text-[#FFE24C]" fill="currentColor" />
+                                      <span className="text-[#FFE24C] text-[11px] font-bold uppercase">{method.instant ? 'instant' : method.time || 'instant'}</span>
+                                      <span className="text-gray-500 text-[11px] font-medium tracking-wide"> • from {['crypto', 'other'].includes(method.category?.toLowerCase() || '') ? `${method.minDeposit || 10}` : formatRawCurrency(method.minDeposit || 10, userCurrency)}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </motion.div>
                     )}
 
+                    </AnimatePresence>
                     {/* More Methods section removed as requested */}
 
                  </div>
                ) : depositStep === "amount" ? (
-                 <div className="px-4 pb-[120px] animate-in fade-in slide-in-from-right-5 duration-300">
+                 <div className="px-4 pb-[120px] w-full max-w-2xl mx-auto animate-in fade-in slide-in-from-right-5 duration-300">
                     <div className="flex items-center gap-2 mb-6">
                        <button onClick={() => setDepositStep("methods")} className="text-gray-400 hover:text-white p-1 -ml-1">
                           <ChevronLeft size={24} />
@@ -13872,7 +13972,7 @@ const PROMOTED_ARTICLES = [
                     </button>
 
                     <p className="text-center text-gray-400 text-[13px] font-medium mb-6">
-                       Deposit amount from {isCryptoDeposit ? `$${selectedMethod?.minDeposit || 1}` : formatWithCurrency(selectedMethod?.minDeposit || 500, userCurrency)} to {isCryptoDeposit ? `$${selectedMethod?.maxDeposit || 10000}` : formatWithCurrency(selectedMethod?.maxDeposit || 1000000, userCurrency)}
+                       Deposit amount from {isCryptoDeposit ? `$${selectedMethod?.minDeposit || 1}` : formatRawCurrency(selectedMethod?.minDeposit || 500, userCurrency)} to {isCryptoDeposit ? `$${selectedMethod?.maxDeposit || 10000}` : formatRawCurrency(selectedMethod?.maxDeposit || 1000000, userCurrency)}
                     </p>
 
                     <div className="bg-gradient-to-r from-[#2c1d3c] via-[#4d2f34] to-[#a37932] rounded-2xl p-0.5 relative overflow-hidden mb-6 shadow-lg">
@@ -13882,7 +13982,7 @@ const PROMOTED_ARTICLES = [
                              <div className="bg-[#3269FF]/80 backdrop-blur-sm text-white text-[10px] font-black px-2 py-0.5 rounded-full inline-block uppercase tracking-wider">Cashback / Insurance / Personal manager / RFTs</div>
                           </div>
                           <div className="flex flex-col items-end">
-                             <p className="text-[#FFE24C] font-black text-xs leading-none">{isCryptoDeposit ? '$' : formatWithCurrency(77500, userCurrency)}</p>
+                             <p className="text-[#FFE24C] font-black text-xs leading-none">{isCryptoDeposit ? '$' : formatRawCurrency(77500, userCurrency)}</p>
                              <div className="w-10 h-10 mt-1 relative">
                                 <div className="absolute inset-0 bg-white/20 blur-md rounded-full"></div>
                                 <div className="relative w-full h-full bg-gradient-to-br from-gray-400 to-gray-700 rounded-lg rotate-45 shadow-lg border border-white/20"></div>
@@ -13898,7 +13998,7 @@ const PROMOTED_ARTICLES = [
                        >
                           <div className={`p-3.5 rounded-[15px] flex flex-col ${depositAmount === (isCryptoDeposit ? '3000' : convertFromBase(359000, userCurrency).toString()) ? 'bg-[#1d1e24]' : 'bg-[#1d1e24]/80'}`}>
                              <div className="flex justify-between items-start mb-4">
-                                <p className="text-white font-black text-lg leading-tight">{isCryptoDeposit ? '$3,000' : formatWithCurrency(359000, userCurrency)}</p>
+                                <p className="text-white font-black text-lg leading-tight">{isCryptoDeposit ? '$3,000' : formatRawCurrency(359000, userCurrency)}</p>
                                 <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-400 to-purple-800 rotate-45 border border-white/20 shadow-lg"></div>
                              </div>
                              <p className="text-[#00C980] text-xs font-black mb-1 uppercase tracking-wider">Bonus +70%</p>
@@ -13911,7 +14011,7 @@ const PROMOTED_ARTICLES = [
                           className={`rounded-2xl p-3.5 flex flex-col border cursor-pointer transition-all ${depositAmount === (isCryptoDeposit ? '25' : convertFromBase(3000, userCurrency).toString()) ? 'bg-[#2A2B31] border-yellow-500 shadow-[0_0_15px_rgba(255,226,76,0.2)]' : 'bg-[#2A2B31] border-[#3b3b3f]/50'}`}
                        >
                           <div className="flex justify-between items-start mb-4">
-                             <p className="text-white font-black text-lg leading-tight">{isCryptoDeposit ? '$25' : formatWithCurrency(3000, userCurrency)}</p>
+                             <p className="text-white font-black text-lg leading-tight">{isCryptoDeposit ? '$25' : formatRawCurrency(3000, userCurrency)}</p>
                              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-gray-300 to-gray-500 rotate-45 border border-white/20 shadow-lg opacity-60"></div>
                           </div>
                           <p className="text-gray-400 text-xs font-black mb-1 uppercase tracking-wider">Bonus 0%</p>
@@ -13922,7 +14022,7 @@ const PROMOTED_ARTICLES = [
                     <div className="bg-[#26272C] rounded-[16px] px-5 py-4 flex flex-col gap-2 mb-8 shadow-sm border border-white/5 focus-within:border-white/20 transition-all">
                        <label className="text-gray-500 text-[10px] font-black uppercase tracking-widest flex justify-between">
                           Custom Amount
-                          <span className="text-[9px] opacity-70">Min: {isCryptoDeposit ? `$${selectedMethod?.minDeposit || 1}` : formatWithCurrency(selectedMethod?.minDeposit || 500, userCurrency)}</span>
+                          <span className="text-[9px] opacity-70">Min: {isCryptoDeposit ? `$${selectedMethod?.minDeposit || 1}` : formatRawCurrency(selectedMethod?.minDeposit || 500, userCurrency)}</span>
                        </label>
                        <div className="flex items-center gap-2">
                           <span className="text-white font-black text-xl">{isCryptoDeposit ? '$' : userCurrency}</span>
@@ -14565,77 +14665,77 @@ const PROMOTED_ARTICLES = [
 
           {cashierTab === 'withdrawals' && (
              <div className="flex-1 overflow-y-auto px-4 pb-[80px] custom-scrollbar flex flex-col pt-2">
-               {withdrawStep === 'methods' ? (
-                 <>
-                {/* Promo Banner */}
-                <div className="bg-gradient-to-br from-[#0B0D23] via-[#0E1545] to-[#0A2665] rounded-[16px] p-5 relative overflow-hidden mb-8 shadow-sm">
-                  <div className="relative z-10 w-[65%]">
-                    <h2 className="text-white text-[17px] font-bold leading-tight mb-2 tracking-tight">Want bigger profit?</h2>
-                    <p className="text-white/80 text-[13px] leading-[1.3] mb-4">Looks like recent news brings good profit to traders. Hurry up and make some trades!</p>
-                    <button className="w-full bg-[#FFE24C] hover:bg-[#F0D544] text-black font-semibold text-[15px] py-2.5 rounded-[12px] transition-colors shadow-sm">
-                      Check the news
-                    </button>
-                  </div>
-                  {/* Abstract globe shape */}
-                  <div className="absolute right-[-40px] top-1/2 -translate-y-[45%] w-[180px] h-[180px] rounded-full border border-[#0d45a9]/50 bg-gradient-to-br from-[#1b62f1] to-[#012f91] opacity-60 shadow-inner flex items-center justify-center overflow-hidden pointer-events-none">
-                     <div className="w-[120px] h-[120px] rounded-full border border-[#4d8eff]/30 rotate-45 flex items-center justify-center pointer-events-none">
-                        <div className="w-[60px] h-[60px] rounded-full border border-[#7aaaff]/20 pointer-events-none"></div>
-                     </div>
-                  </div>
-                </div>
+               {withdrawStep === 'methods' && (() => { const hasCompletedDeposits = userTransactions.filter(t => t.type === 'Deposit' && t.status === 'Completed').length > 0; const activeMethods = depositMethods.filter(m => m.isActive !== false); if (!hasCompletedDeposits) { return ( <div className="flex flex-col">
+                                       {/* Banner Carousel */}
+                                       <div className="relative mb-4 h-[140px] overflow-hidden rounded-[16px]">
+                                         <AnimatePresence mode="wait">
+                                           <motion.div
+                                             key={currentWithdrawStory}
+                                             initial={{ opacity: 0, x: 20 }}
+                                             animate={{ opacity: 1, x: 0 }}
+                                             exit={{ opacity: 0, x: -20 }}
+                                             transition={{ duration: 0.3 }}
+                                             className="bg-[#24252a] rounded-[16px] p-5 relative overflow-hidden h-full flex items-center justify-between border border-white/5"
+                                           >
+                                             <div className="relative z-10 w-[60%]">
+                                               <h2 className="text-white text-[19px] font-black leading-tight tracking-tight mt-2">
+                                                 {[
+                                                   "Fee starts from 0%",
+                                                   "Available from $10",
+                                                   "Fast withdrawals 24/7",
+                                                   "Support available 24/7"
+                                                 ][currentWithdrawStory]}
+                                               </h2>
+                                             </div>
+                                             
+                                             <div className="relative z-10 w-[100px] h-[100px] opacity-90 right-2 flex items-center justify-center pointer-events-none">
+                                               <div className="absolute inset-0 bg-[#24252a]/10 rounded-full"></div>
+                                               {currentWithdrawStory === 0 && <span className="text-[70px] font-black text-white/10 shadow-inner">%</span>}
+                                               {currentWithdrawStory === 1 && (
+                                                 <div className="relative w-full h-full flex items-center justify-center">
+                                                   <video 
+                                                     src="/assets/withdraw_coin.mp4" 
+                                                     autoPlay 
+                                                     loop 
+                                                     muted 
+                                                     playsInline 
+                                                     className="w-[110px] h-[110px] object-contain drop-shadow-[0_0_20px_rgba(255,255,255,0.1)]"
+                                                     onError={(e) => {
+                                                       // Fallback if video fails to load
+                                                       const target = e.currentTarget;
+                                                       target.style.display = 'none';
+                                                       const parent = target.parentElement;
+                                                       if (parent) {
+                                                         const fallback = document.createElement('span');
+                                                         fallback.className = "text-[70px] font-black text-white/10 shadow-inner";
+                                                         fallback.innerText = '$';
+                                                         parent.appendChild(fallback);
+                                                       }
+                                                     }}
+                                                   />
+                                                 </div>
+                                               )}
+                                               {currentWithdrawStory === 2 && <Icons.Clock size={70} className="text-white/10" strokeWidth={3} />}
+                                               {currentWithdrawStory === 3 && <Icons.Headphones size={70} className="text-white/10" strokeWidth={3} />}
+                                             </div>
+                                           </motion.div>
+                                         </AnimatePresence>
+                                       </div>
 
-                {(() => {
-                   const activeMethods = depositMethods.filter(m => m.isActive !== false);
-                   
-                   return (
-                      <>
-                         <h3 className="text-white text-xl font-bold mb-4 tracking-tight">Withdrawal Methods</h3>
-                         {activeMethods.length > 0 ? (
-                            <div className="flex flex-col gap-2.5 mb-8">
-                               {activeMethods.map((method, idx) => (
-                                  <div 
-                                     key={`withdraw-${idx}-${method.name}`}
-                                     className="bg-[#2A2B31] border border-[#3b3b3f]/50 rounded-[16px] p-4 flex items-center gap-4 shadow-sm group hover:border-[#5a5a5f] transition-all cursor-pointer"
-                                     onClick={() => {
-                                       setSelectedMethod(method);
-                                       setWithdrawStep("form");
-                                     }}
-                                  >
-                                     <div className="w-12 h-12 rounded-full flex items-center justify-center p-1 overflow-hidden" style={{ backgroundColor: method.bgColor || '#1e1e1e' }}>
-                                        {method.logoType === 'image' || !method.logoType ? (
-                                           method.logo ? (
-                                              <img src={method.logo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer"  loading="lazy" />
-                                           ) : (
-                                              <div className="text-white font-bold">{method.name?.[0] || '?'}</div>
-                                           )
-                                        ) : (
-                                           <span className="text-white font-bold text-lg">{method.logo}</span>
-                                        )}
-                                     </div>
-                                     <div className="flex flex-col">
-                                        <span className="text-white font-semibold text-[15px] mb-0.5">{method.name}</span>
-                                        <div className="flex items-center text-[12px]">
-                                           <Icons.Zap size={10} className="text-[#00C980] mr-1" fill="currentColor" />
-                                           <span className="text-[#00C980] font-semibold mr-1.5">Available</span>
-                                           <span className="text-gray-500 font-medium">• Min: {formatWithCurrency(currentMinWithdrawal, userCurrency)}</span>
-                                        </div>
-                                     </div>
-                                     <div className="ml-auto">
-                                        <Icons.ChevronRight size={18} className="text-gray-600 group-hover:text-white transition-colors" />
-                                     </div>
-                                  </div>
-                               ))}
-                            </div>
-                         ) : (
-                            <div className="bg-[#2A2B31]/40 rounded-[16px] p-8 text-center border border-dashed border-white/5 mb-8">
-                               <p className="text-gray-500 text-sm">No withdrawal methods available. Please contact support.</p>
-                            </div>
-                         )}
-                      </>
-                   );
-                })()}
-                 </>
-               ) : (
+                                       {/* Slim Indicators */}
+                                       <div className="flex justify-center gap-1.5 mb-8 mt-2">
+                                         {[0, 1, 2, 3].map((idx) => (
+                                           <div 
+                                             key={idx}
+                                             className={`h-[3px] rounded-full transition-all duration-300 ${
+                                               currentWithdrawStory === idx 
+                                               ? "w-6 bg-white" 
+                                               : "w-2 bg-[#3a3b41]"
+                                             }`}
+                                           ></div>
+                                         ))}
+                                       </div>
+ <div className="mb-6"> <h2 className="text-white text-[22px] font-black mb-1">Your withdrawals will be here</h2> <p className="text-gray-400 text-[14px]">Choose convenient deposit method</p> </div> <button onClick={() => setCashierTab('deposits')} className="w-full bg-[#FFE24C] hover:bg-[#F0D544] text-black font-extrabold text-[16px] py-[13px] rounded-[10px] shadow-sm transition-all mb-10 active:scale-[0.98]"> Deposit </button> <h3 className="text-white text-[20px] font-black mb-4 tracking-tight">Deposit to unlock</h3> <div className="flex flex-col gap-2 relative z-10 mb-8"> {activeMethods.map((method, idx) => ( <div key={`withdraw-locked-${idx}-${method.name}`} className="bg-[#24252a] hover:bg-[#2c2d33] transition-colors rounded-[16px] flex items-center cursor-pointer border-none relative min-h-[64px] px-4" onClick={() => { setSelectedMethod(method); setWithdrawStep('locked_method'); }}> <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-sm z-10 overflow-hidden" style={{ backgroundColor: method.bgColor || '#1e1e1e' }}> {method.logoType === 'image' || !method.logoType ? ( method.logo ? ( <img src={method.logo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer"  loading="lazy" /> ) : ( <div className="text-white font-bold">{method.name?.[0] || '?'}</div> ) ) : ( <span className="text-white font-bold">{method.logo}</span> )} </div> <div className="ml-3 flex flex-col justify-center z-10 py-2"> <span className="text-white text-[15px] font-bold leading-tight tracking-wide">{method.name}</span> <div className="flex items-center gap-1 mt-0.5"> <Icons.Zap size={12} className="text-[#FFE24C]" fill="currentColor" /> <span className="text-[#FFE24C] text-[11px] font-bold uppercase">instant</span> <span className="text-gray-500 text-[11px] font-medium tracking-wide"> • from {['crypto', 'other'].includes(method.category?.toLowerCase() || '') ? `$${method.minDeposit || 10}` : formatRawCurrency(method.minDeposit || 10, userCurrency)}</span> </div> </div> </div> ))} </div> </div> ); } return ( <>  {/* Promo Banner */} <div className="bg-gradient-to-br from-[#0B0D23] via-[#0E1545] to-[#0A2665] rounded-[16px] p-5 relative overflow-hidden mb-8 shadow-sm"> <div className="relative z-10 w-[65%]"> <h2 className="text-white text-[17px] font-bold leading-tight mb-2 tracking-tight">Want bigger profit?</h2> <p className="text-white/80 text-[13px] leading-[1.3] mb-4">Looks like recent news brings good profit to traders. Hurry up and make some trades!</p> <button className="w-full bg-[#FFE24C] hover:bg-[#F0D544] text-black font-semibold text-[15px] py-2.5 rounded-[12px] transition-colors shadow-sm"> Check the news </button> </div>  {/* Abstract globe shape */} <div className="absolute right-[-40px] top-1/2 -translate-y-[45%] w-[180px] h-[180px] rounded-full border border-[#0d45a9]/50 bg-gradient-to-br from-[#1b62f1] to-[#012f91] opacity-60 shadow-inner flex items-center justify-center overflow-hidden pointer-events-none"> <div className="w-[120px] h-[120px] rounded-full border border-[#4d8eff]/30 rotate-45 flex items-center justify-center pointer-events-none"> <div className="w-[60px] h-[60px] rounded-full border border-[#7aaaff]/20 pointer-events-none"></div> </div> </div> </div> <h3 className="text-white text-xl font-bold mb-4 tracking-tight">Withdrawal Methods</h3> {activeMethods.length > 0 ? ( <div className="flex flex-col gap-2 relative z-10 mb-8"> {activeMethods.map((method, idx) => ( <div key={`withdraw-${idx}-${method.name}`} className="bg-[#24252a] hover:bg-[#2c2d33] transition-colors rounded-[16px] flex items-center cursor-pointer border-none relative min-h-[64px] px-4" onClick={() => { setSelectedMethod(method); setWithdrawStep('form'); }}> <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-sm z-10 overflow-hidden" style={{ backgroundColor: method.bgColor || '#1e1e1e' }}> {method.logoType === 'image' || !method.logoType ? ( method.logo ? ( <img src={method.logo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer"  loading="lazy" /> ) : ( <div className="text-white font-bold">{method.name?.[0] || '?'}</div> ) ) : ( <span className="text-white font-bold">{method.logo}</span> )} </div> <div className="ml-3 flex flex-col justify-center z-10 py-2"> <span className="text-white text-[15px] font-bold leading-tight tracking-wide">{method.name}</span> <div className="flex items-center gap-1 mt-0.5"> <Icons.Zap size={12} className="text-[#00C980]" fill="currentColor" /> <span className="text-[#00C980] text-[11px] font-bold uppercase">Available</span> <span className="text-gray-500 text-[11px] font-medium tracking-wide"> • Min: {formatWithCurrency(currentMinWithdrawal, userCurrency)}</span> </div> </div> <div className="ml-auto"> <Icons.ChevronRight size={18} className="text-gray-600 group-hover:text-white transition-colors" /> </div> </div> ))} </div> ) : ( <div className="bg-[#2A2B31]/40 rounded-[16px] p-8 text-center border border-dashed border-white/5 mb-8"> <p className="text-gray-500 text-sm">No withdrawal methods available. Please contact support.</p> </div> )} </> ); })()} {withdrawStep === 'locked_method' && selectedMethod && ( <div className="animate-in fade-in slide-in-from-right-4 duration-300 relative z-10 w-full mb-10 pb-8 flex flex-col min-h-[500px]"> <div className="flex items-center gap-2 mb-10 mt-2"> <button onClick={() => setWithdrawStep('methods')} className="text-gray-400 hover:text-white transition-colors p-1 -ml-1 shrink-0"> <Icons.ArrowLeft size={24} /> </button> <div className="flex items-center gap-2 bg-[#24252a] px-3 py-1.5 rounded-full border border-white/5"> <div className="w-5 h-5 rounded-full overflow-hidden flex items-center justify-center shrink-0 shadow-sm" style={{ backgroundColor: selectedMethod.bgColor || '#1e1e1e' }}> {selectedMethod.logoType === 'image' || !selectedMethod.logoType ? ( selectedMethod.logo ? ( <img src={selectedMethod.logo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer" loading="lazy" /> ) : ( <div className="text-white font-bold text-[10px]">{selectedMethod.name?.[0] || '?'}</div> ) ) : ( <span className="text-white font-bold text-[10px]">{selectedMethod.logo}</span> )} </div> <span className="text-white text-[14px] font-bold tracking-tight">{selectedMethod.name}</span> <span className="text-gray-500 text-[12px] font-medium px-0.5">•</span> <div className="flex items-center"> <Icons.Zap size={12} className="text-[#FFE24C]" fill="currentColor" /> <span className="text-[#FFE24C] text-[12px] font-bold tracking-wide">instant</span> </div> </div> </div> <div className="flex-1 flex flex-col items-center justify-center pt-8"> <div className="w-[100px] h-[100px] rounded-full flex items-center justify-center shadow-md mb-8 overflow-hidden bg-[#24252a] border-4 border-[#1e1e1e]" style={{ backgroundColor: selectedMethod.bgColor || '#1e1e1e' }}> {selectedMethod.logoType === 'image' || !selectedMethod.logoType ? ( selectedMethod.logo ? ( <img src={selectedMethod.logo} alt="" className="w-2/3 h-2/3 object-contain" referrerPolicy="no-referrer" loading="lazy" /> ) : ( <div className="text-white font-bold text-4xl">{selectedMethod.name?.[0] || '?'}</div> ) ) : ( <span className="text-white font-bold text-4xl">{selectedMethod.logo}</span> )} </div> <h2 className="text-white text-[28px] font-black tracking-tight mb-12 text-center leading-tight">Want to unlock<br/>{selectedMethod.name}?</h2> <button onClick={() => { setCashierTab('deposits'); }} className="w-full max-w-[300px] bg-[#FFE24C] hover:bg-[#F0D544] text-black font-extrabold text-[16px] py-[13px] rounded-[10px] shadow-sm transition-all active:scale-[0.98]"> Deposit </button> </div> </div> )} {withdrawStep === 'form' && (
                  <div className="animate-in fade-in slide-in-from-right-4 duration-300 relative z-10 w-full mb-10 pb-8">
                    <div className="flex items-center gap-3 mb-6">
                      <button onClick={() => { setWithdrawStep("methods"); setWithdrawSubmitAttempted(false); }} className="text-gray-400 hover:text-white transition-colors p-1 -ml-1">
@@ -14984,10 +15084,10 @@ const PROMOTED_ARTICLES = [
                                </div>
                                <div className="flex flex-col items-end">
                                  <span className="text-white font-bold text-[15px] tracking-tight">
-                                    {tx.type === 'Deposit' ? '+' : '-'} {formatWithCurrency(tx.amount, userCurrency)}
+                                    {tx.type === 'Deposit' ? '+' : '-'} {formatRawCurrency(tx.amount, tx.currency || userCurrency)}
                                  </span>
                                  {tx.bonusAmount && (
-                                   <span className="text-gray-500 text-[12px]">+ {formatWithCurrency(tx.bonusAmount, userCurrency)}</span>
+                                   <span className="text-gray-500 text-[12px]">+ {formatRawCurrency(tx.bonusAmount, tx.currency || userCurrency)}</span>
                                  )}
                                </div>
                             </div>
@@ -15084,11 +15184,11 @@ const PROMOTED_ARTICLES = [
                                   </div>
                                   <div className="flex justify-between items-center text-[15px]">
                                      <span className="text-gray-500 font-medium">{tx.type}</span>
-                                     <span className="text-gray-400 font-medium tracking-tight">{formatWithCurrency(tx.amount, userCurrency)}</span>
+                                     <span className="text-gray-400 font-medium tracking-tight">{formatRawCurrency(tx.amount, tx.currency || userCurrency)}</span>
                                   </div>
                                   <div className="flex justify-between items-center font-bold text-[15px]">
                                      <span className="text-white">Total</span>
-                                     <span className="text-white tracking-tight">{formatWithCurrency(tx.amount, userCurrency)}</span>
+                                     <span className="text-white tracking-tight">{formatRawCurrency(tx.amount, tx.currency || userCurrency)}</span>
                                   </div>
                                </div>
 
@@ -15175,7 +15275,7 @@ const PROMOTED_ARTICLES = [
                  <button 
                    onClick={() => {
                      setShowCashierMenu(false);
-                     navigate("/cashier/deposits");
+                     navigate("/deposit");
                    }}
                    className="w-full bg-[#FFE24C] hover:bg-[#ffe770] text-[15px] font-bold py-4 rounded-[12px] flex items-center justify-center gap-2 transition-colors text-black"
                  >
@@ -15185,7 +15285,7 @@ const PROMOTED_ARTICLES = [
                  <button 
                    onClick={() => {
                      setShowCashierMenu(false);
-                     navigate("/cashier/withdrawals");
+                     navigate("/withdraw");
                    }}
                    className="w-full bg-[#36373c]/80 hover:bg-[#3b3c42] text-[15px] font-bold py-4 rounded-[12px] flex items-center justify-center gap-2 transition-colors text-white"
                  >
@@ -15195,7 +15295,7 @@ const PROMOTED_ARTICLES = [
                  <button 
                    onClick={() => {
                      setShowCashierMenu(false);
-                     navigate("/cashier/history");
+                     navigate("/transactions");
                    }}
                    className="w-full bg-[#36373c]/80 hover:bg-[#3b3c42] text-[15px] font-bold py-4 rounded-[12px] flex items-center justify-center gap-2 transition-colors text-white"
                  >

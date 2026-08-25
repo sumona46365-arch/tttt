@@ -100,6 +100,8 @@ const AuthPage = lazyWithRetry(() => import('./pages/AuthPage'));
 const AffiliateLandingPage = lazyWithRetry(() => import('./pages/AffiliateLanding'));
 const EnterpriseSupportCenter = lazyWithRetry(() => import('./pages/EnterpriseSupportCenter'));
 const ClientSupportCenter = lazyWithRetry(() => import('./pages/ClientSupportCenter'));
+const BlogPage = lazyWithRetry(() => import('./pages/BlogPage'));
+const NewsCenter = lazyWithRetry(() => import('./pages/NewsCenter'));
 
 // Loader for Suspense
 const PageLoader = () => (
@@ -123,6 +125,23 @@ export default function App() {
   const [tfaCode, setTfaCode] = useState('');
   const [tfaMode, setTfaMode] = useState<string>('app');
   const [tfaSecretBase32, setTfaSecretBase32] = useState<string | null>(null);
+
+  const isAffiliateSubdomain = window.location.hostname.startsWith('affiliate.') || window.location.hostname.includes('affiliate') || window.location.hostname.startsWith('partner.') || window.location.hostname.includes('partner');
+  const isMarketSubdomain = window.location.hostname.startsWith('market.') || window.location.hostname.includes('market');
+  const isBlogSubdomain = window.location.hostname.startsWith('bloge.') || window.location.hostname.startsWith('blog.') || window.location.hostname.includes('bloge');
+  const isNewsSubdomain = window.location.hostname.startsWith('news.') || window.location.hostname.includes('news');
+
+  // Redirect referred traders to main domain if they land on a partner/affiliate subdomain
+  useEffect(() => {
+    if (isAffiliateSubdomain) {
+      const traderPaths = ['/register', '/signup', '/trade', '/trade/', '/deposit', '/withdraw', '/cashier'];
+      const currentPath = window.location.pathname.toLowerCase();
+      if (traderPaths.some(path => currentPath.startsWith(path))) {
+        const mainHost = window.location.host.replace(/^partner\./, '').replace(/^affiliate\./, '');
+        window.location.href = `${window.location.protocol}//${mainHost}${window.location.pathname}${window.location.search}`;
+      }
+    }
+  }, [isAffiliateSubdomain]);
 
   // Automated Payment Methods Initializer/Migrator
   useEffect(() => {
@@ -853,9 +872,6 @@ export default function App() {
     );
   }
 
-  const isAffiliateSubdomain = window.location.hostname.startsWith('affiliate.') || window.location.hostname.includes('affiliate') || window.location.hostname.startsWith('partner.') || window.location.hostname.includes('partner');
-  const isMarketSubdomain = window.location.hostname.startsWith('market.') || window.location.hostname.includes('market');
-
   return (
     <>
       <Toaster position="top-right" 
@@ -874,9 +890,9 @@ export default function App() {
               <Routes>
               <Route path="/" element={
                 user ? (
-                  <Navigate to={isAffiliateSubdomain ? "/affiliate" : "/trade"} replace />
+                  <Navigate to={isNewsSubdomain ? "/news-center" : (isBlogSubdomain ? "/blog" : (isAffiliateSubdomain ? "/affiliate" : "/trade"))} replace />
                 ) : (
-                  isAffiliateSubdomain ? <AffiliateLandingPage /> : (isMarketSubdomain ? <TradeTerminal /> : <Homepage />)
+                  isNewsSubdomain ? <NewsCenter /> : (isBlogSubdomain ? <BlogPage /> : (isAffiliateSubdomain ? <AffiliateLandingPage /> : (isMarketSubdomain ? <TradeTerminal /> : <Homepage />)))
                 )
               } />
               <Route path="/login" element={user ? <Navigate to={isAffiliateSubdomain ? "/affiliate" : "/trade"} replace /> : <AuthPage />} />
@@ -886,6 +902,10 @@ export default function App() {
               <Route path="/trade/:subpath" element={<RequireAuth user={user} loading={loading}>{<TradeTerminal />}</RequireAuth>} />
               <Route path="/cashier" element={<RequireAuth user={user} loading={loading}>{<TradeTerminal />}</RequireAuth>} />
               <Route path="/cashier/:subpath" element={<RequireAuth user={user} loading={loading}>{<TradeTerminal />}</RequireAuth>} />
+              <Route path="/activities" element={<RequireAuth user={user} loading={loading}>{<TradeTerminal />}</RequireAuth>} />
+              <Route path="/deposit" element={<RequireAuth user={user} loading={loading}>{<TradeTerminal />}</RequireAuth>} />
+              <Route path="/withdraw" element={<RequireAuth user={user} loading={loading}>{<TradeTerminal />}</RequireAuth>} />
+              <Route path="/transactions" element={<RequireAuth user={user} loading={loading}>{<TradeTerminal />}</RequireAuth>} />
               <Route path="/leaderboard" element={<RequireAuth user={user} loading={loading}>{<TradeTerminal />}</RequireAuth>} />
               <Route path="/promotions" element={<RequireAuth user={user} loading={loading}>{<TradeTerminal />}</RequireAuth>} />
               <Route path="/calendar" element={<RequireAuth user={user} loading={loading}>{<TradeTerminal />}</RequireAuth>} />
@@ -909,7 +929,9 @@ export default function App() {
               <Route path="/support-center" element={<EnterpriseSupportCenter />} />
               <Route path="/about-us" element={<AboutUsPage />} />
               <Route path="/news/:slug" element={<NewsPage />} />
+              <Route path="/news-center" element={<NewsCenter />} />
               <Route path="/page/:slug" element={<StaticPage />} />
+              <Route path="/blog" element={<BlogPage />} />
               <Route path="/Bivaaxpay" element={<BinancePayPage />} />
               <Route path="/crypto-deposit" element={<RequireAuth user={user} loading={loading}><CryptoDepositPage /></RequireAuth>} />
               <Route path="/mfs-deposit" element={<RequireAuth user={user} loading={loading}><MFSDepositPage /></RequireAuth>} />

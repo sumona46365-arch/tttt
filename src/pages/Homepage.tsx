@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { Menu, ArrowRight, Award, Trophy, Landmark, TrendingUp, ShieldCheck, Star, Calculator, Calendar, Smartphone, MessageCircle, BookOpen, UserPlus, FileText, Activity, Zap, Globe, Shield, Headphones, PieChart, Check, Users, HelpCircle, ChevronDown, LayoutDashboard } from 'lucide-react';
+import { Menu, ArrowRight, Award, Trophy, Landmark, TrendingUp, ShieldCheck, Star, Calculator, Calendar, Smartphone, MessageCircle, BookOpen, UserPlus, FileText, Activity, Zap, Globe, Shield, Headphones, PieChart, Check, Users, HelpCircle, ChevronDown, LayoutDashboard, Image as ImageIcon } from 'lucide-react';
 import { Logo } from '../components/Logo';
 import { AuthModal } from '../components/AuthModal';
 import NewsletterForm from '../components/NewsletterForm';
 import SEO from '../components/SEO';
 import { motion, AnimatePresence } from 'motion/react';
-import { auth, db, onSnapshot, doc } from '../firebase';
+import { auth, db, onSnapshot, doc, collection, query, where, orderBy, limit } from '../firebase';
 import { formatWithCurrency, convertToBase } from '../lib/currencies';
 import ReferralStatsCard from '../components/ReferralStatsCard';
 import { useAuth } from '../contexts/AuthContext';
@@ -22,6 +22,7 @@ export default function Homepage() {
   });
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
   const [faqSearch, setFaqSearch] = useState('');
+  const [stories, setStories] = useState<any[]>([]);
   const [userCurrency, setUserCurrency] = useState(() => {
     try {
       return localStorage.getItem('user_display_currency') || 'BDT';
@@ -29,6 +30,13 @@ export default function Homepage() {
       return 'BDT';
     }
   });
+
+  useEffect(() => {
+    const unsubStories = onSnapshot(query(collection(db, 'stories'), where('isActive', '==', true), orderBy('order', 'asc'), limit(3)), (snap) => {
+      setStories(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    return () => unsubStories();
+  }, []);
 
   useEffect(() => {
     const unsubscribeAuth = auth.onAuthStateChanged((user) => {
@@ -771,6 +779,72 @@ export default function Homepage() {
          </div>
       </section>
 
+      {/* Platform Blog / Showcase Section */}
+      {stories.length > 0 && (
+        <section className="py-24 px-4 bg-gradient-to-b from-transparent to-black/20">
+          <div className="max-w-6xl mx-auto">
+            <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
+              <div>
+                <div className="flex items-center gap-2 text-[#ffcf00] font-black text-[10px] uppercase tracking-[0.2em] mb-4">
+                  <Zap size={14} fill="currentColor" />
+                  <span>Platform Showcase</span>
+                </div>
+                <h2 className="text-4xl md:text-5xl font-black uppercase tracking-tighter">Latest Updates & <br/><span className="text-[#ffcf00]">App Mechanics</span></h2>
+              </div>
+              <Link 
+                to="/blog" 
+                className="inline-flex items-center gap-2 text-[#ffcf00] font-bold hover:gap-3 transition-all group"
+              >
+                <span>View Full Blog</span>
+                <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
+              </Link>
+            </div>
+
+            <div className="grid md:grid-cols-3 gap-6">
+              {stories.map((story, idx) => (
+                <motion.div 
+                  key={story.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ delay: idx * 0.1 }}
+                  className="bg-white/5 border border-white/10 rounded-[32px] overflow-hidden group hover:border-[#ffcf00]/30 transition-all duration-500"
+                >
+                  <div className="aspect-video relative overflow-hidden">
+                    {story.imageUrl ? (
+                      <img 
+                        src={story.imageUrl} 
+                        alt={story.title} 
+                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" 
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center bg-white/5 text-gray-800">
+                        <ImageIcon size={48} />
+                      </div>
+                    )}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60" />
+                  </div>
+                  <div className="p-8">
+                    <h3 className="text-xl font-black uppercase tracking-tight mb-3 line-clamp-1 group-hover:text-[#ffcf00] transition-colors">{story.title}</h3>
+                    <p className="text-gray-500 text-sm line-clamp-2 leading-relaxed mb-6">
+                      {story.description}
+                    </p>
+                    <Link 
+                      to="/blog"
+                      className="text-[10px] font-black uppercase tracking-widest text-[#ffcf00] flex items-center gap-2 group/btn"
+                    >
+                      <span>Read Details</span>
+                      <ArrowRight size={14} className="group-hover/btn:translate-x-1 transition-transform" />
+                    </Link>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* FAQ Accordion Section */}
       <section className="bg-[#1c1d22] py-24 px-4 border-t border-white/5 relative overflow-hidden">
         {/* Subtle decorative glow for premium alignment */}
@@ -908,6 +982,7 @@ export default function Homepage() {
                 <h4 className="font-black text-sm uppercase tracking-widest text-white mb-6">Company</h4>
                 <ul className="space-y-4 text-gray-500 text-sm font-bold">
                   <li><Link to="/about-us" className="hover:text-[#ffcf00] transition-colors">About Us</Link></li>
+                  <li><Link to="/blog" className="hover:text-[#ffcf00] transition-colors">Platform Blog</Link></li>
                   <li><Link to="/page/contact" className="hover:text-[#ffcf00] transition-colors">Contact</Link></li>
                   <li><Link to="/page/legal-agreement" className="hover:text-[#ffcf00] transition-colors">Legal Agreement</Link></li>
                   <li><Link to="/page/risk-disclosure" className="hover:text-[#ffcf00] transition-colors">Risk Disclosure</Link></li>

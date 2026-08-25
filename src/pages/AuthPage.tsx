@@ -83,17 +83,31 @@ export default function AuthPage() {
 
   // Auto-detect country
   useEffect(() => {
-    fetch('https://get.geojs.io/v1/ip/geo.json')
-      .then(res => res.ok ? res.json().catch(() => null) : null)
-      .then(data => {
-        if (data && data.country) {
-          setDetectedCountry(data.country);
-          setDetectedCountryCode(data.country_code);
+    const detect = async () => {
+      try {
+        const res = await fetch('https://get.geojs.io/v1/ip/geo.json');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.country) {
+            setDetectedCountry(data.country);
+            setDetectedCountryCode(data.country_code);
+            return;
+          }
         }
-      })
-      .catch(() => {
-        // Fallback or silent fail
-      });
+      } catch (e) {}
+
+      try {
+        const res = await fetch('https://ipapi.co/json/');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.country_name) {
+            setDetectedCountry(data.country_name);
+            setDetectedCountryCode(data.country_code);
+          }
+        }
+      } catch (e) {}
+    };
+    detect();
   }, []);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);

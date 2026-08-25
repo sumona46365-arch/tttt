@@ -337,7 +337,7 @@ export async function settleTrade(tradeId: number | string, currentMarketPrice?:
            const participant = await get('SELECT score FROM tournament_participants WHERE tournament_id = ? AND user_id = ?', [trade.tournament_id, trade.user_id], conn) as any;
            if (participant) {
              const currentBalance = new Big(participant.score || 0);
-             const newBalance = currentBalance.plus(payoutAmount).toFixed(2);
+             const newBalance = currentBalance.plus(payoutAmount).toFixed(6);
              await run(`UPDATE tournament_participants SET score = ? WHERE tournament_id = ? AND user_id = ?`, [newBalance, trade.tournament_id, trade.user_id], conn);
              
              // Sync updated score to Firestore
@@ -350,14 +350,14 @@ export async function settleTrade(tradeId: number | string, currentMarketPrice?:
            const user = await get('SELECT ' + balanceField + ' FROM users WHERE uid = ?', [trade.user_id], conn) as any;
            if (user) {
                const currentBalance = new Big(user[balanceField] || 0);
-               const newBalance = currentBalance.plus(payoutAmount).toFixed(2);
+               const newBalance = currentBalance.plus(payoutAmount).toFixed(6);
                await run(`UPDATE users SET ${balanceField} = ? WHERE uid = ?`, [newBalance, trade.user_id], conn);
                
                // DR & Audit Logging
                try {
                  const { SnapshotService } = await import('./snapshotService.ts');
                  if (trade.account_type === 'real' || !trade.is_demo) {
-                   SnapshotService.logFinancialAudit(trade.user_id, 'trade_payout', payoutAmount.toFixed(2), currentBalance.toFixed(2), newBalance, `trade_${tradeId}`).catch(e => logger.error('Audit log failed:', e));
+                   SnapshotService.logFinancialAudit(trade.user_id, 'trade_payout', payoutAmount.toFixed(6), currentBalance.toFixed(6), newBalance, `trade_${tradeId}`).catch(e => logger.error('Audit log failed:', e));
                    SnapshotService.syncUserForDR(trade.user_id).catch(e => logger.error('DR sync failed:', e));
                  }
                } catch (drErr) {

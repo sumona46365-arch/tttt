@@ -50,11 +50,7 @@ const SEO: React.FC<SEOProps> = ({
     currentPath.startsWith('/support') ||
     currentPath.startsWith('/support-center') ||
     currentPath.startsWith('/help-center') ||
-    currentPath.startsWith('/leaderboard') ||
-    currentPath.startsWith('/promotions') ||
     currentPath.startsWith('/calendar') ||
-    currentPath.startsWith('/tournaments') ||
-    currentPath.startsWith('/education') ||
     currentPath.startsWith('/statuses');
 
   const effectiveRobots = isPrivatePath ? 'noindex, nofollow' : robots;
@@ -130,6 +126,54 @@ const SEO: React.FC<SEOProps> = ({
               "contactType": "customer service",
               "email": "support@bivaax.com"
             }
+          },
+          {
+            "@context": "https://schema.org",
+            "@type": "ItemList",
+            "itemListElement": [
+              {
+                "@type": "SiteNavigationElement",
+                "position": 1,
+                "name": "Registration",
+                "description": "Create a new Bivaax Trade account and start trading global markets.",
+                "url": `${currentOrigin}/auth?mode=register`
+              },
+              {
+                "@type": "SiteNavigationElement",
+                "position": 2,
+                "name": "Log In",
+                "description": "Sign in to your existing Bivaax Trade account.",
+                "url": `${currentOrigin}/auth?mode=login`
+              },
+              {
+                "@type": "SiteNavigationElement",
+                "position": 3,
+                "name": "Bivaax Demo Account",
+                "description": "Start trading with a $10,000 risk-free demo account.",
+                "url": `${currentOrigin}/trade`
+              },
+              {
+                "@type": "SiteNavigationElement",
+                "position": 4,
+                "name": "Promotions",
+                "description": "Explore active bonuses, promo codes and deposit rewards.",
+                "url": `${currentOrigin}/promotions`
+              },
+              {
+                "@type": "SiteNavigationElement",
+                "position": 5,
+                "name": "Tournaments",
+                "description": "Join trading tournaments and win real cash prizes.",
+                "url": `${currentOrigin}/tournaments`
+              },
+              {
+                "@type": "SiteNavigationElement",
+                "position": 6,
+                "name": "Education",
+                "description": "Learn binary options trading strategies and market analysis.",
+                "url": `${currentOrigin}/education`
+              }
+            ]
           },
           faqData && {
             "@context": "https://schema.org",
