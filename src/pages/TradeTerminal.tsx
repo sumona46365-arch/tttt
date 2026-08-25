@@ -1349,6 +1349,13 @@ const TournamentLeaderboard = ({ tournamentId }: { tournamentId: string }) => {
 
 const STORIES = [
   {
+    id: 'activities-hub',
+    title: 'Activities Hub',
+    description: 'Explore tournaments, deposit bonuses, economic calendar, and educational resources directly from your dashboard.',
+    imageUrl: 'https://i.postimg.cc/NFXnXHrw/file-00000000110081fa8ffe4ae74614b59a.png',
+    link: '/news/activities-hub'
+  },
+  {
     id: 'market-overview',
     title: 'Market Overview',
     description: 'Explore multiple market trends and charts in one comprehensive view.',
