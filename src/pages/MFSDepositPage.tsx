@@ -66,15 +66,15 @@ const MFSDepositPage: React.FC = () => {
 
   const t = {
     BN: {
-      timeLeft: "বাকি সময়",
-      submitted: "অনুরোধ জমা হয়েছে!",
-      successDesc: `আপনার ${methodName} ম্যানুয়াল জমার অনুরোধ গ্রহণ করা হয়েছে। আমাদের সাপোর্ট টিম মার্চেন্ট রেকর্ডের সাথে আপনার লেনদেন আইডিটি যাচাই করবে।`,
+      timeLeft: "বাকি সময়",
+      submitted: "অনুরোধ জমা হয়েছে!",
+      successDesc: `আপনার ${methodName} ম্যানুয়াল জমার অনুরোধ গ্রহণ করা হয়েছে। আমাদের সাপোর্ট টিম মার্চেন্ট রেকর্ডের সাথে আপনার লেনদেন আইডিটি যাচাই করবে।`,
       orderId: "অর্ডার আইডি",
       amount: "পরিমাণ",
       return: "টার্মিনালে ফিরে যান",
       warning: "অনুগ্রহ করে প্রেরিত পরিমাণ পরিবর্তন করবেন না",
       step1: "ক্যাশ আউট নম্বর কপি করুন",
-      step1Desc: `নিচের নম্বরে ${methodName} অ্যাপ বা ক্যাশআউট মেনু দিয়ে টাকা পাঠান।`,
+      step1Desc: `নিচের নম্বরে ${methodName} অ্যাপ বা ক্যাশআউট মেনু দিয়ে টাকা পাঠান।`,
       step2: "লেনদেন আইডি (TrxID) দিন",
       promoLabel: "প্রোমো কোড (ঐচ্ছিক)",
       promoPlaceholder: "প্রোমো কোড দিন",
@@ -85,17 +85,17 @@ const MFSDepositPage: React.FC = () => {
       paste: "পেস্ট করুন",
       submit: "অনুরোধ নিশ্চিত করুন",
       upgrade: "নিরাপদ ডিপোজিট প্যানেল",
-      guideTitle: `${methodName} ম্যানুয়াল ডিপোজিট করার নিয়ম`,
+      guideTitle: `${methodName} ম্যানুয়াল ডিপোজিট করার নিয়ম`,
       guide: finalGuide || [
         `১. আপনার ${methodName} অ্যাপ অথবা মোবাইল মেনু ডায়াল করুন।`,
         `২. ক্যাশ আউট (Cash Out) অপশনটি নির্বাচন করুন।`,
-        `৩. উপরে দেওয়া ${methodName} নম্বরটি কপি করে প্রবেশ করান।`,
+        `৩. উপরে দেওয়া ${methodName} নম্বরটি কপি করে প্রবেশ করান।`,
         `৪. সঠিক জমার পরিমাণটি প্রদান করুন।`,
-        `৫. আপনার পিন দিয়ে লেনদেন সম্পন্ন করুন।`,
-        `৬. সম্পন্ন হওয়ার পর যে TrxID (ট্রানজেকশন আইডি) পাবেন, সেটি কপি করুন।`,
+        `৫. আপনার পিন দিয়ে লেনদেন সম্পন্ন করুন।`,
+        `৬. সম্পন্ন হওয়ার পর যে TrxID (ট্রানজেকশন আইডি) পাবেন, সেটি কপি করুন।`,
         `৭. সেই TrxIDটি এখানে পেস্ট করে 'অনুরোধ নিশ্চিত করুন' বাটনে ক্লিক করুন।`
       ],
-      footerText: "বিভ্যাক্স ম্যানুয়াল গেটওয়ে সিস্টেম"
+      footerText: "বিভ্যাক্স ম্যানুয়াল গেটওয়ে সিস্টেম"
     },
     EN: {
       timeLeft: "Time Remaining",
@@ -168,7 +168,7 @@ const MFSDepositPage: React.FC = () => {
 
   const handleConfirm = async () => {
     if (!trxId || trxId.length < 6) {
-      toast.error(lang === 'BN' ? "দয়া করে সঠিক লেনদেন আইডি দিন" : "Please enter a valid Transaction ID");
+      toast.error(lang === 'BN' ? "দয়া করে সঠিক লেনদেন আইডি দিন" : "Please enter a valid Transaction ID");
       return;
     }
 
@@ -207,7 +207,7 @@ const MFSDepositPage: React.FC = () => {
       }
       
       setIsSuccess(true);
-      toast.success(lang === 'BN' ? "লেনদেন আইডি যাচাইয়ের জন্য পাঠানো হয়েছে" : "Transaction submitted for support verification");
+      toast.success(lang === 'BN' ? "লেনদেন আইডি যাচাইয়ের জন্য পাঠানো হয়েছে" : "Transaction submitted for support verification");
       
       setTimeout(() => {
         navigate('/trade');
@@ -222,7 +222,7 @@ const MFSDepositPage: React.FC = () => {
 
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
-    toast.success(`${label} ${lang === 'BN' ? 'কপি হয়েছে' : 'copied'}!`);
+    toast.success(`${label} ${lang === 'BN' ? 'কপি হয়েছে' : 'copied'}!`);
   };
 
   if (loading) {
@@ -404,7 +404,7 @@ const MFSDepositPage: React.FC = () => {
                                       try {
                                           const text = await navigator.clipboard.readText();
                                           setTrxId(text);
-                                          toast.success(lang === 'BN' ? "পেস্ট হয়েছে!" : "Pasted!");
+                                          toast.success(lang === 'BN' ? "পেস্ট হয়েছে!" : "Pasted!");
                                       } catch (e) {
                                           toast.error("Clipboard access denied.");
                                       }

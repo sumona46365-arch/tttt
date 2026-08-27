@@ -151,7 +151,7 @@ export const profileTranslations: Record<string, Record<string, string>> = {
     allowNotifications: "বিজ্ঞপ্তি ও গুরুত্বপূর্ণ বার্তার অনুমতি দিন",
     autoDetected: "স্বয়ংক্রিয় সনাক্ত",
     socialConnected: "সংযুক্ত আছেন",
-    socialNotConnected: "সংযুক্ত নয়",
+    socialNotConnected: "সংযুক্ত নয়",
     chooseCurrency: "আপনার প্রধান মুদ্রা নির্বাচন করুন",
     confirmCurrencyChange: "মুদ্রা পরিবর্তন নিশ্চিত করুন",
     kycInstructions: "আপনার পরিচয় যাচাই করা হয়েছে। সব সীমাবদ্ধতা অপসারিত।",

@@ -200,6 +200,6 @@ export async function generateChatResponse(message: string, history: any[] = [],
     return { reply: fullOutput, actions: ["How to begin? 🤔", "Support Dashboard", "Contact Agent"] };
   } catch (error) {
     console.error("Error generating chat response:", error);
-    return { reply: "দুঃখিত, বর্তমানে এআই সেবাটি পাওয়া যাচ্ছে না। দয়া করে অ্যাডমিন প্যানেল থেকে Gemini API Key চেক করুন।", actions: ["Try again", "Support Center"] };
+    return { reply: "দুঃখিত, বর্তমানে এআই সেবাটি পাওয়া যাচ্ছে না। দয়া করে অ্যাডমিন প্যানেল থেকে Gemini API Key চেক করুন।", actions: ["Try again", "Support Center"] };
   }
 }

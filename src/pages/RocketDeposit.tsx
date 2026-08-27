@@ -115,7 +115,7 @@ const RocketDeposit: React.FC = () => {
 
   const handleConfirm = async () => {
     if (!trxId || trxId.length < 6) {
-      toast.error(lang === 'BN' ? "দয়া করে সঠিক লেনদেন আইডি দিন" : "Please enter a valid Transaction ID");
+      toast.error(lang === 'BN' ? "দয়া করে সঠিক লেনদেন আইডি দিন" : "Please enter a valid Transaction ID");
       return;
     }
 
@@ -150,7 +150,7 @@ const RocketDeposit: React.FC = () => {
       }
       
       setIsSuccess(true);
-      toast.success(lang === 'BN' ? "লেনদেন আইডি যাচাইয়ের জন্য পাঠানো হয়েছে" : "Transaction submitted for support verification");
+      toast.success(lang === 'BN' ? "লেনদেন আইডি যাচাইয়ের জন্য পাঠানো হয়েছে" : "Transaction submitted for support verification");
       
       setTimeout(() => {
         navigate('/trade');
@@ -165,7 +165,7 @@ const RocketDeposit: React.FC = () => {
 
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
-    toast.success(`${label} ${lang === 'BN' ? 'কপি হয়েছে' : 'copied'}!`);
+    toast.success(`${label} ${lang === 'BN' ? 'কপি হয়েছে' : 'copied'}!`);
   };
 
   return (
@@ -333,7 +333,7 @@ const RocketDeposit: React.FC = () => {
                                       try {
                                           const text = await navigator.clipboard.readText();
                                           setTrxId(text);
-                                          toast.success(lang === 'BN' ? "পেস্ট হয়েছে!" : "Pasted!");
+                                          toast.success(lang === 'BN' ? "পেস্ট হয়েছে!" : "Pasted!");
                                       } catch (e) {
                                           toast.error("Clipboard access denied.");
                                       }
