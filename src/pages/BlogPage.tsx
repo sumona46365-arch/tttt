@@ -7,7 +7,7 @@ import {
   HelpCircle, Users, TrendingUp, DollarSign, Smartphone, Laptop, 
   ChevronRight, Star, Lock, Activity, ArrowRight, Play, Search,
   Globe, Coins, Shield, FileText, Check, Cpu, Layers, RefreshCw,
-  AlertTriangle, ArrowUpRight
+  AlertTriangle, ArrowUpRight, Mail
 } from 'lucide-react';
 import { db, collection, getDocs, query, where, orderBy } from '../firebase';
 import SEO from '../components/SEO';
@@ -32,6 +32,138 @@ export default function BlogPage() {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [activeFeature, setActiveFeature] = useState<number>(0);
   const [activeAssetCat, setActiveAssetCat] = useState<'forex' | 'crypto' | 'commodities' | 'stocks'>('forex');
+
+  // Live Ticker Prices State
+  const [tickerPrices, setTickerPrices] = useState({
+    BTC: 64250.40,
+    ETH: 3450.25,
+    EURUSD: 1.0854,
+    GBPUSD: 1.2982,
+    GOLD: 2514.80,
+    TSLA: 189.42
+  });
+
+  // Simulator States
+  const [simPrice, setSimPrice] = useState(64250.40);
+  const [simHistory, setSimHistory] = useState<number[]>([
+    64240, 64245, 64238, 64242, 64248, 64245, 64241, 64246, 64252, 64250, 64249, 64251, 64247, 64248, 64250.40
+  ]);
+  const [simDirection, setSimDirection] = useState<'up' | 'down' | 'neutral'>('neutral');
+  const [simAmount, setSimAmount] = useState<number>(100);
+  const [simTime, setSimTime] = useState<number>(10); // 10s default for quick engagement
+  const [simTradeType, setSimTradeType] = useState<'HIGH' | 'LOW' | null>(null);
+  const [simIsActive, setSimIsActive] = useState(false);
+  const [simStrikePrice, setSimStrikePrice] = useState<number | null>(null);
+  const [simCountdown, setSimCountdown] = useState<number>(0);
+  const [simResult, setSimResult] = useState<'WIN' | 'LOSS' | null>(null);
+
+  // VIP Calculator States
+  const [calcDeposit, setCalcDeposit] = useState<number>(250);
+  const [calcTradeAmount, setCalcTradeAmount] = useState<number>(100);
+
+  // Subscription States
+  const [subEmail, setSubEmail] = useState('');
+  const [subSubmitted, setSubSubmitted] = useState(false);
+  const [subLoading, setSubLoading] = useState(false);
+
+  // Core background ticker interval
+  useEffect(() => {
+    const interval = setInterval(() => {
+      // Tick general tickers slightly
+      setTickerPrices(prev => ({
+        BTC: Number((prev.BTC + (Math.random() - 0.5) * 15).toFixed(2)),
+        ETH: Number((prev.ETH + (Math.random() - 0.5) * 2).toFixed(2)),
+        EURUSD: Number((prev.EURUSD + (Math.random() - 0.5) * 0.0002).toFixed(4)),
+        GBPUSD: Number((prev.GBPUSD + (Math.random() - 0.5) * 0.0003).toFixed(4)),
+        GOLD: Number((prev.GOLD + (Math.random() - 0.5) * 0.8).toFixed(2)),
+        TSLA: Number((prev.TSLA + (Math.random() - 0.5) * 0.15).toFixed(2)),
+      }));
+
+      // Tick simulator price
+      setSimPrice(prev => {
+        const change = (Math.random() - 0.5) * 6;
+        const nextPrice = Number((prev + change).toFixed(2));
+        setSimDirection(change >= 0 ? 'up' : 'down');
+        
+        setSimHistory(hist => {
+          const updated = [...hist.slice(1), nextPrice];
+          return updated;
+        });
+
+        return nextPrice;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // Simulator trade active countdown loop
+  useEffect(() => {
+    let timer: any;
+    if (simIsActive && simCountdown > 0) {
+      timer = setTimeout(() => {
+        setSimCountdown(c => c - 1);
+      }, 1000);
+    } else if (simIsActive && simCountdown === 0) {
+      // Evaluate result
+      if (simStrikePrice !== null && simTradeType !== null) {
+        const current = simPrice;
+        const strike = simStrikePrice;
+        let isWin = false;
+        
+        if (simTradeType === 'HIGH') {
+          isWin = current > strike;
+        } else if (simTradeType === 'LOW') {
+          isWin = current < strike;
+        }
+
+        setSimResult(isWin ? 'WIN' : 'LOSS');
+      }
+      setSimIsActive(false);
+    }
+
+    return () => clearTimeout(timer);
+  }, [simIsActive, simCountdown, simPrice, simStrikePrice, simTradeType]);
+
+  const handlePlaceSimTrade = (type: 'HIGH' | 'LOW') => {
+    if (simIsActive) return;
+    
+    setSimTradeType(type);
+    setSimStrikePrice(simPrice);
+    setSimCountdown(simTime);
+    setSimResult(null);
+    setSimIsActive(true);
+  };
+
+  const handleResetSimTrade = () => {
+    setSimTradeType(null);
+    setSimStrikePrice(null);
+    setSimCountdown(0);
+    setSimResult(null);
+    setSimIsActive(false);
+  };
+
+  const handleSubscribe = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!subEmail.trim() || !subEmail.includes('@')) return;
+    
+    setSubLoading(true);
+    setTimeout(() => {
+      setSubLoading(false);
+      setSubSubmitted(true);
+      setSubEmail('');
+    }, 800);
+  };
+
+  const getVIPTierDetails = (amount: number) => {
+    if (amount >= 2500) return { name: "VIP", payout: 95, perk: "Personal VIP Manager & Express Priority Cashout" };
+    if (amount >= 1000) return { name: "Platinum", payout: 92, perk: "Priority Support & VIP Exclusive Promos" };
+    if (amount >= 500) return { name: "Gold", payout: 90, perk: "Weekly Cashback Refunds & Express Cashout" };
+    if (amount >= 250) return { name: "Silver", payout: 88, perk: "Higher Max Trade Limit & Exclusive Market Signals" };
+    if (amount >= 100) return { name: "Pro", payout: 85, perk: "Faster Cashout Speeds & 50% Welcome Deposit Bonus" };
+    if (amount >= 50) return { name: "Basic", payout: 82, perk: "24/7 Live Dedicated Customer Support & Basic Welcome Bonus" };
+    return { name: "Starter", payout: 80, perk: "Standard Execution & Free $10,000 Reloadable Demo" };
+  };
 
   const handleNavigation = (path: string) => {
     const hostname = window.location.hostname;
@@ -262,7 +394,7 @@ export default function BlogPage() {
       />
 
       {/* Floating Header */}
-      <div className="sticky top-0 z-50 bg-[#07080b]/80 backdrop-blur-xl border-b border-white/5">
+      <div className="sticky top-0 z-50 bg-[#07080b]/85 backdrop-blur-xl border-b border-white/5">
         <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
           <button 
             onClick={() => handleNavigation('/')}
@@ -278,6 +410,53 @@ export default function BlogPage() {
             <span className="text-[10px] font-black uppercase tracking-widest text-[#FFE24C] bg-white/5 border border-white/10 px-3 py-1 rounded-full">
               Official Platform Hub
             </span>
+          </div>
+        </div>
+
+        {/* Live Asset Pricing Ticker Ribbon */}
+        <div className="bg-black/40 border-t border-white/5 py-2.5 overflow-x-auto whitespace-nowrap scrollbar-none">
+          <div className="max-w-7xl mx-auto px-6 flex items-center gap-8 justify-between text-[11px] font-mono">
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="text-gray-500 font-bold uppercase">BTC/USDT</span>
+              <span className={`font-black ${simDirection === 'up' ? 'text-green-400 animate-pulse' : 'text-red-400 animate-pulse'} transition-all duration-300`}>
+                ${tickerPrices.BTC.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+            <div className="w-1.5 h-1.5 rounded-full bg-white/10 shrink-0" />
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="text-gray-500 font-bold uppercase">ETH/USDT</span>
+              <span className="font-black text-green-400">
+                ${tickerPrices.ETH.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+            <div className="w-1.5 h-1.5 rounded-full bg-white/10 shrink-0" />
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="text-gray-500 font-bold uppercase">EUR/USD</span>
+              <span className="font-black text-red-400">
+                {tickerPrices.EURUSD.toFixed(4)}
+              </span>
+            </div>
+            <div className="w-1.5 h-1.5 rounded-full bg-white/10 shrink-0" />
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="text-gray-500 font-bold uppercase">GBP/USD</span>
+              <span className="font-black text-green-400">
+                {tickerPrices.GBPUSD.toFixed(4)}
+              </span>
+            </div>
+            <div className="w-1.5 h-1.5 rounded-full bg-white/10 shrink-0" />
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="text-gray-500 font-bold uppercase">GOLD/USD</span>
+              <span className="font-black text-green-400">
+                ${tickerPrices.GOLD.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+            <div className="w-1.5 h-1.5 rounded-full bg-white/10 shrink-0" />
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="text-gray-500 font-bold uppercase">TSLA/USD</span>
+              <span className="font-black text-green-400">
+                ${tickerPrices.TSLA.toFixed(2)}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -356,6 +535,352 @@ export default function BlogPage() {
           <div className="text-center border-l border-white/5 p-4">
             <p className="text-3xl sm:text-4xl font-black tracking-tight">24/7</p>
             <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mt-1">Support & Cashier Processing</p>
+          </div>
+        </div>
+      </section>
+
+      {/* Real-time Interactive Experience Suite */}
+      <section className="py-20 px-6 max-w-7xl mx-auto border-b border-white/5" id="interactive-suite">
+        <div className="text-center mb-16">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-yellow-500/10 text-[#FFE24C] text-[10px] font-black uppercase tracking-widest mb-4">
+            <Activity size={12} className="text-[#FFE24C]" />
+            <span>Interactive Platform Demonstration Room</span>
+          </div>
+          <h2 className="text-3xl sm:text-5xl font-black uppercase tracking-tight">
+            Test Your Trading <span className="text-[#FFE24C]">Instincts</span>
+          </h2>
+          <p className="text-gray-400 max-w-xl mx-auto text-xs sm:text-sm mt-3">
+            Interact with our simulated high-frequency options contract simulator or compute your optimized payout yields based on planned deposit sizes.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          {/* Simulator Card - Col Span 7 */}
+          <div className="lg:col-span-7 bg-[#0b0c10] border border-white/5 rounded-3xl p-6 relative overflow-hidden shadow-2xl">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-[#FFE24C]/5 rounded-full blur-3xl pointer-events-none" />
+            
+            <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-6">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-xl bg-yellow-500/10 text-[#FFE24C] flex items-center justify-center font-bold text-sm">
+                  ₿
+                </div>
+                <div>
+                  <h3 className="text-sm font-black uppercase tracking-wider text-white">BTC/USDT Option</h3>
+                  <p className="text-[10px] text-gray-500 font-mono">Simulated 1s Tick Feed</p>
+                </div>
+              </div>
+              
+              <div className="text-right">
+                <div className={`text-lg sm:text-2xl font-mono font-black ${simDirection === 'up' ? 'text-green-400' : 'text-red-400'} transition-all`}>
+                  ${simPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                </div>
+                <div className="text-[9px] font-black uppercase tracking-widest text-[#FFE24C] bg-yellow-500/10 px-2.5 py-0.5 rounded-full mt-0.5 inline-block">
+                  Payout: 95% Yield
+                </div>
+              </div>
+            </div>
+
+            {/* Simulated Live Sparkline Chart */}
+            <div className="h-44 bg-black/40 border border-white/5 rounded-2xl relative overflow-hidden flex items-end p-2 mb-6">
+              <svg className="w-full h-full text-blue-500/20" viewBox="0 0 100 100" preserveAspectRatio="none">
+                {/* Horizontal reference lines */}
+                <line x1="0" y1="25" x2="100" y2="25" stroke="rgba(255,255,255,0.03)" strokeWidth="0.5" strokeDasharray="3" />
+                <line x1="0" y1="50" x2="100" y2="50" stroke="rgba(255,255,255,0.03)" strokeWidth="0.5" strokeDasharray="3" />
+                <line x1="0" y1="75" x2="100" y2="75" stroke="rgba(255,255,255,0.03)" strokeWidth="0.5" strokeDasharray="3" />
+                
+                {/* Sparkline path */}
+                <polyline
+                  fill="none"
+                  stroke={simDirection === 'up' ? '#4ade80' : '#f87171'}
+                  strokeWidth="1.5"
+                  points={(() => {
+                    const minVal = Math.min(...simHistory);
+                    const maxVal = Math.max(...simHistory);
+                    const range = maxVal - minVal || 1;
+                    return simHistory.map((val, i) => {
+                      const x = (i / (simHistory.length - 1)) * 100;
+                      const y = 90 - ((val - minVal) / range) * 80;
+                      return `${x},${y}`;
+                    }).join(' ');
+                  })()}
+                  className="transition-all duration-300"
+                />
+              </svg>
+
+              {/* Strike Price horizontal indicator */}
+              {simStrikePrice !== null && (
+                <div 
+                  className="absolute left-0 right-0 border-t border-dashed border-[#FFE24C]/60 flex items-center justify-end pr-3"
+                  style={{
+                    bottom: `${(() => {
+                      const minVal = Math.min(...simHistory);
+                      const maxVal = Math.max(...simHistory);
+                      const range = maxVal - minVal || 1;
+                      return Math.min(Math.max(((simStrikePrice - minVal) / range) * 80 + 10, 5), 95);
+                    })()}%`
+                  }}
+                >
+                  <span className="bg-[#07080b]/90 border border-[#FFE24C]/30 text-[#FFE24C] text-[8px] font-mono px-1.5 py-0.5 rounded -mt-2">
+                    STRIKE: ${simStrikePrice.toFixed(2)}
+                  </span>
+                </div>
+              )}
+
+              {/* Real-time floating tick dot */}
+              <div 
+                className={`absolute w-2.5 h-2.5 rounded-full ring-4 ${simDirection === 'up' ? 'bg-green-400 ring-green-400/20 animate-pulse' : 'bg-red-400 ring-red-400/20 animate-pulse'} right-2`}
+                style={{
+                  bottom: `${(() => {
+                    const minVal = Math.min(...simHistory);
+                    const maxVal = Math.max(...simHistory);
+                    const range = maxVal - minVal || 1;
+                    return Math.min(Math.max(((simPrice - minVal) / range) * 80 + 10, 5), 95);
+                  })()}%`
+                }}
+              />
+            </div>
+
+            {/* Trade Active Overlays or Action Terminals */}
+            {simIsActive ? (
+              <div className="bg-black/60 backdrop-blur-sm rounded-2xl p-6 text-center border border-yellow-500/10 space-y-4">
+                <div className="flex items-center justify-center gap-4">
+                  <div className="text-left">
+                    <p className="text-[10px] text-gray-500 font-black uppercase tracking-wider">Active Contract</p>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`text-[10px] font-black px-2 py-0.5 rounded ${simTradeType === 'HIGH' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                        {simTradeType}
+                      </span>
+                      <span className="text-xs font-black font-mono">${simStrikePrice?.toFixed(2)}</span>
+                    </div>
+                  </div>
+                  <div className="w-12 h-12 rounded-full border-2 border-dashed border-[#FFE24C]/40 flex items-center justify-center font-mono font-black text-[#FFE24C] text-sm animate-pulse">
+                    {simCountdown}s
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] text-gray-500 font-black uppercase tracking-wider">Current Market</p>
+                    <p className={`text-xs font-black font-mono ${simPrice >= (simStrikePrice || 0) ? 'text-green-400' : 'text-red-400'}`}>
+                      ${simPrice.toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+                
+                <p className="text-xs text-gray-300 font-semibold">
+                  {simTradeType === 'HIGH' 
+                    ? simPrice > (simStrikePrice || 0) 
+                      ? '📈 Prediction state is IN-THE-MONEY (Winning)' 
+                      : '📉 Prediction state is OUT-OF-THE-MONEY (Losing)'
+                    : simPrice < (simStrikePrice || 0)
+                      ? '📈 Prediction state is IN-THE-MONEY (Winning)'
+                      : '📉 Prediction state is OUT-OF-THE-MONEY (Losing)'
+                  }
+                </p>
+              </div>
+            ) : simResult ? (
+              <div className={`rounded-2xl p-6 text-center border relative overflow-hidden ${
+                simResult === 'WIN' 
+                  ? 'bg-green-500/10 border-green-500/20' 
+                  : 'bg-red-500/10 border-red-500/20'
+              }`}>
+                {simResult === 'WIN' && (
+                  <div className="absolute inset-0 bg-gradient-to-t from-green-500/5 to-transparent pointer-events-none" />
+                )}
+                <h4 className={`text-lg sm:text-xl font-black uppercase tracking-wider ${simResult === 'WIN' ? 'text-green-400' : 'text-red-400'}`}>
+                  {simResult === 'WIN' ? '🏆 Prediction Correct!' : '❌ Contract Out-of-the-Money'}
+                </h4>
+                <p className="text-xs text-gray-300 mt-2 max-w-md mx-auto leading-relaxed">
+                  {simResult === 'WIN' 
+                    ? `Excellent timing! Your simulated trade of $${simAmount} returned $${(simAmount * 1.95).toFixed(2)} (+$${(simAmount * 0.95).toFixed(2)} pure profit in ${simTime} seconds).`
+                    : `The asset finished opposite of your prediction. Master the charts using Bivaax's free $10,000 reloadable Demo terminal to hone your timing!`
+                  }
+                </p>
+                <div className="mt-5 flex gap-3 justify-center">
+                  <button
+                    onClick={handleResetSimTrade}
+                    className="px-5 py-2.5 bg-white/5 hover:bg-white/10 text-white font-black uppercase text-[10px] tracking-widest rounded-xl transition-all"
+                  >
+                    Reset & Practice Again
+                  </button>
+                  <button
+                    onClick={() => handleNavigation('/register')}
+                    className={`px-5 py-2.5 font-black uppercase text-[10px] tracking-widest rounded-xl transition-all ${
+                      simResult === 'WIN' ? 'bg-green-500 text-black hover:bg-green-400' : 'bg-[#FFE24C] text-black hover:bg-[#e6cb44]'
+                    }`}
+                  >
+                    Open $10K Demo Account
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {/* Expiration and investment amount selects */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-2">Investment Size</label>
+                    <div className="grid grid-cols-3 gap-1">
+                      {[50, 100, 250].map(amt => (
+                        <button
+                          key={amt}
+                          onClick={() => setSimAmount(amt)}
+                          className={`py-2 text-[11px] font-bold rounded-lg border transition-all ${
+                            simAmount === amt 
+                              ? 'bg-[#FFE24C] text-black border-[#FFE24C]' 
+                              : 'bg-white/5 text-gray-300 border-white/5 hover:bg-white/10'
+                          }`}
+                        >
+                          ${amt}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-gray-500 tracking-wider mb-2">Contract Duration</label>
+                    <div className="grid grid-cols-3 gap-1">
+                      {[5, 10, 15].map(time => (
+                        <button
+                          key={time}
+                          onClick={() => setSimTime(time)}
+                          className={`py-2 text-[11px] font-bold rounded-lg border transition-all ${
+                            simTime === time 
+                              ? 'bg-[#FFE24C] text-black border-[#FFE24C]' 
+                              : 'bg-white/5 text-gray-300 border-white/5 hover:bg-white/10'
+                          }`}
+                        >
+                          {time}s
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Call & Put trigger buttons */}
+                <div className="grid grid-cols-2 gap-4 pt-2">
+                  <button
+                    onClick={() => handlePlaceSimTrade('HIGH')}
+                    className="py-4 bg-green-500 hover:bg-green-400 active:scale-[0.98] text-black font-black uppercase tracking-widest text-xs rounded-2xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-green-500/10"
+                  >
+                    <TrendingUp size={16} />
+                    <span>Predict HIGH</span>
+                  </button>
+                  <button
+                    onClick={() => handlePlaceSimTrade('LOW')}
+                    className="py-4 bg-red-500 hover:bg-red-400 active:scale-[0.98] text-white font-black uppercase tracking-widest text-xs rounded-2xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-red-500/10"
+                  >
+                    <TrendingUp size={16} className="rotate-180" />
+                    <span>Predict LOW</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Calculator Card - Col Span 5 */}
+          <div className="lg:col-span-5 bg-[#0b0c10] border border-white/5 rounded-3xl p-6 relative overflow-hidden shadow-2xl flex flex-col justify-between h-full min-h-[440px]">
+            <div className="space-y-6">
+              <div className="border-b border-white/5 pb-4">
+                <h3 className="text-sm font-black uppercase tracking-wider text-white">VIP Loyalty Calculator</h3>
+                <p className="text-[10px] text-gray-500 mt-1">See how your deposit size unlocks enhanced payout ratios.</p>
+              </div>
+
+              {/* Deposit Slider */}
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs font-bold">
+                  <span className="text-gray-400">Estimated Initial Deposit:</span>
+                  <span className="text-[#FFE24C] font-mono">${calcDeposit.toLocaleString()}</span>
+                </div>
+                <input 
+                  type="range" 
+                  min="50" 
+                  max="5000" 
+                  step="50"
+                  value={calcDeposit} 
+                  onChange={(e) => setCalcDeposit(Number(e.target.value))}
+                  className="w-full accent-[#FFE24C] bg-white/10 h-1.5 rounded-full appearance-none cursor-pointer"
+                />
+                <div className="flex justify-between text-[9px] text-gray-500 font-bold uppercase tracking-wider">
+                  <span>Starter ($50)</span>
+                  <span>Gold ($500)</span>
+                  <span>VIP ($2,500+)</span>
+                </div>
+              </div>
+
+              {/* Trade Size Slider */}
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs font-bold">
+                  <span className="text-gray-400">Example Contract Size:</span>
+                  <span className="text-white font-mono">${calcTradeAmount.toLocaleString()}</span>
+                </div>
+                <input 
+                  type="range" 
+                  min="10" 
+                  max="1000" 
+                  step="10"
+                  value={calcTradeAmount} 
+                  onChange={(e) => setCalcTradeAmount(Number(e.target.value))}
+                  className="w-full accent-white bg-white/10 h-1.5 rounded-full appearance-none cursor-pointer"
+                />
+              </div>
+
+              {/* Calculated Tier Display */}
+              {(() => {
+                const tier = getVIPTierDetails(calcDeposit);
+                const potentialProfit = (calcTradeAmount * tier.payout) / 100;
+                
+                // Progress to next tier
+                let nextTierName = "";
+                let amountToNext = 0;
+                if (calcDeposit < 100) { nextTierName = "Pro"; amountToNext = 100 - calcDeposit; }
+                else if (calcDeposit < 250) { nextTierName = "Silver"; amountToNext = 250 - calcDeposit; }
+                else if (calcDeposit < 500) { nextTierName = "Gold"; amountToNext = 500 - calcDeposit; }
+                else if (calcDeposit < 1000) { nextTierName = "Platinum"; amountToNext = 1000 - calcDeposit; }
+                else if (calcDeposit < 2500) { nextTierName = "VIP"; amountToNext = 2500 - calcDeposit; }
+
+                return (
+                  <div className="space-y-4 pt-2">
+                    <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-4 space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">Unlocked Status:</span>
+                        <span className="text-xs font-black uppercase tracking-widest px-3 py-1 bg-[#FFE24C]/10 text-[#FFE24C] border border-[#FFE24C]/20 rounded-full">
+                          {tier.name} TIER
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center border-t border-white/5 pt-2 text-xs">
+                        <span className="text-gray-400">Contract Yield:</span>
+                        <span className="font-mono font-black text-green-400">{tier.payout}% Payout</span>
+                      </div>
+                      <div className="flex justify-between items-center border-t border-white/5 pt-2 text-xs">
+                        <span className="text-gray-400">Potential Return:</span>
+                        <span className="font-mono font-black text-white">
+                          ${(calcTradeAmount + potentialProfit).toFixed(2)} (${potentialProfit.toFixed(2)} Profit)
+                        </span>
+                      </div>
+                    </div>
+
+                    {amountToNext > 0 && (
+                      <p className="text-[10px] text-gray-500 font-medium italic text-center">
+                        💡 Deposit another <strong className="text-white">${amountToNext}</strong> to unlock the <strong className="text-[#FFE24C]">{nextTierName}</strong> tier for higher payout rates!
+                      </p>
+                    )}
+
+                    <div className="pt-2">
+                      <h4 className="text-[10px] font-black uppercase tracking-wider text-gray-500 mb-1">VIP Status Reward:</h4>
+                      <p className="text-[12px] text-gray-300 leading-relaxed font-semibold">
+                        ★ {tier.perk}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className="pt-6 border-t border-white/5">
+              <button
+                onClick={() => handleNavigation('/register')}
+                className="w-full py-4 bg-[#FFE24C] hover:bg-[#e6cb44] text-black font-black uppercase tracking-widest text-[11px] rounded-2xl hover:scale-105 active:scale-95 transition-all text-center"
+              >
+                Claim Deposit Bonus (VIP Activated)
+              </button>
+            </div>
           </div>
         </div>
       </section>
@@ -966,6 +1491,72 @@ export default function BlogPage() {
             ))}
           </div>
         )}
+      </section>
+
+      {/* Platform Announcements & VIP Newsletter Subscription */}
+      <section className="py-16 px-6 max-w-5xl mx-auto">
+        <div className="bg-[#0b0c10] border border-white/5 rounded-[32px] p-8 sm:p-12 relative overflow-hidden text-center shadow-2xl">
+          <div className="absolute top-0 left-0 w-64 h-64 bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute bottom-0 right-0 w-64 h-64 bg-[#FFE24C]/5 rounded-full blur-3xl pointer-events-none" />
+          
+          <div className="max-w-xl mx-auto space-y-4 relative z-10">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 text-blue-400 text-[10px] font-black uppercase tracking-widest">
+              <Mail size={12} />
+              <span>Bivaax Intelligence Dispatch</span>
+            </div>
+            
+            <h3 className="text-2xl sm:text-3xl font-black uppercase tracking-tight text-white">
+              Stay Ahead of the <span className="text-[#FFE24C]">Markets</span>
+            </h3>
+            
+            <p className="text-gray-400 text-xs sm:text-sm leading-relaxed">
+              Subscribe to the official administration newsletter to receive instant feature spotlights, VIP discount codes, deposit match promo events, and premium market analysis direct to your inbox.
+            </p>
+
+            {subSubmitted ? (
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="bg-green-500/10 border border-green-500/20 rounded-2xl p-6 text-center space-y-2 mt-6"
+              >
+                <div className="w-10 h-10 rounded-full bg-green-500/20 text-green-400 flex items-center justify-center mx-auto">
+                  <Check size={20} />
+                </div>
+                <h4 className="text-sm font-black uppercase text-green-400">Subscription Confirmed!</h4>
+                <p className="text-[11px] text-gray-300">You have successfully joined the Bivaax premium newsletter. Welcome to the elite tier.</p>
+              </motion.div>
+            ) : (
+              <form onSubmit={handleSubscribe} className="flex flex-col sm:flex-row gap-3 pt-4">
+                <input 
+                  type="email" 
+                  required
+                  placeholder="Enter your email address"
+                  value={subEmail}
+                  onChange={(e) => setSubEmail(e.target.value)}
+                  className="flex-1 bg-black/40 border border-white/10 rounded-2xl px-5 py-4 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#FFE24C] transition-colors"
+                />
+                <button
+                  type="submit"
+                  disabled={subLoading}
+                  className="px-8 py-4 bg-[#FFE24C] hover:bg-[#e6cb44] disabled:bg-gray-700 text-black font-black uppercase tracking-widest text-[11px] rounded-2xl transition-all shadow-lg flex items-center justify-center gap-2 shrink-0"
+                >
+                  {subLoading ? (
+                    <RefreshCw size={14} className="animate-spin" />
+                  ) : (
+                    <>
+                      <span>Subscribe</span>
+                      <ArrowRight size={14} />
+                    </>
+                  )}
+                </button>
+              </form>
+            )}
+            
+            <p className="text-[10px] text-gray-500 font-medium">
+              We respect your privacy. No spam. Unsubscribe at any time.
+            </p>
+          </div>
+        </div>
       </section>
 
       {/* Regulatory Compliance & AML Policies Banner */}
