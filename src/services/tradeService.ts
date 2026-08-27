@@ -274,7 +274,7 @@ export async function settleTrade(tradeId: number | string, currentMarketPrice?:
 
       if (isWin) {
         newStatus = 'won';
-        const payoutPercent = m ? (m.payout || 82) : 80;
+        const payoutPercent = parseFloat(trade.payout || trade.payout_rate || (m ? m.payout : 80) || 80);
         const profit = tradeAmount.times(payoutPercent).div(100);
         payoutAmount = tradeAmount.plus(profit);
       } else if (isDraw) {
@@ -485,7 +485,8 @@ export async function settleTrade(tradeId: number | string, currentMarketPrice?:
         entryPrice: parseFloat(trade.entry_price),
         createdAt: trade.created_at,
         settledAt: Math.floor(Date.now() / 1000),
-        payoutRate: m ? (m.payout || 82) : 80
+        payoutRate: parseFloat(trade.payout || trade.payout_rate || (m ? m.payout : 80) || 80),
+        payout: parseFloat(trade.payout || trade.payout_rate || (m ? m.payout : 80) || 80)
       };
     });
 

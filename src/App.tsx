@@ -910,8 +910,8 @@ export default function App() {
               <Route path="/promotions" element={<RequireAuth user={user} loading={loading}>{<TradeTerminal />}</RequireAuth>} />
               <Route path="/calendar" element={<RequireAuth user={user} loading={loading}>{<TradeTerminal />}</RequireAuth>} />
 
-              <Route path="/tournaments" element={<RequireAuth user={user} loading={loading}>{<Tournaments />}</RequireAuth>} />
-              <Route path="/tournaments/:id" element={<RequireAuth user={user} loading={loading}>{<TournamentDetails />}</RequireAuth>} />
+              <Route path="/tournaments" element={<RequireAuth user={user} loading={loading}>{<TradeTerminal />}</RequireAuth>} />
+              <Route path="/tournaments/:id" element={<RequireAuth user={user} loading={loading}>{<TradeTerminal />}</RequireAuth>} />
               <Route path="/education" element={<RequireAuth user={user} loading={loading}>{<TradeTerminal />}</RequireAuth>} />
               <Route path="/statuses" element={<RequireAuth user={user} loading={loading}>{<TradeTerminal />}</RequireAuth>} />
               <Route path="/help-center" element={<RequireAuth user={user} loading={loading}><ClientSupportCenter /></RequireAuth>} />

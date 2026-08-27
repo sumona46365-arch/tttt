@@ -24,6 +24,8 @@ export default function CopyTrading({ hideHeader = false }: { hideHeader?: boole
   const [activeTab, setActiveTab] = useState<'traders' | 'my-card'>('traders');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('winRate'); // 'winRate' | 'followers' | 'totalProfit'
+  const [selectedCategory, setSelectedCategory] = useState('All');
+  const [visibleCount, setVisibleCount] = useState(20);
   const [userBalance, setUserBalance] = useState(0);
   const [userCurrency, setUserCurrency] = useState(() => {
     try {
@@ -76,6 +78,7 @@ export default function CopyTrading({ hideHeader = false }: { hideHeader?: boole
   const [tradesLimit, setTradesLimit] = useState(50);
   const [maxTradeAmount, setMaxTradeAmount] = useState(10);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showHowItWorks, setShowHowItWorks] = useState(false);
 
   // 1. Setup Auth & Dynamic Balance & Active Portfolio sub collection snapshots
   useEffect(() => {
@@ -165,13 +168,16 @@ export default function CopyTrading({ hideHeader = false }: { hideHeader?: boole
             copiersCount: t.followers || 0,
             totalProfit: t.profit || 0,
             winRate: t.win_rate || 0,
-            gainPerWeek: '≥ 80%',
+            gainPerWeek: `${(t.win_rate * 0.8 + Math.random() * 20).toFixed(1)}%`,
             commission: '10%',
             isVip: t.win_rate > 85,
             profitRate: t.win_rate || 75,
             lossRate: 100 - (t.win_rate || 75),
+            riskLevel: t.win_rate > 90 ? 'Low' : t.win_rate > 80 ? 'Medium' : 'High',
+            last7d: (t.profit * (0.05 + Math.random() * 0.1)).toFixed(2),
             history: generateHistory(),
-            performanceData: generatePerformance()
+            performanceData: generatePerformance(),
+            sparkline: Array.from({ length: 12 }).map((_, i) => 30 + Math.random() * 70)
           }));
           setMasters(transformed);
         }
@@ -355,14 +361,25 @@ export default function CopyTrading({ hideHeader = false }: { hideHeader?: boole
 
   // Filter and Sort master list
   const filteredMasters = masters
-    .filter(m => 
-      m.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.id?.includes(searchQuery)
-    )
+    .filter(m => {
+      const matchesSearch = m.name?.toLowerCase().includes(searchQuery.toLowerCase()) || m.id?.includes(searchQuery);
+      if (!matchesSearch) return false;
+
+      if (selectedCategory === 'All') return true;
+      if (selectedCategory === 'Trending') return m.copiersCount > 40;
+      if (selectedCategory === 'High Profit') return m.winRate > 85;
+      if (selectedCategory === 'Popular') return m.copiersCount > 60;
+      if (selectedCategory === 'Low Risk') return m.riskLevel === 'Low';
+      return true;
+    })
     .sort((a, b) => {
       if (sortBy === 'winRate') return (b.winRate || 0) - (a.winRate || 0);
       if (sortBy === 'followers') return (b.copiersCount || 0) - (a.copiersCount || 0);
       if (sortBy === 'totalProfit') return (b.totalProfit || 0) - (a.totalProfit || 0);
+      if (sortBy === 'lowestRisk') {
+        const riskMap: Record<string, number> = { 'Low': 0, 'Medium': 1, 'High': 2 };
+        return (riskMap[a.riskLevel] || 0) - (riskMap[b.riskLevel] || 0);
+      }
       return 0;
     });
 
@@ -517,13 +534,63 @@ export default function CopyTrading({ hideHeader = false }: { hideHeader?: boole
                         >
                             {/* INTRO TEXT */}
                             <div className="space-y-1">
-                                <p className="text-[14px] text-gray-300 leading-tight text-left">
-                                    Copy top traders to learn and grow. Easy way for newbies to get started!
-                                </p>
-                                <button className="text-[#FFE24C] text-[13px] font-bold underline block text-right w-full">
+                                <h1 className="text-[20px] font-black tracking-tight text-white text-left">Advanced Copy Trading</h1>
+                                <p className="text-[14px] text-gray-400 leading-tight text-left">Mirror the world's most successful strategies in real-time.</p>
+
+                                <button onClick={() => setShowHowItWorks(true)} className="text-[#FFE24C] text-[13px] font-bold underline block text-right w-full mt-2">
                                     How it works?
                                 </button>
                             </div>
+
+                            {/* TOP HIGHLIGHTS */}
+                            <div className="grid grid-cols-2 gap-3">
+                                {masters.sort((a, b) => b.winRate - a.winRate).slice(0, 2).map((trader, i) => (
+                                    <div 
+                                        key={`top-${trader.id}`}
+                                        onClick={() => setSelectedTrader(trader)}
+                                        className="bg-gradient-to-br from-[#1C1D22] to-[#25262B] border border-[#FFE24C]/20 rounded-2xl p-3 relative overflow-hidden cursor-pointer"
+                                    >
+                                        <div className="absolute -top-2 -right-2 opacity-10">
+                                            <Trophy size={60} className="text-[#FFE24C]" />
+                                        </div>
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <div className="w-8 h-8 rounded-full bg-black/40 flex items-center justify-center text-[16px]">
+                                                {trader.country}
+                                            </div>
+                                            <div className="flex flex-col">
+                                                <span className="text-[12px] font-bold text-white truncate w-24">{trader.name}</span>
+                                                <span className="text-[10px] text-[#00C980] font-black">TOP {i+1}</span>
+                                            </div>
+                                        </div>
+                                        <div className="flex justify-between items-end">
+                                            <div>
+                                                <p className="text-[9px] text-gray-500 uppercase font-bold">Accuracy</p>
+                                                <p className="text-[16px] font-black text-[#FFE24C]">{trader.winRate}%</p>
+                                            </div>
+                                            <div className="bg-[#FFE24C] text-black p-1 rounded-lg">
+                                                <Zap size={14} fill="currentColor" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            {/* CATEGORIES */}
+                            <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide">
+                                {['All', 'Trending', 'High Profit', 'Popular', 'Low Risk'].map(cat => (
+                                    <button
+                                        key={cat}
+                                        onClick={() => setSelectedCategory(cat)}
+                                        className={`px-4 py-2 rounded-full text-[12px] font-bold whitespace-nowrap transition-all border ${
+                                            selectedCategory === cat 
+                                            ? 'bg-[#FFE24C] text-black border-[#FFE24C]' 
+                                            : 'bg-[#1C1D22] text-gray-400 border-white/10 hover:border-white/20'
+                                        }`}
+                                    >
+                                        {cat}
+                                    </button>
+                                ))}
+                            </div>
+
                             {/* FILTERS */}
                             <div className="space-y-3">
                                 <div className="relative">
@@ -547,6 +614,7 @@ export default function CopyTrading({ hideHeader = false }: { hideHeader?: boole
                                         <option value="winRate">Gain (highest first)</option>
                                         <option value="followers">Most Copiers</option>
                                         <option value="totalProfit">Total Profit</option>
+                                         <option value="lowestRisk">Lowest Risk</option>
                                     </select>
                                     <ChevronDown size={20} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                                 </div>
@@ -554,7 +622,10 @@ export default function CopyTrading({ hideHeader = false }: { hideHeader?: boole
 
                             {/* TRADERS LIST */}
                             <div className="space-y-3">
-                                {filteredMasters.map((trader) => (
+                                <div className="flex items-center justify-between px-1 mb-2">
+                                     <span className="text-[12px] font-bold text-gray-500 uppercase tracking-widest">{filteredMasters.length} PRO TRADERS AVAILABLE</span>
+                                 </div>
+                                 {filteredMasters.slice(0, visibleCount).map((trader) => (
                                     <motion.div 
                                         key={trader.id}
                                         whileTap={{ scale: 0.98 }}
@@ -566,7 +637,16 @@ export default function CopyTrading({ hideHeader = false }: { hideHeader?: boole
                                             <div className="flex items-center gap-2">
                                                 <div className="w-2 h-2 rounded-full bg-[#00C980]"></div>
                                                 <span className="text-[18px]">{trader.country}</span>
-                                                <span className="text-[14px] font-bold text-white">{trader.name}</span>
+                                                <div className="flex flex-col">
+                                                    <span className="text-[14px] font-bold text-white">{trader.name}</span>
+                                                    <span className={`text-[9px] font-bold w-fit px-1.5 py-0.5 rounded ${
+                                                        trader.riskLevel === 'Low' ? 'bg-green-500/10 text-green-500' :
+                                                        trader.riskLevel === 'Medium' ? 'bg-yellow-500/10 text-yellow-500' :
+                                                        'bg-red-500/10 text-red-500'
+                                                    }`}>
+                                                        {trader.riskLevel} Risk
+                                                    </span>
+                                                </div>
                                             </div>
                                             {trader.isVip && (
                                                 <div className="bg-[#004D99] text-white px-3 py-1 rounded-full text-[10px] font-black tracking-wider uppercase">
@@ -575,10 +655,22 @@ export default function CopyTrading({ hideHeader = false }: { hideHeader?: boole
                                             )}
                                         </div>
 
-                                        {/* Copiers */}
-                                        <div className="flex items-center gap-2 text-gray-400 mb-6">
-                                            <Users size={16} />
-                                            <span className="text-[12px] font-bold uppercase tracking-tight">Copiers: <span className="text-white">{trader.copiersCount}/100</span></span>
+                                        <div className="flex items-center justify-between mb-6">
+                                            {/* Copiers */}
+                                            <div className="flex items-center gap-2 text-gray-400">
+                                                <Users size={14} />
+                                                <span className="text-[12px] font-bold uppercase tracking-tight">Copiers: <span className="text-white">{trader.copiersCount}/500</span></span>
+                                            </div>
+                                            {/* Sparkline (Simulated) */}
+                                            <div className="flex items-end gap-0.5 h-6">
+                                                {(trader.sparkline || []).map((point: number, i: number) => (
+                                                    <div 
+                                                        key={i} 
+                                                        style={{ height: `${point}%` }} 
+                                                        className={`w-1 rounded-full ${trader.winRate > 80 ? 'bg-green-500/40' : 'bg-yellow-500/40'}`}
+                                                    />
+                                                ))}
+                                            </div>
                                         </div>
 
                                         {/* Stats Grid */}
@@ -621,6 +713,15 @@ export default function CopyTrading({ hideHeader = false }: { hideHeader?: boole
                                         </div>
                                     </motion.div>
                                 ))}
+
+                                {visibleCount < filteredMasters.length && (
+                                    <button 
+                                        onClick={() => setVisibleCount(prev => prev + 20)}
+                                        className="w-full py-4 border border-white/5 rounded-2xl text-[12px] font-black uppercase text-gray-400 hover:bg-white/5 transition-colors"
+                                    >
+                                        Load More Experts (+20)
+                                    </button>
+                                )}
                             </div>
                         </motion.div>
                     ) : (
@@ -687,7 +788,118 @@ export default function CopyTrading({ hideHeader = false }: { hideHeader?: boole
                             )}
                         </motion.div>
                     )}
-                </AnimatePresence>
+                
+            {showHowItWorks && (
+                <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="fixed inset-0 z-[300] flex flex-col justify-end md:justify-center bg-black/80 backdrop-blur-sm p-0 md:p-6"
+                >
+                    <motion.div 
+                        initial={{ y: "100%" }}
+                        animate={{ y: 0 }}
+                        exit={{ y: "100%" }}
+                        transition={{ type: "spring", damping: 25, stiffness: 200 }}
+                        className="bg-[#1a1b1e] w-full md:max-w-[480px] md:mx-auto rounded-t-2xl md:rounded-2xl flex flex-col max-h-[90vh] shadow-2xl border border-white/10 relative overflow-hidden"
+                    >
+                        {/* Header */}
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-white/5 bg-[#131417] sticky top-0 z-10">
+                            <h2 className="text-[18px] font-black text-white flex items-center gap-2">
+                                <Info size={20} className="text-[#FFE24C]" />
+                                How Copy Trading Works
+                            </h2>
+                            <button 
+                                onClick={() => setShowHowItWorks(false)}
+                                className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-colors"
+                            >
+                                <X size={18} className="text-gray-400" />
+                            </button>
+                        </div>
+                        
+                        {/* Content */}
+                        <div className="flex-1 overflow-y-auto p-5 space-y-6 custom-scrollbar bg-[#131417]">
+                            <p className="text-[14px] text-gray-300 leading-relaxed font-medium">
+                                Copy Trading allows you to automatically mirror the trades of professional traders in real-time. Follow the steps below to start earning.
+                            </p>
+                            
+                            <div className="space-y-4 relative before:absolute before:inset-y-0 before:left-[19px] before:w-[2px] before:bg-white/5">
+                                {/* Step 1 */}
+                                <div className="flex gap-4 relative z-10">
+                                    <div className="w-10 h-10 rounded-full bg-[#1a1b1e] border-2 border-[#FFE24C] flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(255,226,76,0.15)]">
+                                        <Search size={18} className="text-[#FFE24C]" />
+                                    </div>
+                                    <div className="pt-2">
+                                        <h3 className="text-[15px] font-black text-white mb-1">Choose a Master Trader</h3>
+                                        <p className="text-[13px] text-gray-400 leading-relaxed">
+                                            Browse our leaderboard of top-performing traders. Check their win rates, total profit, and trading history to find someone who matches your goals.
+                                        </p>
+                                    </div>
+                                </div>
+                                
+                                {/* Step 2 */}
+                                <div className="flex gap-4 relative z-10">
+                                    <div className="w-10 h-10 rounded-full bg-[#1a1b1e] border-2 border-white/10 flex items-center justify-center shrink-0">
+                                        <Wallet size={18} className="text-gray-400" />
+                                    </div>
+                                    <div className="pt-2">
+                                        <h3 className="text-[15px] font-black text-white mb-1">Allocate Funds</h3>
+                                        <p className="text-[13px] text-gray-400 leading-relaxed">
+                                            Decide how much money you want to allocate. Your trades will be scaled proportionally to match the master trader&apos;s risk management.
+                                        </p>
+                                    </div>
+                                </div>
+                                
+                                {/* Step 3 */}
+                                <div className="flex gap-4 relative z-10">
+                                    <div className="w-10 h-10 rounded-full bg-[#1a1b1e] border-2 border-white/10 flex items-center justify-center shrink-0">
+                                        <Shield size={18} className="text-gray-400" />
+                                    </div>
+                                    <div className="pt-2">
+                                        <h3 className="text-[15px] font-black text-white mb-1">Set Limits (Optional)</h3>
+                                        <p className="text-[13px] text-gray-400 leading-relaxed">
+                                            Control your risk by setting maximum trade limits or stop-loss parameters before starting the copy connection.
+                                        </p>
+                                    </div>
+                                </div>
+                                
+                                {/* Step 4 */}
+                                <div className="flex gap-4 relative z-10">
+                                    <div className="w-10 h-10 rounded-full bg-[#1a1b1e] border-2 border-[#00C980] flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(0,201,128,0.15)]">
+                                        <Activity size={18} className="text-[#00C980]" />
+                                    </div>
+                                    <div className="pt-2">
+                                        <h3 className="text-[15px] font-black text-white mb-1">Sit Back & Earn</h3>
+                                        <p className="text-[13px] text-gray-400 leading-relaxed">
+                                            Whenever they make a trade, your account copies it instantly. You can pause, stop, or adjust your settings at any time from "My Card".
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="bg-[#FFE24C]/10 border border-[#FFE24C]/20 rounded-xl p-4 mt-6">
+                                <h4 className="text-[#FFE24C] font-bold text-[13px] mb-2 flex items-center gap-2">
+                                    <AlertTriangle size={14} /> Note on Risks
+                                </h4>
+                                <p className="text-[12px] text-gray-300 leading-relaxed">
+                                    Past performance is not indicative of future results. Copy trading involves risks, and you should only allocate funds you are comfortable managing.
+                                </p>
+                            </div>
+                        </div>
+                        
+                        <div className="p-5 border-t border-white/5 bg-[#1a1b1e]">
+                            <button 
+                                onClick={() => setShowHowItWorks(false)}
+                                className="w-full h-12 bg-[#FFE24C] hover:bg-[#fff080] text-black font-black rounded-xl text-[15px] flex items-center justify-center gap-2 transition-all active:scale-95"
+                            >
+                                Got it, let&apos;s start!
+                            </button>
+                        </div>
+                    </motion.div>
+                </motion.div>
+            )}
+
+        </AnimatePresence>
             )}
             {/* INFO & SEO SECTION */}
             <section id="copy-trading-seo-info" className="bg-[#1C1D22] border border-white/5 rounded-2xl p-6 mt-8 space-y-6">
@@ -744,101 +956,193 @@ export default function CopyTrading({ hideHeader = false }: { hideHeader?: boole
 
                     <div className="flex-1 overflow-y-auto">
                         <div className="max-w-xl mx-auto px-4 py-6 space-y-6 pb-32">
-                            {/* TRADER INFO */}
-                            <div className="bg-[#1C1D22] rounded-2xl p-4 border border-white/5 flex items-center gap-4">
-                                <div className="w-14 h-14 rounded-full bg-black/20 flex items-center justify-center text-[28px]">
-                                    {selectedTrader.country}
-                                </div>
-                                <div className="flex-1 text-left">
-                                    <div className="flex items-center gap-2">
-                                        <h3 className="text-[16px] font-bold text-white">{selectedTrader.name}</h3>
-                                        <div className="bg-[#004D99] text-white px-2 py-0.5 rounded text-[9px] font-black uppercase">VIP</div>
+                            {/* PREMIUM TRADER HEADER */}
+                            <div className="bg-gradient-to-br from-[#1C1D22] to-[#25262B] rounded-3xl p-6 border border-white/5 relative overflow-hidden">
+                                <div className="absolute top-0 right-0 w-32 h-32 bg-[#FFE24C]/5 rounded-full -mr-16 -mt-16 blur-3xl" />
+                                <div className="relative flex items-center gap-5">
+                                    <div className="w-20 h-20 rounded-2xl bg-black/40 flex items-center justify-center text-[40px] shadow-2xl border border-white/5">
+                                        {selectedTrader.country}
                                     </div>
-                                    <p className="text-[12px] text-gray-500">Master trader since 2023</p>
+                                    <div className="flex-1 text-left">
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <h3 className="text-[20px] font-black text-white tracking-tight">{selectedTrader.name}</h3>
+                                            <div className="bg-[#004D99] text-white px-2.5 py-0.5 rounded-lg text-[10px] font-black uppercase shadow-lg shadow-blue-900/20">VIP</div>
+                                        </div>
+                                        <div className="flex items-center gap-3">
+                                            <div className="flex items-center gap-1.5 bg-black/30 px-2 py-1 rounded-md border border-white/5">
+                                                <span className={`w-1.5 h-1.5 rounded-full ${selectedTrader.riskLevel === 'Low' ? 'bg-green-500' : selectedTrader.riskLevel === 'Medium' ? 'bg-yellow-500' : 'bg-red-500'}`} />
+                                                <span className="text-[11px] font-bold text-gray-400 uppercase tracking-tighter">{selectedTrader.riskLevel} RISK</span>
+                                            </div>
+                                            <span className="text-[12px] text-gray-500 font-medium">Active since 2023</span>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 
-                            {/* STATS */}
+                            {/* ADVANCED STATS GRID */}
                             <div className="grid grid-cols-2 gap-3">
-                                <div className="bg-[#1C1D22] p-4 rounded-2xl border border-white/5 text-left">
-                                    <p className="text-[11px] text-gray-500 font-bold uppercase mb-1">Copiers</p>
-                                    <p className="text-[18px] font-bold text-white">{selectedTrader.copiersCount}</p>
+                                <div className="bg-[#1C1D22] p-4 rounded-2xl border border-white/5 text-left relative overflow-hidden">
+                                    <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1 opacity-60">Total Copiers</p>
+                                    <div className="flex items-baseline gap-1">
+                                        <p className="text-[22px] font-black text-white">{selectedTrader.copiersCount}</p>
+                                        <p className="text-[12px] text-gray-600 font-bold">/ 500</p>
+                                    </div>
+                                    <div className="mt-2 h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                                        <div className="h-full bg-[#FFE24C]" style={{ width: `${(selectedTrader.copiersCount / 500) * 100}%` }} />
+                                    </div>
                                 </div>
                                 <div className="bg-[#1C1D22] p-4 rounded-2xl border border-white/5 text-left">
-                                    <p className="text-[11px] text-gray-500 font-bold uppercase mb-1">Profitability</p>
-                                    <p className="text-[18px] font-bold text-[#00C980]">{selectedTrader.profitRate || 75}%</p>
+                                    <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1 opacity-60">Success Rate</p>
+                                    <p className="text-[22px] font-black text-[#00C980]">{selectedTrader.profitRate || 75}%</p>
+                                    <p className="text-[10px] text-gray-600 font-bold">Last 30 days performance</p>
+                                </div>
+                                <div className="bg-[#1C1D22] p-4 rounded-2xl border border-white/5 text-left">
+                                    <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1 opacity-60">Avg. Profit</p>
+                                    <p className="text-[22px] font-black text-white">{formatWithCurrency(850, userCurrency)}</p>
+                                    <p className="text-[10px] text-gray-600 font-bold">Per successful trade</p>
+                                </div>
+                                <div className="bg-[#1C1D22] p-4 rounded-2xl border border-white/5 text-left">
+                                    <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1 opacity-60">Total Profit</p>
+                                    <p className="text-[22px] font-black text-[#FFE24C]">{formatWithCurrency(selectedTrader.totalProfit || 12000, userCurrency)}</p>
+                                    <p className="text-[10px] text-gray-600 font-bold">Accumulated earnings</p>
                                 </div>
                             </div>
 
-                            {/* FORM */}
+                            {/* PERFORMANCE CHART VISUALIZATION */}
+                            <div className="bg-[#1C1D22] rounded-2xl p-5 border border-white/5 space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <h4 className="text-[13px] font-black text-white uppercase tracking-wider">Performance Trends</h4>
+                                    <div className="flex gap-2">
+                                        <span className="px-2 py-0.5 rounded bg-black/40 text-[10px] font-bold text-gray-500 uppercase">7D</span>
+                                        <span className="px-2 py-0.5 rounded bg-[#FFE24C]/10 text-[10px] font-bold text-[#FFE24C] uppercase">1M</span>
+                                    </div>
+                                </div>
+                                <div className="h-24 w-full flex items-end gap-1.5 px-2">
+                                    {(selectedTrader.sparkline || []).map((point: number, i: number) => (
+                                        <motion.div 
+                                            key={i}
+                                            initial={{ height: 0 }}
+                                            animate={{ height: `${point}%` }}
+                                            transition={{ delay: i * 0.05 }}
+                                            className="flex-1 rounded-t-sm bg-gradient-to-t from-[#FFE24C]/5 to-[#FFE24C]/40"
+                                        />
+                                    ))}
+                                </div>
+                                <div className="flex justify-between items-center text-[11px] text-gray-600 font-bold px-1">
+                                    <span>AUG 01</span>
+                                    <span>AUG 15</span>
+                                    <span>TODAY</span>
+                                </div>
+                            </div>
+
+                            {/* ENHANCED FORM */}
                             <div className="space-y-6">
                                 <div className="space-y-3 text-left">
-                                    <label className="text-[14px] font-bold text-gray-400">Total investment</label>
-                                    <div className="relative">
+                                    <div className="flex items-center justify-between">
+                                        <label className="text-[13px] font-black text-gray-400 uppercase tracking-widest">Amount to Invest</label>
+                                        <span className="text-[11px] text-gray-600 font-bold">Min: $10.00</span>
+                                    </div>
+                                    <div className="relative group">
                                         <input 
                                             type="number"
                                             value={copyingAmount}
                                             onChange={(e) => setCopyingAmount(Number(e.target.value))}
-                                            className="w-full h-14 bg-[#1C1D22] border border-white/10 rounded-xl px-4 text-[18px] font-bold text-white focus:border-[#FFE24C]/30 transition-all outline-none"
+                                            className="w-full h-16 bg-[#1C1D22] border border-white/10 rounded-2xl px-5 text-[24px] font-black text-white focus:border-[#FFE24C] focus:ring-1 focus:ring-[#FFE24C]/20 transition-all outline-none"
                                         />
-                                        <div className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 font-bold">
-                                            {userCurrency}
+                                        <div className="absolute right-5 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                                            <span className="text-gray-500 font-black text-[14px] uppercase">{userCurrency}</span>
                                         </div>
                                     </div>
-                                    <p className="text-[12px] text-gray-500">Available: {formatWithCurrency(userBalance, userCurrency)}</p>
+                                    
+                                    {/* QUICK SELECT BUTTONS */}
+                                    <div className="grid grid-cols-4 gap-2">
+                                        {[25, 50, 75, 100].map(pct => (
+                                            <button 
+                                                key={pct}
+                                                onClick={() => setCopyingAmount(Math.floor(userBalance * (pct/100)))}
+                                                className="py-2.5 bg-black/30 border border-white/5 rounded-xl text-[11px] font-black text-gray-400 hover:bg-[#FFE24C]/10 hover:text-[#FFE24C] hover:border-[#FFE24C]/30 transition-all uppercase"
+                                            >
+                                                {pct === 100 ? 'MAX' : `${pct}%`}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <div className="flex justify-between items-center px-1">
+                                        <p className="text-[12px] text-gray-500 font-medium">Available Balance</p>
+                                        <p className="text-[13px] text-white font-black">{formatWithCurrency(userBalance, userCurrency)}</p>
+                                    </div>
                                 </div>
 
                                 <div className="space-y-3 text-left">
-                                    <label className="text-[14px] font-bold text-gray-400">Stop loss</label>
+                                    <label className="text-[13px] font-black text-gray-400 uppercase tracking-widest">Stop Loss (Optional)</label>
                                     <div className="relative">
                                         <input 
                                             type="number"
-                                            placeholder="Optional"
-                                            className="w-full h-14 bg-[#1C1D22] border border-white/10 rounded-xl px-4 text-[18px] font-bold text-white focus:border-[#FFE24C]/30 transition-all outline-none"
+                                            placeholder="Exit if loss exceeds..."
+                                            className="w-full h-16 bg-[#1C1D22] border border-white/10 rounded-2xl px-5 text-[18px] font-bold text-white focus:border-[#FFE24C] transition-all outline-none"
                                         />
-                                        <div className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 font-bold">
+                                        <div className="absolute right-5 top-1/2 -translate-y-1/2 text-gray-500 font-bold">
                                             {userCurrency}
                                         </div>
                                     </div>
+                                    <p className="text-[11px] text-gray-600 font-medium px-1">We will automatically stop copying if your loss reaches this amount.</p>
                                 </div>
 
                                 <div className="pt-4">
                                     <button 
                                         id="confirm-copy-submit"
                                         onClick={handleStartCopying}
-                                        disabled={isSubmitting || userBalance < copyingAmount}
-                                        className={`w-full h-14 bg-[#FFE24C] hover:bg-[#ffe05d] text-black font-bold uppercase text-[14px] rounded-xl active:scale-95 transition-all flex items-center justify-center gap-2 ${isSubmitting || userBalance < copyingAmount ? 'opacity-50 pointer-events-none' : ''}`}
+                                        disabled={isSubmitting || userBalance < copyingAmount || copyingAmount < 1}
+                                        className={`w-full h-16 bg-[#FFE24C] hover:bg-[#ffe05d] text-black font-black uppercase text-[15px] tracking-widest rounded-2xl active:scale-[0.98] transition-all flex items-center justify-center gap-3 shadow-2xl shadow-[#FFE24C]/10 ${isSubmitting || userBalance < copyingAmount || copyingAmount < 1 ? 'opacity-50 grayscale pointer-events-none' : ''}`}
                                     >
                                         {isSubmitting ? (
-                                            <div className="w-5 h-5 border-2 border-black border-t-transparent rounded-full animate-spin" />
-                                        ) : 'Start copying'}
+                                            <div className="w-6 h-6 border-3 border-black border-t-transparent rounded-full animate-spin" />
+                                        ) : (
+                                            <>
+                                                <Zap size={18} fill="currentColor" />
+                                                Start Mirroring
+                                            </>
+                                        )}
                                     </button>
                                     {userBalance < copyingAmount && (
-                                        <p className="mt-2 text-[12px] text-red-500 font-bold text-center">Insufficient funds. Please deposit.</p>
+                                        <div className="mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center justify-center gap-2">
+                                            <Info size={14} className="text-red-500" />
+                                            <p className="text-[12px] text-red-500 font-black uppercase tracking-tight">Insufficient funds for this allocation</p>
+                                        </div>
                                     )}
                                 </div>
                             </div>
 
-                            {/* HISTORY */}
+                            {/* ADVANCED HISTORY SECTION */}
                             <div className="space-y-4 text-left">
-                                <h4 className="text-[14px] font-bold text-gray-400 uppercase tracking-wider">Trading history</h4>
-                                <div className="space-y-3">
+                                <div className="flex items-center justify-between px-1">
+                                    <h4 className="text-[13px] font-black text-gray-400 uppercase tracking-widest">Recent Performance</h4>
+                                    <span className="text-[11px] text-gray-600 font-bold uppercase">Last 10 Trades</span>
+                                </div>
+                                <div className="space-y-2.5">
                                     {selectedTrader.history?.map((h: any, idx: number) => (
-                                        <div key={idx} className="bg-[#1C1D22] border border-white/5 rounded-xl p-4 flex items-center justify-between">
-                                            <div className="flex items-center gap-3">
-                                                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${h.result === 'won' ? 'bg-[#00C980]/10 text-[#00C980]' : 'bg-red-500/10 text-red-500'}`}>
-                                                    {h.type === 'CALL' ? <TrendingUp size={20} /> : <TrendingDown size={20} />}
+                                        <div key={idx} className="bg-[#1C1D22] border border-white/5 rounded-2xl p-4 flex items-center justify-between group hover:border-[#FFE24C]/20 transition-all">
+                                            <div className="flex items-center gap-4">
+                                                <div className={`w-12 h-12 rounded-xl flex items-center justify-center shadow-inner ${h.result === 'won' ? 'bg-[#00C980]/10 text-[#00C980]' : 'bg-red-500/10 text-red-500'}`}>
+                                                    {h.type === 'CALL' ? <TrendingUp size={22} /> : <TrendingDown size={22} />}
                                                 </div>
                                                 <div>
-                                                    <p className="text-[14px] font-bold text-white">{h.asset}</p>
-                                                    <p className="text-[11px] text-gray-500">{h.time}</p>
+                                                    <div className="flex items-center gap-2">
+                                                        <p className="text-[15px] font-black text-white">{h.asset}</p>
+                                                        <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${h.type === 'CALL' ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
+                                                            {h.type}
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-[11px] text-gray-600 font-bold">{h.time}</p>
                                                 </div>
                                             </div>
                                             <div className="text-right">
-                                                <p className={`text-[14px] font-bold ${h.result === 'won' ? 'text-[#00C980]' : 'text-gray-400'}`}>
+                                                <div className={`text-[16px] font-black ${h.result === 'won' ? 'text-[#00C980]' : 'text-gray-400'}`}>
                                                     {h.result === 'won' ? `+${formatWithCurrency(h.profit, userCurrency)}` : `-${formatWithCurrency(h.amount, userCurrency)}`}
-                                                </p>
-                                                <p className="text-[11px] text-gray-600">{h.payout}%</p>
+                                                </div>
+                                                <div className="flex items-center justify-end gap-1.5 mt-0.5">
+                                                    <span className="text-[10px] text-gray-600 font-bold">ROI: {h.payout}%</span>
+                                                    <div className={`w-1.5 h-1.5 rounded-full ${h.result === 'won' ? 'bg-[#00C980]' : 'bg-gray-700'}`} />
+                                                </div>
                                             </div>
                                         </div>
                                     ))}

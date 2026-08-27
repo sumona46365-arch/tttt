@@ -602,6 +602,19 @@ export async function syncUserToFirestore(uid: string, data: any) {
     if (existing?.nickname && (!cleanData.nickname || cleanData.nickname === 'User')) cleanData.nickname = existing.nickname;
     if (existing?.phone && !cleanData.phone) cleanData.phone = existing.phone;
 
+    // Ensure balance aliases are saved consistently across Firestore keys
+    if (cleanData.balance !== undefined || cleanData.realBalance !== undefined || cleanData.real_balance !== undefined) {
+      const b = cleanData.balance ?? cleanData.realBalance ?? cleanData.real_balance;
+      cleanData.balance = b;
+      cleanData.realBalance = b;
+      cleanData.real_balance = b;
+    }
+    if (cleanData.demoBalance !== undefined || cleanData.demo_balance !== undefined) {
+      const db = cleanData.demoBalance ?? cleanData.demo_balance;
+      cleanData.demoBalance = db;
+      cleanData.demo_balance = db;
+    }
+
     await userRef.set(cleanData, { merge: true });
   } catch (err) {
     console.error(`[FirebaseSync] Failed to sync user ${uid}:`, err);

@@ -34,7 +34,6 @@ export const currentCandles_real: Record<string, Record<string, any>> = {};
 export const currentCandles_demo = currentCandles_real;
 
 export const TIMEFRAMES = [
-  "1 second",
   "5 seconds",
   "10 seconds",
   "15 seconds",
@@ -49,7 +48,6 @@ export const TIMEFRAMES = [
 ];
 
 export const timeframeSecondsMap: Record<string, number> = {
-  "1 second": 1,
   "5 seconds": 5,
   "10 seconds": 10,
   "15 seconds": 15,

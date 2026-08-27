@@ -819,7 +819,7 @@ const SidebarTradeHistory = ({
                   const isDraw = priceNum === entryNum;
                   
                   liveStatus = isWon ? 'won' : (isDraw ? 'draw' : 'lost');
-                  const payoutRate = (trade as any).payoutRate || 80;
+                  const payoutRate = trade.payout || (trade as any).payoutRate || (trade.asset && markets[trade.asset]?.payout) || 80;
                   liveProfit = isWon ? (trade.amount * (payoutRate / 100)) : (isDraw ? 0 : -trade.amount);
                 }
               }
@@ -870,7 +870,7 @@ const SidebarTradeHistory = ({
                       </div>
                     ) : (
                       <span className={`text-[13px] font-bold ${trade.status === 'won' ? 'text-[#00c980]' : trade.status === 'draw' ? 'text-gray-400' : 'text-[#f45c5c]'}`}>
-                        {trade.status === 'won' ? `+${formatWithCurrency(trade.profit || trade.amount * ((trade as any).payoutRate / 100 || 0.8), userCurrency)}` : trade.status === 'draw' ? formatWithCurrency(0, userCurrency) : `-${formatWithCurrency(trade.amount, userCurrency)}`}
+                        {trade.status === 'won' ? `+${formatWithCurrency(trade.profit || trade.amount * ((trade.payout || (trade as any).payoutRate || (trade.asset && markets[trade.asset]?.payout) || 80) / 100), userCurrency)}` : trade.status === 'draw' ? formatWithCurrency(0, userCurrency) : `-${formatWithCurrency(trade.amount, userCurrency)}`}
                       </span>
                     )}
                   </div>
@@ -1079,6 +1079,8 @@ interface Trade {
   closePrice?: number;
   status?: string;
   payoutAmount?: number;
+  payout?: number;
+  payoutRate?: number;
   duration?: number;
   [key: string]: any;
 }
@@ -1537,28 +1539,43 @@ export default function TradeTerminal() {
     }
   });
   const [tradeNotifications, setTradeNotifications] = useState<any[]>([]);
+  const notifiedTradesRef = useRef<Set<string>>(new Set());
 
-  const addTradeNotification = useCallback((tradeNotif: { id: string | number; tradeId?: string | number; status: string; asset: string; amount: number }) => {
+  const addTradeNotification = useCallback((tradeNotif: { id: string | number; tradeId?: string | number; firebaseId?: string; firebase_id?: string; status: string; asset: string; amount: number }) => {
+    const id1 = tradeNotif.id ? String(tradeNotif.id) : '';
+    const id2 = tradeNotif.tradeId ? String(tradeNotif.tradeId) : '';
+    const id3 = tradeNotif.firebaseId ? String(tradeNotif.firebaseId) : '';
+    const id4 = tradeNotif.firebase_id ? String(tradeNotif.firebase_id) : '';
+    const allIds = [id1, id2, id3, id4].filter(Boolean);
+
+    // If ANY ID of this trade has already triggered a notification, skip completely to avoid doubling amounts or counts
+    if (allIds.length > 0 && allIds.some(id => notifiedTradesRef.current.has(id))) {
+      return;
+    }
+
+    // Mark all IDs of this trade as notified
+    allIds.forEach(id => notifiedTradesRef.current.add(id));
+
+    if (notifiedTradesRef.current.size > 1000) {
+      notifiedTradesRef.current.clear();
+      allIds.forEach(id => notifiedTradesRef.current.add(id));
+    }
+
     setTradeNotifications(prev => {
       const now = Date.now();
-      const notifId = String(tradeNotif.id || tradeNotif.tradeId || Math.random());
-      const tId = tradeNotif.tradeId ? String(tradeNotif.tradeId) : notifId;
-      
+      const primaryId = id1 || id2 || id3 || id4 || Math.random().toString();
+
       let foundGroup = false;
       const updated = prev.map(n => {
-        // Group if same asset, same status, and within a recent time window
+        // Group if same asset, same status, and within a recent time window (3.5s)
         if (n.asset === tradeNotif.asset && n.status === tradeNotif.status && Math.abs(now - (n.timestamp || 0)) < 3500) {
           foundGroup = true;
-          // Avoid duplicate processing of the exact same trade ID
-          if (n.processedIds && n.processedIds.includes(tId)) {
-            return n;
-          }
           return {
             ...n,
             amount: n.amount + tradeNotif.amount,
             count: (n.count || 1) + 1,
-            processedIds: [...(n.processedIds || [n.id || n.tradeId]), tId],
-            timestamp: now // reset timestamp to keep it alive slightly longer
+            processedIds: [...(n.processedIds || [n.id]), ...allIds],
+            timestamp: now
           };
         }
         return n;
@@ -1568,22 +1585,19 @@ export default function TradeTerminal() {
         return updated.filter(n => now - (n.timestamp || 0) < 4000).slice(-5);
       }
 
-      // Check if exact ID already exists (shouldn't if not grouped, but just in case)
-      if (prev.some(n => String(n.id) === notifId || String(n.id) === tId || (n.tradeId && String(n.tradeId) === tId))) return prev;
-
       const newNotif = {
-        id: notifId,
-        tradeId: tId,
+        id: primaryId,
+        tradeId: primaryId,
         status: tradeNotif.status,
         asset: tradeNotif.asset,
         amount: tradeNotif.amount,
         timestamp: now,
         count: 1,
-        processedIds: [tId]
+        processedIds: allIds
       };
 
       const fresh = prev.filter(n => now - (n.timestamp || 0) < 4000);
-      return [newNotif, ...fresh].slice(0, 3);
+      return [...fresh, newNotif].slice(-5);
     });
   }, []);
 
@@ -1809,6 +1823,38 @@ export default function TradeTerminal() {
                     setSavedNickname(uData.nickname);
                     savedNicknameRef.current = uData.nickname;
                   }
+                  if (uData.firstName || uData.lastName || uData.gender || uData.dob || uData.birthDay) {
+                    let day = uData.birthDay || "--";
+                    let month = uData.birthMonth || "--";
+                    let year = uData.birthYear || "--";
+                    if (uData.dob && (day === "--" || month === "--" || year === "--")) {
+                      let parsed = typeof uData.dob === 'string' ? null : uData.dob;
+                      if (typeof uData.dob === 'string') {
+                        try { parsed = JSON.parse(uData.dob); } catch(e) {}
+                      }
+                      if (parsed && typeof parsed === 'object') {
+                        if (parsed.day) day = String(parsed.day);
+                        if (parsed.month) month = String(parsed.month);
+                        if (parsed.year) year = String(parsed.year);
+                      }
+                    }
+                    setPersonalData(prev => {
+                      const next = {
+                        firstName: uData.firstName ?? prev.firstName,
+                        lastName: uData.lastName ?? prev.lastName,
+                        gender: (uData.gender && uData.gender !== "---" && uData.gender !== "--") ? uData.gender : prev.gender,
+                        day: day !== "--" ? day : prev.day,
+                        month: month !== "--" ? month : prev.month,
+                        year: year !== "--" ? year : prev.year,
+                        country: uData.country ?? prev.country
+                      };
+                      setSavedPersonalData(next);
+                      if (user?.uid) {
+                        try { localStorage.setItem(`bivax_personal_data_${user.uid}`, JSON.stringify(next)); } catch(e) {}
+                      }
+                      return next;
+                    });
+                  }
                 }
                 break; // Succeeded! Exit the loop.
               }
@@ -1829,23 +1875,29 @@ export default function TradeTerminal() {
         syncUser();
 
         const unsubUser = onSnapshot(doc(db, "users", user.uid), (docSnap) => {
+                // Ignore stale local IndexedDB cache snapshots on reload
+                if (docSnap.metadata.fromCache) return;
                 if (docSnap.exists()) {
                     const userData = docSnap.data();
                     if (userData.currency && userCurrencyRef.current !== userData.currency) {
                         setUserCurrency(userData.currency);
                         userCurrencyRef.current = userData.currency;
                     }
-                    if (userData.balance !== undefined) {
-                        const newBal = parseFloat(userData.balance.toString());
-                        // Only update if difference is more than 0.0001 to prevent jitter
-                        if (Math.abs(realBalanceRef.current - newBal) > 0.0001) {
+                    if (userData.balance !== undefined || userData.realBalance !== undefined || userData.real_balance !== undefined) {
+                        const raw = userData.balance ?? userData.realBalance ?? userData.real_balance;
+                        const newBal = parseFloat(raw?.toString());
+                        if (!isNaN(newBal)) {
                             setRealBalance(newBal);
                             realBalanceRef.current = newBal;
                         }
                     }
-                    if (userData.demoBalance !== undefined && demoBalanceRef.current !== userData.demoBalance) {
-                        setDemoBalance(userData.demoBalance);
-                        demoBalanceRef.current = userData.demoBalance;
+                    if (userData.demoBalance !== undefined || userData.demo_balance !== undefined) {
+                        const raw = userData.demoBalance ?? userData.demo_balance;
+                        const newDemo = parseFloat(raw?.toString());
+                        if (!isNaN(newDemo)) {
+                            setDemoBalance(newDemo);
+                            demoBalanceRef.current = newDemo;
+                        }
                     }
                     if (userData.affiliateId !== undefined && affIdRef.current !== userData.affiliateId) {
                         setAffId(userData.affiliateId);
@@ -1895,19 +1947,39 @@ export default function TradeTerminal() {
                       setSavedNickname(userData.nickname);
                       savedNicknameRef.current = userData.nickname;
                     }
-                    if (userData.firstName || userData.lastName || userData.country) {
-                      setPersonalData(prev => {
-                        if (prev.firstName === userData.firstName && 
-                            prev.lastName === userData.lastName && 
-                            prev.country === userData.country) {
-                          return prev;
+                    if (userData.firstName !== undefined || userData.lastName !== undefined || userData.gender !== undefined || userData.dob !== undefined || userData.birthDay !== undefined || userData.country !== undefined) {
+                      let day = "--";
+                      let month = "--";
+                      let year = "--";
+                      if (userData.dob) {
+                        let parsed = typeof userData.dob === 'string' ? null : userData.dob;
+                        if (typeof userData.dob === 'string') {
+                          try { parsed = JSON.parse(userData.dob); } catch(e) {}
                         }
+                        if (parsed && typeof parsed === 'object') {
+                          if (parsed.day) day = String(parsed.day);
+                          if (parsed.month) month = String(parsed.month);
+                          if (parsed.year) year = String(parsed.year);
+                        }
+                      }
+                      if (userData.birthDay && userData.birthDay !== "--") day = String(userData.birthDay);
+                      if (userData.birthMonth && userData.birthMonth !== "--") month = String(userData.birthMonth);
+                      if (userData.birthYear && userData.birthYear !== "--") year = String(userData.birthYear);
+
+                      setPersonalData(prev => {
                         const next = {
-                          ...prev,
-                          firstName: userData.firstName || prev.firstName,
-                          lastName: userData.lastName || prev.lastName,
-                          country: userData.country || prev.country
+                          firstName: userData.firstName ?? userData.first_name ?? prev.firstName,
+                          lastName: userData.lastName ?? userData.last_name ?? prev.lastName,
+                          gender: (userData.gender && userData.gender !== "---" && userData.gender !== "--") ? userData.gender : prev.gender,
+                          day: day !== "--" ? day : prev.day,
+                          month: month !== "--" ? month : prev.month,
+                          year: year !== "--" ? year : prev.year,
+                          country: userData.country ?? prev.country
                         };
+                        setSavedPersonalData(next);
+                        if (user?.uid) {
+                          try { localStorage.setItem(`bivax_personal_data_${user.uid}`, JSON.stringify(next)); } catch(e) {}
+                        }
                         return next;
                       });
                     }
@@ -2302,6 +2374,7 @@ export default function TradeTerminal() {
 
   const [balance, setBalance] = useState(0.0);
   const [isPlacingTrade, setIsPlacingTrade] = useState(false);
+  const isPlacingTradeRef = useRef(false);
   const [userCurrency, setUserCurrency] = useState(() => {
     try {
       return localStorage.getItem('user_display_currency') || 'USD';
@@ -2970,23 +3043,29 @@ const PROMOTED_ARTICLES = [
   const [notifications, setNotifications] = useState({ promo: true, info: true });
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwords, setPasswords] = useState({ current: "", new: "", confirm: "" });
-  const [personalData, setPersonalData] = useState({
-    firstName: currentUser?.displayName?.split(" ")[0] || "User",
-    lastName: currentUser?.displayName?.split(" ")[1] || "",
-    gender: "Male",
-    day: "--",
-    month: "--",
-    year: "--",
-    country: ""
+  const [personalData, setPersonalData] = useState(() => {
+    try {
+      const saved = currentUser?.uid ? localStorage.getItem(`bivax_personal_data_${currentUser.uid}`) : null;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch (e) {}
+    return {
+      firstName: currentUser?.displayName?.split(" ")[0] || "User",
+      lastName: currentUser?.displayName?.split(" ")[1] || "",
+      gender: "Male",
+      day: "--",
+      month: "--",
+      year: "--",
+      country: ""
+    };
   });
-  const [savedPersonalData, setSavedPersonalData] = useState({
-    firstName: "Md",
-    lastName: "Hasan",
-    gender: "Male",
-    day: "--",
-    month: "--",
-    year: "--"
-  });
+  const [savedPersonalData, setSavedPersonalData] = useState(() => ({ ...personalData }));
+  const personalDataRef = useRef(personalData);
+  useEffect(() => {
+    personalDataRef.current = personalData;
+  }, [personalData]);
   const [showSaveToast, setShowSaveToast] = useState(false);
   const [timeZone, setTimeZone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
   const timeZoneRef = useRef(timeZone);
@@ -4343,7 +4422,26 @@ const PROMOTED_ARTICLES = [
     } catch(e) {}
   }, [showTimer]);
 
-  const chartTypeOptions = [
+  const CandleIcon = ({ size = 20, className = "", strokeWidth = 1.8 }: { size?: number | string; className?: string; strokeWidth?: number | string }) => (
+  <svg 
+    width={size} 
+    height={size} 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    stroke="currentColor" 
+    strokeWidth={strokeWidth} 
+    strokeLinecap="round" 
+    strokeLinejoin="round" 
+    className={className}
+  >
+    <line x1="8" y1="4" x2="8" y2="20" />
+    <rect x="5.5" y="11" width="5" height="6" rx="1.2" />
+    <line x1="16" y1="4" x2="16" y2="20" />
+    <rect x="13.5" y="7" width="5" height="7" rx="1.2" />
+  </svg>
+);
+
+const chartTypeOptions = [
     {
       id: "Line",
       label: "Line",
@@ -4357,7 +4455,7 @@ const PROMOTED_ARTICLES = [
     {
       id: "Candle",
       label: "Candle",
-      Icon: CandlestickChart,
+      Icon: CandleIcon,
       preview: (
         <svg viewBox="0 0 100 40" className="w-[140px] h-[48px] opacity-100" preserveAspectRatio="none">
           <g strokeWidth="0.8">
@@ -4767,6 +4865,17 @@ const PROMOTED_ARTICLES = [
   }, [currentUser?.uid, cashierTab]);
 
   useEffect(() => {
+    if (currentUser?.uid && userTransactions.length > 0) {
+      const hasCompleted = userTransactions.some(t => t.type === 'Deposit' && t.status === 'Completed');
+      if (hasCompleted) {
+        localStorage.setItem(`hasCompletedDeposits_${currentUser.uid}`, 'true');
+      } else {
+        localStorage.setItem(`hasCompletedDeposits_${currentUser.uid}`, 'false');
+      }
+    }
+  }, [userTransactions, currentUser?.uid]);
+
+  useEffect(() => {
     if (!currentUser?.uid || !selectedTournament?.id) return;
 
     const tid = selectedTournament.id;
@@ -4985,6 +5094,7 @@ const PROMOTED_ARTICLES = [
     expirationTime: number;
     entryTime: any;
     payout: number;
+    payoutRate?: number;
     asset: string;
     status?: 'open' | 'won' | 'lost' | 'draw';
     exitPrice?: number;
@@ -5233,8 +5343,9 @@ const PROMOTED_ARTICLES = [
                }
                
                if (currentSeries && (lastCandleRef.current || rawLastCandleRef.current)) {
+                   const priceY = currentSeries.priceToCoordinate(currentInterpolatedPriceRef.current);
+                   
                    if (idx === 0) {
-                      const priceY = currentSeries.priceToCoordinate(currentInterpolatedPriceRef.current);
                       if (timerOverlayRef.current && priceY !== null) {
                           timerOverlayRef.current.style.transform = `translateY(${priceY}px)`;
                       }
@@ -5244,6 +5355,90 @@ const PROMOTED_ARTICLES = [
                       } else {
                           setHoverLineY(null);
                       }
+                   }
+
+                   // Update custom Binomo-style price line and pulsating dot
+                   const leftLineEl = document.getElementById(`custom-price-line-left-${idx}`);
+                   const badgeGroupEl = document.getElementById(`custom-price-badge-group-${idx}`);
+                   const badgeTextEl = document.getElementById(`custom-price-badge-text-${idx}`);
+                   const badgeBgEl = document.getElementById(`custom-price-badge-bg-${idx}`);
+                   const rightLineEl = document.getElementById(`custom-price-line-right-${idx}`);
+                   
+                   
+                   if (leftLineEl || rightLineEl || badgeGroupEl) {
+                       if (priceY !== null && priceY >= 0) {
+                           let candleX: number | null = null;
+                           const lastCandle = rawLastCandleRef.current || lastCandleRef.current;
+                           if (lastCandle && (lastCandle as any).time) {
+                               candleX = ts.timeToCoordinate((lastCandle as any).time as Time);
+                           }
+                           
+                           const containerWidth = currentContainer?.clientWidth || 600;
+                           // Fallback: If we can't find the candle X, it's usually near the right side
+                           const effectiveCandleX = candleX !== null ? candleX : (containerWidth - 60); 
+
+                           // Find right axis width
+                           const chart = idx === 0 ? chartRef.current : chartRef2.current;
+                           let scaleWidth = 65; // fallback
+                           if (chart) {
+                               try {
+                                   scaleWidth = chart.priceScale('right').width();
+                               } catch (e) {}
+                           }
+                           
+                           const badgeX = containerWidth - scaleWidth;
+                           const badgeXOffset = badgeX - 10;
+                           
+                           if (leftLineEl) {
+                               leftLineEl.setAttribute('x1', '0');
+                               leftLineEl.setAttribute('y1', priceY.toString());
+                               leftLineEl.setAttribute('x2', effectiveCandleX.toString());
+                               leftLineEl.setAttribute('y2', priceY.toString());
+                               leftLineEl.style.display = 'block';
+                               // No forced stroke color override
+                           }
+                           
+                           // Position the custom right line and the pointed price badge
+                           if (rightLineEl) {
+                               rightLineEl.setAttribute('x1', effectiveCandleX.toString());
+                               rightLineEl.setAttribute('y1', priceY.toString());
+                               rightLineEl.setAttribute('x2', badgeXOffset.toString());
+                               rightLineEl.setAttribute('y2', priceY.toString());
+                               rightLineEl.style.display = 'block';
+                           }
+
+                           if (badgeGroupEl && badgeTextEl) {
+                               badgeGroupEl.setAttribute('transform', `translate(${badgeXOffset}, ${priceY - 11})`);
+                               
+                               const currentPriceVal = currentInterpolatedPriceRef.current || 0;
+                               let precision = 6;
+                               try {
+                                   const opts = currentSeries.options();
+                                   if (opts && opts.priceFormat && opts.priceFormat.precision !== undefined) {
+                                       precision = opts.priceFormat.precision;
+                                   }
+                               } catch (e) {}
+                               
+                               badgeTextEl.textContent = currentPriceVal.toFixed(precision);
+
+                               // Dynamic pointy chevron path based on scaleWidth
+                               const W = scaleWidth + 8;
+                               const pathD = `M 0 10 L 14 0 L ${W - 3} 0 Q ${W} 0 ${W} 3 L ${W} 17 Q ${W} 20 ${W - 3} 20 L 14 20 Z`;
+                               if (badgeBgEl) {
+                                   badgeBgEl.setAttribute('d', pathD);
+                               }
+
+                               // Center text horizontally inside the badge body (from 10 to W)
+                               badgeTextEl.setAttribute('x', ((W + 14) / 2).toString());
+                               badgeTextEl.setAttribute('y', '10');
+
+                               badgeGroupEl.style.display = 'block';
+                           }
+                       } else {
+                           if (leftLineEl) leftLineEl.style.display = 'none';
+                           if (rightLineEl) rightLineEl.style.display = 'none';
+                           if (badgeGroupEl) badgeGroupEl.style.display = 'none';
+                       }
                    }
 
                    if (activeTradesRef.current && activeAssetRef.current) {
@@ -5671,7 +5866,8 @@ const PROMOTED_ARTICLES = [
             demoBalanceRef.current = rechargeAmount;
             fetch('/api/wallet/recharge-demo', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ uid: auth.currentUser.uid })
             }).catch(() => {});
             updateDoc(doc(db, "users", auth.currentUser.uid), {
                 demoBalance: rechargeAmount
@@ -6299,7 +6495,8 @@ const PROMOTED_ARTICLES = [
           const isWon = trade.status === 'win' || trade.status === 'won' || trade.status === 'profit';
           const isDraw = trade.status === 'draw';
           const notifStatus = isWon ? 'won' : (isDraw ? 'draw' : 'lost');
-          const notifAmount = isWon ? (trade.payoutAmount || (trade.amount * (1 + (trade.payoutRate || 80) / 100))) : trade.amount;
+          const tradePayoutPercent = trade.payout || (trade as any).payoutRate || (trade.asset && markets[trade.asset]?.payout) || 80;
+          const notifAmount = isWon ? (trade.payoutAmount || (trade.amount * (1 + tradePayoutPercent / 100))) : trade.amount;
           addTradeNotification({
               id: tradeId || fbId || Math.random().toString(),
               tradeId: tradeId || fbId,
@@ -6309,14 +6506,38 @@ const PROMOTED_ARTICLES = [
           });
         }
 
-        setActiveTrades(prev => prev.filter(t => String(t.id) !== tradeId && String(t.id) !== fbId && (t as any).firebaseId !== tradeId && (t as any).firebaseId !== fbId));
+        const matchesTrade = (t: any) => {
+          const tid = String(t.id || '');
+          const tfb = String(t.firebaseId || t.firebase_id || '');
+          if (tradeId && (tid === tradeId || tfb === tradeId)) return true;
+          if (fbId && (tid === fbId || tfb === fbId)) return true;
+          if (t.asset === trade.asset && t.amount === trade.amount && Math.abs((t.createdAt || 0) - (trade.createdAt || 0)) < 4000) return true;
+          return false;
+        };
+
+        setActiveTrades(prev => prev.filter(t => !matchesTrade(t)));
         setUserTrades(prev => {
-            const updated = prev.map(t => (String(t.id) === tradeId || String(t.id) === fbId || (t as any).firebaseId === tradeId || (t as any).firebaseId === fbId) ? { ...t, ...trade } : t);
-            if (!updated.find(t => String(t.id) === tradeId || String(t.id) === fbId || (t as any).firebaseId === tradeId || (t as any).firebaseId === fbId)) {
-                updated.unshift(trade);
+            const existingIndex = prev.findIndex(matchesTrade);
+            let updated: any[];
+            if (existingIndex >= 0) {
+                updated = [...prev];
+                updated[existingIndex] = { ...updated[existingIndex], ...trade, status: trade.status || 'won' };
+            } else {
+                updated = [{ ...trade }, ...prev];
             }
-            updated.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-            return updated.slice(0, 100);
+            const deduped: any[] = [];
+            const seenKeys = new Set<string>();
+            for (const item of updated) {
+                const idKey = String(item.id || '');
+                const fbKey = String(item.firebaseId || item.firebase_id || '');
+                const primaryKey = idKey || fbKey;
+                if (primaryKey && seenKeys.has(primaryKey)) continue;
+                if (idKey) seenKeys.add(idKey);
+                if (fbKey) seenKeys.add(fbKey);
+                deduped.push(item);
+            }
+            deduped.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+            return deduped.slice(0, 100);
         });
         
         // Apply Authoritative Balance from trade settlement
@@ -6551,17 +6772,21 @@ const PROMOTED_ARTICLES = [
           setUserCurrency(userData.currency);
           userCurrencyRef.current = userData.currency;
         }
-        if (userData.balance !== undefined) {
-            const val = parseFloat(userData.balance?.toString());
-            const finalVal = isNaN(val) ? 0 : val;
-            setRealBalance(finalVal);
-            realBalanceRef.current = finalVal;
+        if (userData.balance !== undefined || userData.realBalance !== undefined || userData.real_balance !== undefined) {
+            const raw = userData.balance ?? userData.realBalance ?? userData.real_balance;
+            const val = parseFloat(raw?.toString());
+            if (!isNaN(val)) {
+                setRealBalance(val);
+                realBalanceRef.current = val;
+            }
         }
-        if (userData.demoBalance !== undefined) {
-            const val = parseFloat(userData.demoBalance?.toString());
-            const finalVal = isNaN(val) ? 10000 : val;
-            setDemoBalance(finalVal);
-            demoBalanceRef.current = finalVal;
+        if (userData.demoBalance !== undefined || userData.demo_balance !== undefined) {
+            const raw = userData.demoBalance ?? userData.demo_balance;
+            const val = parseFloat(raw?.toString());
+            if (!isNaN(val)) {
+                setDemoBalance(val);
+                demoBalanceRef.current = val;
+            }
         }
         if (userData.totalLiveVolume !== undefined) {
             const val = parseFloat(userData.totalLiveVolume?.toString());
@@ -6586,15 +6811,36 @@ const PROMOTED_ARTICLES = [
           setIsPhoneVerified(!!userData.isPhoneVerified || !!userData.phoneVerified);
         }
         if (userData.notifications) setNotifications(userData.notifications);
-        if (userData.firstName || userData.lastName || userData.country) {
-            setPersonalData({
-                firstName: userData.firstName || "",
-                lastName: userData.lastName || "",
-                gender: userData.gender || "Male",
-                day: userData.birthDay || "--",
-                month: userData.birthMonth || "--",
-                year: userData.birthYear || "--",
-                country: userData.country || ""
+        if (userData.firstName !== undefined || userData.lastName !== undefined || userData.gender !== undefined || userData.birthDay !== undefined || userData.dob !== undefined || userData.country !== undefined) {
+            let day = userData.birthDay || "--";
+            let month = userData.birthMonth || "--";
+            let year = userData.birthYear || "--";
+            if (userData.dob && (day === "--" || month === "--" || year === "--")) {
+              let parsed = typeof userData.dob === 'string' ? null : userData.dob;
+              if (typeof userData.dob === 'string') {
+                try { parsed = JSON.parse(userData.dob); } catch(e) {}
+              }
+              if (parsed && typeof parsed === 'object') {
+                if (parsed.day) day = String(parsed.day);
+                if (parsed.month) month = String(parsed.month);
+                if (parsed.year) year = String(parsed.year);
+              }
+            }
+            setPersonalData(prev => {
+              const next = {
+                firstName: userData.firstName ?? prev.firstName,
+                lastName: userData.lastName ?? prev.lastName,
+                gender: (userData.gender && userData.gender !== "---" && userData.gender !== "--") ? userData.gender : prev.gender,
+                day: day !== "--" ? day : prev.day,
+                month: month !== "--" ? month : prev.month,
+                year: year !== "--" ? year : prev.year,
+                country: userData.country ?? prev.country
+              };
+              setSavedPersonalData(next);
+              if (auth.currentUser?.uid) {
+                try { localStorage.setItem(`bivax_personal_data_${auth.currentUser.uid}`, JSON.stringify(next)); } catch(e) {}
+              }
+              return next;
             });
         }
     });
@@ -6604,11 +6850,8 @@ const PROMOTED_ARTICLES = [
             const raw = data.real_balance ?? data.balance ?? data.realBalance;
             const val = parseFloat(raw?.toString());
             if (!isNaN(val)) {
-                // Only update if difference is more than 0.0001 to prevent jitter
-                if (Math.abs(realBalanceRef.current - val) > 0.0001) {
-                    setRealBalance(val);
-                    realBalanceRef.current = val;
-                }
+                setRealBalance(val);
+                realBalanceRef.current = val;
             }
         }
         if (data.demo_balance !== undefined || data.demoBalance !== undefined) {
@@ -6869,17 +7112,17 @@ const PROMOTED_ARTICLES = [
             won = dir === "up" ? settlePrice > trade.entryPrice : settlePrice < trade.entryPrice;
           }
 
-          const payoutRate = (trade as any).payoutRate || 80;
+          const payoutRate = trade.payout || (trade as any).payoutRate || (trade.asset && markets[trade.asset]?.payout) || 80;
           const returnAmt = trade.amount * (payoutRate / 100 + 1);
           const tradeStatus = isDraw ? 'draw' : won ? 'won' : 'lost';
 
           if (trade.accountType === 'tournament') {
             if (won) {
-              updateTournamentScore(returnAmt - trade.amount, true);
+              updateTournamentScore(returnAmt, true);
             } else if (isDraw) {
-              updateTournamentScore(0, false);
+              updateTournamentScore(trade.amount, false);
             } else {
-              updateTournamentScore(-trade.amount, false);
+              updateTournamentScore(0, false);
             }
           }
 
@@ -6985,8 +7228,8 @@ const PROMOTED_ARTICLES = [
   useEffect(() => {
     if (seriesRef.current) {
       seriesRef.current.applyOptions({
-        lastValueVisible: showQuoteDetails,
-        priceLineVisible: showQuoteDetails,
+        lastValueVisible: false,
+        priceLineVisible: false,
       });
     }
   }, [showQuoteDetails]);
@@ -7024,10 +7267,10 @@ const PROMOTED_ARTICLES = [
     if (chartRef.current) {
       chartRef.current.applyOptions({
         timeScale: {
-          rightOffset: isMobile ? 8 : 25,
+          rightOffset: isMobile ? 22 : 40,
           tickMarkFormatter: (time: any) => {
              const date = new Date(time * 1000);
-             return date.toLocaleString('en-US', { timeZone: timeZoneRef.current, hour: '2-digit', minute: '2-digit', hour12: false });
+             return date.toLocaleTimeString('en-US', { timeZone: timeZoneRef.current, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
           }
         },
         localization: {
@@ -7051,15 +7294,15 @@ const PROMOTED_ARTICLES = [
       height: chartContainerRef.current.clientHeight || 400,
       
       layout: {
-        background: { type: ColorType.Solid, color: "#131417" },
-        textColor: "#d1d4dc",
-        fontSize: 10,
+        background: { type: ColorType.Solid, color: "#1e1f25" },
+        textColor: "#8f94a6",
+        fontSize: 12,
         fontFamily: "JetBrains Mono, -apple-system, system-ui, sans-serif",
 
       },
       grid: {
-        vertLines: { color: "#1c1f24", style: LineStyle.Solid },
-        horzLines: { color: "#1c1f24", style: LineStyle.Solid },
+        vertLines: { color: "#282b36", style: LineStyle.Solid },
+        horzLines: { color: "#282b36", style: LineStyle.Solid },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
@@ -7078,6 +7321,10 @@ const PROMOTED_ARTICLES = [
           labelVisible: true,
         },
       },
+      kineticScroll: {
+        touch: true,
+        mouse: true,
+      },
       handleScroll: {
         mouseWheel: true,
         pressedMouseMove: true,
@@ -7091,29 +7338,36 @@ const PROMOTED_ARTICLES = [
           time: true,
           price: true,
         },
+        axisDoubleClickReset: {
+          time: true,
+          price: true,
+        },
       },
       timeScale: {
-        borderColor: "#1c1f24",
-        timeVisible: true, 
+        borderVisible: false,
+        timeVisible: true,
+        ticksVisible: false, 
         secondsVisible: true,
-        rightOffset: isMobile ? 8 : 25, 
+        rightOffset: isMobile ? 22 : 40, 
         fixRightEdge: false,
-        barSpacing: isMobile ? 12 : 22,
-        minBarSpacing: 2,
+        barSpacing: isMobile ? 10 : 16,
+        minBarSpacing: 3.8,
+        maxBarSpacing: 28,
         fixLeftEdge: false, 
         lockVisibleTimeRangeOnResize: true,
+        shiftVisibleRangeOnNewBar: true,
         tickMarkFormatter: (time: any) => {
            const date = new Date(time * 1000);
-           return date.toLocaleString('en-US', { timeZone: timeZoneRef.current, hour: '2-digit', minute: '2-digit', hour12: false });
+           return date.toLocaleTimeString('en-US', { timeZone: timeZoneRef.current, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
         }
       },
       rightPriceScale: {
-        borderColor: "#1c1f24",
+        borderVisible: false,
         autoScale: true, 
         alignLabels: true,
         scaleMargins: { top: 0.18, bottom: 0.18 },
-        entireTextOnly: false, 
-        borderVisible: false, 
+        entireTextOnly: true, 
+
         ticksVisible: false,
         visible: true,
         tickMarkDensity: 10,
@@ -7234,18 +7488,28 @@ const PROMOTED_ARTICLES = [
       height: chartContainerRef2.current.clientHeight || 400,
       
       layout: {
-        background: { type: ColorType.Solid, color: "#131417" },
-        textColor: "#d1d4dc",
-        fontSize: 10,
+        background: { type: ColorType.Solid, color: "#1e1f25" },
+        textColor: "#8f94a6",
+        fontSize: 12,
         fontFamily: "JetBrains Mono, -apple-system, system-ui, sans-serif",
 
       },
       grid: {
-        vertLines: { color: "#1c1f24", style: LineStyle.Solid },
-        horzLines: { color: "#1c1f24", style: LineStyle.Solid },
+        vertLines: { color: "#282b36", style: LineStyle.Solid },
+        horzLines: { color: "#282b36", style: LineStyle.Solid },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
+      },
+      kineticScroll: {
+        touch: true,
+        mouse: true,
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
       },
       handleScale: {
         mouseWheel: true,
@@ -7254,23 +7518,29 @@ const PROMOTED_ARTICLES = [
           time: true,
           price: true,
         },
+        axisDoubleClickReset: {
+          time: true,
+          price: true,
+        },
       },
       timeScale: {
-        borderColor: "#1c1f24",
+        borderVisible: false,
         timeVisible: true,
+        ticksVisible: false,
         secondsVisible: true,
-        rightOffset: isMobile ? 8 : 25,
+        rightOffset: isMobile ? 22 : 40,
         fixRightEdge: false,
-        barSpacing: isMobile ? 12 : 22,
-        minBarSpacing: 2,
+        barSpacing: isMobile ? 10 : 16,
+        minBarSpacing: 3.8,
+        maxBarSpacing: 28,
+        shiftVisibleRangeOnNewBar: true,
       },
       rightPriceScale: {
-        borderColor: "#1c1f24",
+        borderVisible: false,
         autoScale: true,
         alignLabels: true,
         scaleMargins: { top: 0.18, bottom: 0.18 },
-        entireTextOnly: false,
-        borderVisible: false,
+        entireTextOnly: true,
         ticksVisible: false,
         visible: true,
         tickMarkDensity: 10,
@@ -7351,11 +7621,11 @@ const PROMOTED_ARTICLES = [
             precision: dynamicPrecision,
             minMove: dynamicMinMove,
         },
-        lastValueVisible: true,
-        priceLineVisible: true,
-        priceLineColor: "rgba(255, 255, 255, 0.5)",
-        priceLineStyle: LineStyle.Dashed,
-        priceLineWidth: 1,
+        lastValueVisible: false,
+        priceLineVisible: false,
+        priceLineColor: "#9ba1b8",
+        priceLineStyle: LineStyle.Solid,
+        priceLineWidth: 2,
         // @ts-ignore
         lastPriceAnimation: (LastPriceAnimationMode as any).On,
         autoscaleInfoProvider: (original: any) => {
@@ -7494,13 +7764,13 @@ const PROMOTED_ARTICLES = [
         precision: dynamicPrecision,
         minMove: dynamicMinMove 
       },
-      lastValueVisible: true, 
-      priceLineVisible: true, 
+      lastValueVisible: false, 
+      priceLineVisible: false, 
       priceLineLabelVisible: false,
       priceLineSource: 1,
-      priceLineColor: "rgba(255, 255, 255, 0.5)", 
-      priceLineStyle: LineStyle.Dashed, 
-      priceLineWidth: 1,
+      priceLineColor: "#9ba1b8", 
+      priceLineStyle: LineStyle.Solid, 
+      priceLineWidth: 2,
       // @ts-ignore
       lastPriceAnimation: (LastPriceAnimationMode as any).On,
       baseLineWidth: 1,
@@ -7718,7 +7988,8 @@ const PROMOTED_ARTICLES = [
   }, [currentUser, activeTab, accountType]);
 
   const placeTrade = async (type: "up" | "down") => {
-    if (isPlacingTrade) return;
+    if (isPlacingTradeRef.current || isPlacingTrade) return;
+    isPlacingTradeRef.current = true;
     setIsPlacingTrade(true);
     try {
         console.log("placeTrade called", type);
@@ -7728,56 +7999,48 @@ const PROMOTED_ARTICLES = [
         if (!systemActive) {
           console.log("placeTrade failed: !systemActive");
           toast.error("Market is closed. Trading is suspended.", { id: "trade-error" });
-          setIsPlacingTrade(false);
           return;
         }
 
         if (isClosed) {
           console.log("placeTrade failed: isClosed");
           toast.error("Market is closed. Trading is suspended.", { id: "trade-error" });
-          setIsPlacingTrade(false);
           return;
         }
 
         if (markets[activeAsset]?.isFrozen) {
           console.log("placeTrade failed: isFrozen");
           toast.error("This asset is currently frozen for maintenance.", { id: "trade-error" });
-          setIsPlacingTrade(false);
           return;
         }
 
         if (isNaN(tradeAmount) || tradeAmount < minConvertedAmount - 0.001) {
           console.log("placeTrade failed: tradeAmount < minConvertedAmount or NaN");
           toast.error(`Minimum trade amount is ${getCurrencySymbol(userCurrency)}${minConvertedAmount}`, { id: "trade-error" });
-          setIsPlacingTrade(false);
           return;
         }
 
     if (accountType === 'real' && realBalance < tradeAmountInBase) {
       console.log("placeTrade failed: real balance");
       toast.error("Insufficient balance. Please deposit funds.", { id: "trade-error" });
-      setIsPlacingTrade(false);
       return;
     }
     
     if (accountType === 'demo' && demoBalance < tradeAmountInBase) {
       console.log("placeTrade failed: demo balance");
       toast.error("Insufficient demo balance.", { id: "trade-error" });
-      setIsPlacingTrade(false);
       return;
     }
 
     if (accountType === 'tournament' && tournamentBalance < tradeAmountInBase) {
       console.log("placeTrade failed: tournament balance");
       toast.error("Insufficient tournament funds. You can rebuy in the account switcher!", { id: "trade-error" });
-      setIsPlacingTrade(false);
       return;
     }
 
     if (!rawLastCandleRef.current) {
       console.error("placeTrade failed: missing price data", { rawLast: !!rawLastCandleRef.current });
       toast.error("Waiting for market data, please wait.", { id: "trade-error" });
-      setIsPlacingTrade(false);
       return;
     }
     // Professional precision: use the interpolated price that the user actually SEE on the chart.
@@ -7805,13 +8068,13 @@ const PROMOTED_ARTICLES = [
       const active5sCount = activeTradesRef.current.filter(t => (t.timeLeft === 5 || (t.status === 'open' && t['duration'] === 5)) && t.status === 'open').length;
       if (active5sCount > 0) {
         toast.error("You already have an active 5-second trade. Please wait for it to complete.");
-        setIsPlacingTrade(false);
         return;
       }
     }
 
     const newTradeId = Math.random().toString(36).substring(2, 12);
     
+    const currentAssetPayout = parseFloat(String(markets[activeAsset]?.payout || 80));
     const newTrade: Trade = {
       id: newTradeId,
       type,
@@ -7821,7 +8084,8 @@ const PROMOTED_ARTICLES = [
       expirationTime: exactExpirationTime,
       entryTime,
       asset: activeAsset,
-      payout: parseFloat(String(markets[activeAsset]?.payout || 80)),
+      payout: currentAssetPayout,
+      payoutRate: currentAssetPayout,
       accountType: accountType,
       ...(accountType === 'tournament' ? { tournamentId: activeTournamentId || 't1' } : {}),
       createdAt: Date.now()
@@ -7845,8 +8109,12 @@ const PROMOTED_ARTICLES = [
             accountType,
             userId: auth.currentUser.uid,
             tournamentId: accountType === 'tournament' ? activeTournamentId : null,
+            payout: currentAssetPayout,
+            payoutRate: currentAssetPayout,
             trade: {
               ...newTrade,
+              payout: currentAssetPayout,
+              payoutRate: currentAssetPayout,
               userEmail: auth.currentUser.email || '',
               userName: auth.currentUser.displayName || 'Trader'
             }
@@ -7889,6 +8157,9 @@ const PROMOTED_ARTICLES = [
         if (resData.trade && resData.trade.id) {
           const serverId = String(resData.trade.id);
           newTrade.id = serverId;
+          (newTrade as any).firebaseId = newTradeId;
+          (newTrade as any).firebase_id = newTradeId;
+
           const updatedTrades = activeTradesRef.current.map(t => 
             (String(t.id) === String(newTradeId) || String(t.id) === serverId) 
               ? { ...t, id: serverId, firebaseId: newTradeId, firebase_id: newTradeId } 
@@ -7899,6 +8170,13 @@ const PROMOTED_ARTICLES = [
           const finalTrades = Array.from(dedupMap.values());
           activeTradesRef.current = finalTrades;
           setActiveTrades(finalTrades);
+
+          // Update userTrades array with server ID to avoid duplicate history items
+          setUserTrades(prev => prev.map(t =>
+            (String(t.id) === String(newTradeId) || String(t.id) === serverId || (t as any).firebaseId === newTradeId)
+              ? { ...t, id: serverId, firebaseId: newTradeId, firebase_id: newTradeId }
+              : t
+          ));
         }
 
         // Apply authoritative balance from server response
@@ -7922,9 +8200,9 @@ const PROMOTED_ARTICLES = [
       } catch (err: any) {
         console.log("Trade placement rejected:", err.message);
         updateBalance(tradeAmountInBase); // Revert local balance update
-        setActiveTrades(prev => prev.filter(t => t.id !== newTradeId)); // Remove phantom trade
+        setActiveTrades(prev => prev.filter(t => String(t.id) !== String(newTradeId) && String(t.id) !== String(newTrade.id))); // Remove phantom trade
+        setUserTrades(prev => prev.filter(t => String(t.id) !== String(newTradeId) && String(t.id) !== String(newTrade.id)));
         toast.error(err.message || "Failed to place trade on server. Verification failed.");
-        setIsPlacingTrade(false);
         return;
       }
     }
@@ -7941,9 +8219,13 @@ const PROMOTED_ARTICLES = [
     
     // Also update userTrades locally so history tab reflects the new trade immediately
     setUserTrades(prev => {
-      const exists = prev.find(t => String(t.id) === String(newTrade.id) || String(t.id) === String(newTradeId));
+      const exists = prev.find(t => 
+        String(t.id) === String(newTrade.id) || 
+        String(t.id) === String(newTradeId) ||
+        ((t as any).firebaseId && String((t as any).firebaseId) === String(newTradeId))
+      );
       if (exists) return prev;
-      const combined = [{ ...newTrade, status: 'Open' }, ...prev];
+      const combined = [{ ...newTrade, firebaseId: newTradeId, firebase_id: newTradeId, status: 'Open' }, ...prev];
       combined.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       return combined.slice(0, 100);
     });
@@ -7951,6 +8233,7 @@ const PROMOTED_ARTICLES = [
        console.warn("Trade entry failed:", error.message);
        toast.error("Internal error. Please refresh.");
     } finally {
+       isPlacingTradeRef.current = false;
        setIsPlacingTrade(false);
     }
   };
@@ -7994,7 +8277,7 @@ const PROMOTED_ARTICLES = [
     return (
       <div key={`trade-env-${idx}`} className={`${isMultiChart && !isMobile ? 'flex-1 flex flex-row border-b border-white/5 last:border-0' : 'flex-1 flex flex-col md:flex-row h-full'} overflow-hidden relative min-h-0`}>
         <div className="flex-1 flex flex-col relative min-h-[300px] h-full min-w-0">
-          <main className="flex-1 relative bg-[#131417] overflow-hidden">
+          <main className="flex-1 relative bg-[#1e1f25] overflow-hidden">
              {/* Tournament Info Bar */}
              <AnimatePresence>
                 {accountType === 'tournament' && activeTournamentId && (
@@ -8083,6 +8366,56 @@ const PROMOTED_ARTICLES = [
           {/* Chart Container */}
             <div className="relative w-full h-full">
               <div ref={containerRef} className="absolute top-0 left-0 right-0 bottom-0 w-full" style={{ touchAction: "none" }} />
+              
+              {/* Binomo Style Custom Price Line Overlay */}
+              <div className="absolute inset-0 pointer-events-none z-[50]">
+                <svg className="w-full h-full overflow-visible">
+                  {/* Left of current price: subtle dotted line */}
+                  <line
+                    id={`custom-price-line-left-${idx}`}
+                    stroke="#606477"
+                    strokeWidth="1.2"
+                    strokeDasharray="2 3"
+                    x1="0"
+                    y1="-100"
+                    x2="0"
+                    y2="-100"
+                    style={{ transition: 'stroke 0.3s ease' }}
+                  />
+                  {/* Right of current price: solid slate/blue line leading to axis */}
+                  <line
+                    id={`custom-price-line-right-${idx}`}
+                    stroke="#787c94"
+                    strokeWidth="1.2"
+                    x1="0"
+                    y1="-100"
+                    x2="100%"
+                    y2="-100"
+                    style={{ transition: 'stroke 0.3s ease' }}
+                  />
+                  
+                  {/* Custom Price Badge (Chevron pointed tag) */}
+                  <g id={`custom-price-badge-group-${idx}`} style={{ display: 'none' }}>
+                    <path
+                      id={`custom-price-badge-bg-${idx}`}
+                      fill="#52586b"
+                      stroke="rgba(255, 255, 255, 0.15)"
+                      strokeWidth="1"
+                    />
+                    <text
+                      id={`custom-price-badge-text-${idx}`}
+                      x="40"
+                      y="11"
+                      dominantBaseline="central"
+                      fill="#ffffff"
+                      fontSize="11px"
+                      fontWeight="700"
+                      fontFamily="JetBrains Mono, Menlo, monospace"
+                      textAnchor="middle"
+                    />
+                  </g>
+                </svg>
+              </div>
               
               {/* Chart Loading Overlay */}
               <AnimatePresence>
@@ -8393,7 +8726,7 @@ const PROMOTED_ARTICLES = [
                           }} 
                           className={`w-[40px] h-[40px] flex items-center justify-center transition-all rounded-[12px] ${showChartTypeModal ? 'bg-[#3b3c43] text-white shadow-lg' : 'bg-[#27282e] text-[#8e8f93] hover:text-white hover:bg-[#323339]'}`}
                       >
-                          <Icons.SlidersVertical size={19} strokeWidth={1.8} />
+                          {React.createElement(chartTypeOptions.find(o => o.id === chartType)?.Icon || CandleIcon, { size: 19, strokeWidth: 1.8 })}
                       </button>
 
                       {/* Indicators Button (Compass) */}
@@ -8455,7 +8788,7 @@ const PROMOTED_ARTICLES = [
                           }} 
                           className={`w-[40px] h-[40px] flex items-center justify-center transition-all rounded-[10px] ${showChartTypeModal ? 'bg-[#3b3c43] text-white' : 'bg-[#25262b] text-[#9ea0a5] active:bg-[#323339]'}`}
                       >
-                          <Icons.SlidersVertical size={20} strokeWidth={1.8} />
+                          {React.createElement(chartTypeOptions.find(o => o.id === chartType)?.Icon || CandleIcon, { size: 20, strokeWidth: 1.8 })}
                       </button>
 
                       <button 
@@ -8612,8 +8945,8 @@ const PROMOTED_ARTICLES = [
       </div>
 
       {/* DESKTOP TRADING PANEL - Screenshot Matched */}
-      <aside className="hidden md:flex w-[260px] bg-[#1a1b1f] border-l border-white/5 flex-col shrink-0 z-30 overflow-hidden">
-        <div className="flex flex-col p-4 gap-4 shrink-0">
+      <aside className="hidden md:flex w-[260px] bg-[#1a1b1f] border-l border-white/5 flex-col shrink-0 z-30 overflow-y-auto scrollbar-thin">
+        <div className="flex flex-col p-3 md:p-4 gap-2.5 md:gap-4 my-auto min-h-max w-full">
           
           {/* Amount Input */}
           <div className="flex flex-col gap-2">
@@ -8690,7 +9023,7 @@ const PROMOTED_ARTICLES = [
           <div className="flex items-center justify-between py-1 px-1">
             <div className="flex items-center gap-2">
               <span className="text-[#8e9297] text-[15px] font-medium">{t('earnings')}</span>
-              <span className="text-[#00c980] text-[15px] font-bold">+80%</span>
+              <span className="text-[#00c980] text-[15px] font-bold">+{markets[activeAsset]?.payout || 80}%</span>
             </div>
             <div className="text-white font-bold text-[18px] tracking-tight">
               <span>{getCurrencySymbol(userCurrency)}</span>
@@ -10397,7521 +10730,318 @@ const PROMOTED_ARTICLES = [
                     setAssetSearch("");
                     setActiveTab("trade");
                   }}
-                  className="text-[#a6aeb9] hover:text-white transition-colors"
-                >
-                  <X size={20} strokeWidth={1.5} />
-                </button>
-              </div>
-
-              {/* Asset Category Tabs */}
-              <div className="flex w-full border-b border-[#2C2D33] mb-4">
-                {["FTT", "5ST", "DRT", "CFD"].map((tab) => (
-                  <button
-                    key={tab}
-                    onClick={() => setAssetGroup(tab)}
-                    className={`flex-1 pb-3 text-center text-[13px] font-bold tracking-wide transition-all relative ${
-                      assetGroup === tab
-                        ? "text-white"
-                        : "text-[#a6aeb9] hover:text-white/80"
-                    }`}
-                  >
-                    {tab}
-                    {assetGroup === tab && (
-                      <motion.div 
-                        layoutId="activeTabUnderline"
-                        className="absolute bottom-[-1px] left-0 right-0 h-[2px] bg-white z-10" 
-                      />
-                    )}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Content Area */}
-            <div className="flex-1 overflow-y-auto px-5 pt-2 pb-6 custom-scrollbar">
-              <div className="flex items-center justify-center gap-1.5 mb-5 text-[12px] font-bold">
-                <span className="text-[#a6aeb9]">{Object.keys(markets).filter(name => !isRealMarketClosed(name) && !markets[name].hidden).length} in total</span>
-                <span className="text-[#a6aeb9] opacity-30">â€¢</span>
-                <span className="text-[#00C980]">{Object.entries(markets).filter(([name, m]: [string, any]) => !isRealMarketClosed(name) && !m.hidden).length} available</span>
-              </div>
-
-              {/* Search Bar */}
-              <div className="relative mb-5 group">
-                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-                  <Search size={18} className="text-[#a6aeb9] group-focus-within:text-white transition-colors" />
-                </div>
-                <input
-                  ref={assetSearchRef}
-                  type="text"
-                  placeholder={t('search')}
-                  value={assetSearch}
-                  onChange={(e) => setAssetSearch(e.target.value)}
-                  className="block w-full pl-10 pr-10 py-[11px] rounded-xl bg-[#1a1b1f] border border-[#2C2D33] focus:border-white/20 text-white placeholder-[#7b8390] focus:outline-none transition-all text-[14px] font-medium shadow-inner"
-                />
-                {assetSearch && (
-                  <button
-                    onClick={() => setAssetSearch("")}
-                    className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-[#a6aeb9] hover:text-white transition-colors"
-                  >
-                    <div className="w-5 h-5 bg-white/5 rounded-full flex items-center justify-center">
-                      <X size={12} />
-                    </div>
-                  </button>
-                )}
-              </div>
-
-              {/* Filters Horizontal Scroll Chips */}
-              <div className="flex items-center gap-2 mb-6 overflow-hidden relative">
-                <div className="flex gap-2.5 overflow-x-auto scrollbar-hide pr-8 scroll-smooth" id="category-chips">
-                  {["All", "Crypto", "Currencies", "Commodities", "Stocks"].map((cat) => {
-                    const activeMarkets = Object.entries(markets).filter(([name, d]: [string, any]) => {
-                      if (d.hidden) return false;
-                      if (isRealMarketClosed(name)) return false;
-                      return true;
-                    });
-                    const totalCountInfo = activeMarkets.length;
-                    
-                    const count = activeMarkets.filter(([name, data]: [string, any]) => {
-                      if (cat === "All") return true;
-                      const catType = (data?.category || '').toLowerCase();
-                      if (cat === "Crypto") return catType === 'crypto' || name.includes('BTC') || name.includes('ETH') || name.includes('SOL') || name.includes('DOGE') || name.includes('XRP') || name.includes('LTC') || name.includes('ADA') || name.includes('BNB') || name.includes('DOT') || name.includes('AVAX') || name.includes('IDX') || name.includes('Crypto');
-                      if (cat === "Commodities") return catType === 'commodity' || name.includes('Gold') || name.includes('Silver') || name.includes('Oil') || name.includes('XAU') || name.includes('XAG') || name.includes('Brent') || name.includes('Crude');
-                      if (cat === "Stocks") return catType === 'stock' || name.includes('Apple') || name.includes('Tesla') || name.includes('Microsoft') || name.includes('Amazon') || name.includes('Alphabet') || name.includes('Meta') || name.includes('NVIDIA') || name.includes('Yum') || name.includes('Boeing') || name.includes('Intel') || name.includes('Netflix') || name.includes('Inc') || name.includes('Corp');
-                      if (cat === "Currencies") return catType === 'forex' || catType === 'currencies' || (name.includes('/') && !name.includes('BTC') && !name.includes('ETH') && !name.includes('SOL') && !name.includes('DOGE') && !name.includes('XRP') && !name.includes('IDX'));
-                      return false;
-                    }).length;
-
-                    return (
-                      <button
-                        key={cat}
-                        onClick={() => setAssetCategory(cat)}
-                        className={`px-3 py-[4px] rounded-full text-[12px] font-bold whitespace-nowrap flex items-center gap-1.5 shrink-0 transition-all border ${
-                          assetCategory === cat
-                            ? "bg-white text-black border-white"
-                            : "bg-transparent text-[#a6aeb9] hover:text-white border-[#2C2D33] hover:border-[#4B4C53]"
-                        }`}
-                      >
-                        {cat} <span className={assetCategory === cat ? "opacity-60" : "text-[#7b8390] text-[11px]"}>{cat === "All" ? totalCountInfo : count}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="absolute right-0 top-1/2 -translate-y-1/2 bg-gradient-to-l from-[#222329] via-[#222329] to-transparent pl-4 pointer-events-none">
-                  <ChevronRight size={18} className="text-[#a6aeb9]" />
-                </div>
-              </div>
-
-              {/* Table Header */}
-              <div className="flex items-center justify-between px-2 mb-3 border-b border-[#2C2D33] pb-2">
-                <span className="text-[#7b8390] text-[11px] font-bold tracking-wide">Asset</span>
-                <div className="flex items-center">
-                  <div className="flex gap-1 items-center w-[70px] justify-end">
-                    <span className="text-[#7b8390] text-[11px] font-bold tracking-wide">Profit</span>
-                    <Info size={11} className="text-[#7b8390]" />
-                  </div>
-                  <div className="w-[70px] text-right">
-                     <span className="text-[#7b8390] border-b border-dashed border-[#7b8390]/50 text-[11px] font-bold tracking-wide cursor-help">For VIP</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Asset List */}
-              <div className="flex flex-col pb-6 h-full">
-                {(() => {
-                  const cleanQuery = assetSearch.trim().toLowerCase();
-                  const cleanAlphaQuery = cleanQuery.replace(/[^a-z0-9]/g, '');
-
-                  const filteredAssets = Object.entries(markets)
-                    .filter(([name, data]: [string, any]) => {
-                      if (data.hidden) return false;
-                      if (isRealMarketClosed(name)) return false;
-                      
-                      if (assetGroup === "5ST") {
-                        if (!["Crypto IDX", "EUR/USD (OTC)", "EUR/GBP (OTC)", "AUD/CAD (OTC)", "EUR/JPY (OTC)", "USD/CHF (OTC)", "EUR/AUD (OTC)", "GBP/CAD (OTC)"].includes(name)) return false;
-                      }
-                      
-                      let matchesSearch = true;
-                      if (cleanQuery) {
-                        const nameLower = name.toLowerCase();
-                        const nameAlpha = nameLower.replace(/[^a-z0-9]/g, '');
-                        matchesSearch = nameLower.includes(cleanQuery) || (cleanAlphaQuery !== '' && nameAlpha.includes(cleanAlphaQuery));
-                      }
-
-                      if (!matchesSearch) return false;
-
-                      if (assetCategory === "All") return true;
-                      const catType = (data?.category || '').toLowerCase();
-                      if (assetCategory === "Crypto") return catType === 'crypto' || name.includes('BTC') || name.includes('ETH') || name.includes('SOL') || name.includes('DOGE') || name.includes('XRP') || name.includes('LTC') || name.includes('ADA') || name.includes('BNB') || name.includes('DOT') || name.includes('AVAX') || name.includes('IDX') || name.includes('Crypto');
-                      if (assetCategory === "Commodities") return catType === 'commodity' || name.includes('Gold') || name.includes('Silver') || name.includes('Oil') || name.includes('XAU') || name.includes('XAG') || name.includes('Brent') || name.includes('Crude');
-                      if (assetCategory === "Stocks") return catType === 'stock' || name.includes('Apple') || name.includes('Tesla') || name.includes('Microsoft') || name.includes('Amazon') || name.includes('Alphabet') || name.includes('Meta') || name.includes('NVIDIA') || name.includes('Yum') || name.includes('Boeing') || name.includes('Intel') || name.includes('Netflix') || name.includes('Inc') || name.includes('Corp');
-                      if (assetCategory === "Currencies") return catType === 'forex' || catType === 'currencies' || (name.includes('/') && !name.includes('BTC') && !name.includes('ETH') && !name.includes('SOL') && !name.includes('DOGE') && !name.includes('XRP') && !name.includes('IDX'));
-                      return true;
-                    })
-                    .sort((a: [string, any], b: [string, any]) => b[1].payout - a[1].payout);
-
-                  if (filteredAssets.length === 0) {
-                    return (
-                      <div className="py-20 flex flex-col items-center justify-center opacity-40">
-                        <Search size={40} className="mb-4 stroke-[#a6aeb9]" />
-                        <p className="text-[#a6aeb9] font-bold uppercase tracking-widest text-[11px]">{t('noAssetsFound')}</p>
-                        {assetSearch && <p className="text-[#7b8390] text-[10px] mt-2 font-medium italic">Try checking other categories</p>}
-                      </div>
-                    );
-                  }
-
-                  return filteredAssets.map(([assetName, assetData]: [string, any], i: number) => (
-                    <div
-                      key={`${assetName}-${i}`}
-                      onClick={() => {
-                        setChartLoading(true);
-                        setActiveAsset(assetName);
-                        setActiveTab("trade");
-                        setAssetSearch("");
-                        setAssetCategory("All");
-                        const is5ST = assetGroup === "5ST";
-                        setIs5STActive(is5ST);
-                        const targetTimeframe = is5ST ? "1 second" : timeframeRef.current;
-                        if (is5ST) {
-                          setTimeframe("1 second");
-                          timeframeRef.current = "1 second";
-                        }
-                        if (socketRef.current) {
-                           socketRef.current.emit('request_initial_data', { 
-                             asset: assetName, 
-                             timeframe: targetTimeframe, 
-                             accountType: accountTypeRef.current, 
-                             userId: auth.currentUser?.uid,
-                             isSwitch: true 
-                           });
-                        }
-                        // Fallback safety
-                        setTimeout(() => setChartLoading(false), 3000);
-                      }}
-                      className={`group flex items-center justify-between py-[12px] px-2 cursor-pointer transition-all rounded-[6px] mb-1 ${
-                        activeAsset === assetName ? "bg-[#33353e] hover:bg-[#3a3d46]" : "hover:bg-[#2C2D33]"
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-7 h-7 flex justify-center items-center overflow-hidden">
-                          <AssetLogo name={assetName} />
-                        </div>
-                        <div className="flex flex-col">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-white text-[13px] tracking-tight leading-tight">
-                              {assetName}
-                            </span>
-                            {assetData.isFrozen && (
-                              <span className="text-[9px] font-bold text-sky-400 bg-sky-950/60 border border-sky-800/50 px-1.5 py-0.2 select-none rounded flex items-center gap-0.5 tracking-wide uppercase">
-                                <Snowflake size={8} /> {assetData.freezeReason === 'maintenance' ? 'Maint' : 'Volat'}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center">
-                        <div className="text-center w-[70px]">
-                           <span className="text-[#00C980] font-bold text-[14px]">{assetData.payout}%</span>
-                        </div>
-                        <div className="text-right w-[70px]">
-                           <span className="text-white font-bold text-[14px]">{assetData.payout + 2}%</span>
-                        </div>
-                      </div>
-                    </div>
-                  ));
-                })()}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* HELP CENTER VIEW */}
-      {activeTab === "help-center" && (
-        <div className="fixed inset-0 z-[160] flex flex-col overflow-hidden bg-[#0a0b0d]">
-          <div className="w-full h-full flex flex-col relative text-white z-50">
-            {/* Hero Heading */}
-            <div className="bg-[#0a0b0d] px-6 pt-12 pb-6 border-b border-white/5 flex items-center gap-3">
-               <button 
-                 onClick={() => setActiveTab("trade")}
-                 className="p-2 ml-4 text-gray-400 hover:text-white transition-colors active:scale-95 flex items-center justify-center rounded-full hover:bg-white/5"
-               >
-                 <ChevronLeft size={28} />
-               </button>
-               <h2 className="text-[28px] font-bold text-white leading-tight tracking-normal">How can we help?</h2>
-            </div>
-
-            {/* Content Area */}
-            <div className="flex-1 overflow-y-auto bg-[#0a0b0d] pb-20 scrollbar-hide">
-               {/* Categories Grid */}
-               <div className="max-w-[500px] px-6 py-2 space-y-6">
-                  <div className="flex flex-col gap-6">
-                    {HELP_CATEGORIES.map((cat) => (
-                      <button 
-                        key={`help-cat-${cat.id}`}
-                        onClick={() => {
-                          if (cat.id === 'about') {
-                            navigate("/about-us");
-                          }
-                        }}
-                        className="flex items-center gap-6 group text-left py-2"
-                      >
-                        <div className="w-[72px] h-[72px] rounded-full bg-[#1e232b] flex items-center justify-center flex-shrink-0 border border-white/10 group-hover:border-white/20 transition-all duration-300">
-                           <cat.icon size={28} className={cat.color} />
-                        </div>
-                        <span className="text-[20px] font-bold text-white group-hover:text-yellow-500 transition-colors tracking-tight leading-none">{cat.title}</span>
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Promoted Articles */}
-                  <div className="pt-12">
-                     <h2 className="text-[24px] font-black text-white mb-6 uppercase tracking-tighter leading-none">Promoted articles</h2>
-                     <div className="flex flex-col gap-4">
-                        {PROMOTED_ARTICLES.map((article, idx) => (
-                          <button key={`help-promo-article-${idx}`} className="text-[16px] font-bold text-yellow-500/80 hover:text-yellow-500 text-left transition-colors whitespace-normal leading-relaxed hover:underline underline-offset-8">
-                             {article}
-                          </button>
-                        ))}
-                     </div>
-                  </div>
-               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TOURNAMENTS DRAWER */}
-      {activeTab === "tournaments" && (
-        <div className="fixed md:absolute inset-y-0 left-0 w-full max-w-full md:max-w-[400px] md:left-[68px] md:right-auto md:w-[400px] z-[150] flex flex-col overflow-hidden bg-[#1f2026] border-r border-white/5 shadow-2xl animate-in slide-in-from-left duration-300">
-           {/* Header */}
-           <div className="h-16 flex items-center justify-between px-6 border-b border-white/5 shrink-0 bg-[#1f2026] z-[210]">
-              <h2 className="text-lg font-black tracking-tight uppercase">Tournaments</h2>
-              <button 
-                 onClick={() => setActiveTab("trade")} 
-                 className="text-gray-400 hover:text-white transition-colors p-1"
-              >
-                 <X size={24} strokeWidth={1.5} />
-              </button>
-           </div>
-
-           {/* Main Content */}
-           <div className="flex-1 overflow-y-auto px-4 py-6 custom-scrollbar bg-[#131417]">
-              <div className="space-y-4">
-                 {tournamentsData.map((tourney, tourneyIdx) => (
-                    <div 
-                       key={`tourney-drawer-${tourney.id}-${tourneyIdx}`} 
-                       className="relative w-full h-[220px] rounded-xl overflow-hidden border border-white/5 shadow-lg bg-[#1c1d22] group"
-                    >
-                       {/* Background Image with Dark Overlays */}
-                       <div className="absolute inset-0">
-                          <img 
-                             src={tourney.imageUrl || 'https://images.unsplash.com/photo-1611974714851-48206138d73e?auto=format&fit=crop&q=80&w=600'} 
-                             className="w-full h-full object-cover opacity-50 group-hover:opacity-75 group-hover:scale-105 transition-all duration-1000" 
-                             alt={tourney.title} 
-                             loading="lazy"
-                             referrerPolicy="no-referrer"
-                          />
-                          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/70 to-transparent"></div>
-                       </div>
-
-                       {/* Content Overlay */}
-                       <div className="absolute inset-0 p-5 flex flex-col justify-between z-10">
-                          {/* Top Left Metadata */}
-                          <div className="flex flex-col gap-2 items-start">
-                             <h3 className="text-white font-extrabold text-[20px] tracking-tight leading-tight group-hover:text-[#ffe24c] transition-colors">
-                                {tourney.title}
-                             </h3>
-                             <div className="inline-flex items-center gap-1.5 bg-black/60 border border-white/10 text-white text-[11px] font-bold px-3 py-1.5 rounded-[8px]">
-                                <span>Until start: {tourney.endTime || '23d 02h'}</span>
-                             </div>
-                          </div>
-
-                          {/* Lock Icon Overlay for Locked/Unregistered tournaments */}
-                          {!userRegistrations.includes(tourney.id) && (
-                             <div className="absolute top-5 right-5 bg-black/40 text-white border border-white/10 rounded-full p-2.5 flex items-center justify-center">
-                                <Lock size={16} className="text-gray-300" />
-                             </div>
-                          )}
-
-                          {/* Bottom Section - Prize Fund and CTA */}
-                          <div className="flex justify-between items-end w-full gap-3">
-                             <div className="flex flex-col">
-                                <span className="text-[#7b8390] text-[10px] font-extrabold uppercase tracking-widest mb-1">
-                                   Prize fund
-                                </span>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                   <span className="text-[#ffe24c] font-extrabold text-[22px] leading-none tracking-tight">
-                                      {formatWithCurrency(Number(String(tourney.prizePool || '0').replace(/,/g, '')), userCurrency)}
-                                   </span>
-                                   <span className="inline-block bg-[#ffe24c]/10 text-[#ffe24c] border border-[#ffe24c]/30 text-[9px] font-black px-1.5 py-0.5 rounded leading-none">
-                                      LIVE ONLY
-                                   </span>
-                                </div>
-                             </div>
-
-                             <div>
-                                {userRegistrations.includes(tourney.id) ? (
-                                   <button
-                                      onClick={() => {
-                                         setActiveTournamentId(tourney.id);
-                                         setAccountType("tournament");
-                                         setActiveTab("trade");
-                                         toast.success(`Switched to "${tourney.title}" Tournament Trading!`);
-                                      }}
-                                      className="bg-[#ffe24c] hover:bg-[#fff080] active:scale-95 text-[#131417] font-black text-[13px] h-[38px] px-5 rounded-[8px] flex items-center justify-center gap-1.5 transition-all shadow-md shrink-0 whitespace-nowrap"
-                                   >
-                                      <Icons.Trophy size={14} />
-                                      Trade now
-                                   </button>
-                                ) : (
-                                   <button
-                                      onClick={() => handleRegisterTournament(tourney)}
-                                      className="bg-[#ffe24c] hover:bg-[#fff080] active:scale-95 text-[#131417] font-black text-[13px] h-[38px] px-5 rounded-[8px] flex items-center justify-center gap-1.5 transition-all shadow-md shrink-0 whitespace-nowrap"
-                                   >
-                                      Read more
-                                   </button>
-                                )}
-                             </div>
-                          </div>
-                       </div>
-                    </div>
-                 ))}
-              </div>
-           </div>
-        </div>
-      )}
-
-      {/* COPY TRADING DRAWER */}
-      {activeTab === "copytrading" && (
-        <div className="fixed md:absolute inset-y-0 left-0 w-full max-w-full md:max-w-[400px] md:left-[68px] md:right-auto md:w-[400px] z-[150] flex flex-col overflow-hidden bg-[#1f2026] border-r border-white/5 shadow-2xl animate-in slide-in-from-left duration-300">
-           {/* Header */}
-           <div className="h-16 flex items-center justify-between px-6 border-b border-white/5 shrink-0 bg-[#1f2026] z-[210]">
-              <h2 className="text-lg font-black tracking-tight uppercase">Copy Trading</h2>
-              <button 
-                 onClick={() => setActiveTab("trade")} 
-                 className="text-gray-400 hover:text-white transition-colors p-1"
-              >
-                 <X size={24} strokeWidth={1.5} />
-              </button>
-           </div>
-           
-           <div className="flex-1 overflow-hidden">
-              <CopyTradingPage hideHeader={true} />
-           </div>
-        </div>
-      )}
-      {/* TRADES HISTORY DRAWER */}
-      {activeTab === "history" && (
-        <div className="fixed md:absolute inset-y-0 left-0 w-full md:w-[50vw] z-[150] flex flex-col overflow-hidden bg-[#131417] border-r border-white/5 shadow-2xl animate-in slide-in-from-left duration-300">
-          <div className="w-full h-full flex flex-col relative text-white z-50">
-            {/* Top Header */}
-            <div className="h-[64px] flex items-center justify-between px-6 bg-[#131417] shrink-0">
-              <div className="flex items-center gap-4">
-                <button
-                  onClick={() => setActiveTab("trade")}
-                  className="text-white hover:text-gray-300 transition-colors p-2 -ml-2"
-                >
-                  <ArrowLeft size={24} strokeWidth={2} />
-                </button>
-                <h2 className="text-[22px] font-black tracking-tight text-white m-0">
-                  Trades
-                </h2>
-              </div>
-              <div className="flex items-center gap-2">
-                 <button className="p-2 text-gray-400 hover:text-white transition-colors">
-                    <Search size={22} />
-                 </button>
-              </div>
-            </div>
-
-            {/* FTT / CFD Pills */}
-            <div className="px-6 py-4 flex gap-2 shrink-0">
-               <button 
-                  onClick={() => setTradeCategory('FTT')}
-                  className={`flex-1 h-[40px] rounded-full transition-all font-bold text-[14px] ${tradeCategory === 'FTT' ? 'bg-[#2a2c31] text-white shadow-lg' : 'bg-transparent text-[#7b8390]'}`}
-               >
-                  FTT
-               </button>
-               <button 
-                  onClick={() => setTradeCategory('CFD')}
-                  className={`flex-1 h-[40px] rounded-full transition-all font-bold text-[14px] ${tradeCategory === 'CFD' ? 'bg-[#2a2c31] text-white shadow-lg' : 'bg-transparent text-[#7b8390]'}`}
-               >
-                  CFD
-               </button>
-            </div>
-
-            {/* Open Trades on Chart Checkbox */}
-            <div className="px-6 pb-4 shrink-0">
-               <div 
-                onClick={() => setShowOpenTradesOnChart(!showOpenTradesOnChart)}
-                className="flex items-center gap-4 bg-[#212226] border border-white/5 p-4 rounded-[18px] cursor-pointer"
-               >
-                  <div className={`relative w-6 h-6 rounded-md flex items-center justify-center transition-all ${showOpenTradesOnChart ? 'bg-[#ffe24c]' : 'bg-[#2a2b30]'}`}>
-                     {showOpenTradesOnChart && <Check size={18} className="text-black" strokeWidth={4} />}
-                  </div>
-                  <span className="text-[15px] font-bold text-white">Open trades on chart</span>
-               </div>
-            </div>
-
-            {/* Open/Closed Tabs */}
-            <div className="px-6 py-2 flex gap-6 border-b border-white/5 bg-[#131417]">
-                <button 
-                    onClick={() => setHistoryTab('open')}
-                    className={`text-[14px] font-bold transition-all relative pb-2 ${historyTab === 'open' ? 'text-[#00ff88]' : 'text-gray-500 hover:text-gray-300'}`}
-                >
-                    OPEN
-                    {historyTab === 'open' && <div className="absolute bottom-0 left-0 right-0 h-[2.5px] bg-[#00ff88] rounded-full shadow-[0_0_8px_rgba(0,255,136,0.5)]" />}
-                </button>
-                <button 
-                    onClick={() => setHistoryTab('closed')}
-                    className={`text-[14px] font-bold transition-all relative pb-2 ${historyTab === 'closed' ? 'text-[#00ff88]' : 'text-gray-500 hover:text-gray-300'}`}
-                >
-                    CLOSED
-                    {historyTab === 'closed' && <div className="absolute bottom-0 left-0 right-0 h-[2.5px] bg-[#00ff88] rounded-full shadow-[0_0_8px_rgba(0,255,136,0.5)]" />}
-                </button>
-            </div>
-
-            {/* Content Area */}
-            <div className="flex-1 overflow-y-auto px-4 py-2 bg-[#131417] relative custom-scrollbar">
-              {historyLoading ? (
-                <div className="space-y-3">
-                  {/* Skeleton Stats Card */}
-                  <div className="flex items-center justify-between mb-4 bg-[#1C1C1E] rounded-xl p-4 border border-white/5 animate-pulse">
-                    <div className="space-y-2">
-                      <div className="w-20 h-2 bg-white/5 rounded" />
-                      <div className="w-12 h-4 bg-white/5 rounded" />
-                    </div>
-                    <div className="space-y-2 items-end flex flex-col">
-                      <div className="w-14 h-2 bg-white/5 rounded" />
-                      <div className="w-20 h-4 bg-white/5 rounded" />
-                    </div>
-                  </div>
-
-                  {/* Skeleton Trade List Items */}
-                  {[1, 2, 3, 4, 5, 6].map((i) => (
-                    <div key={`skeleton-history-${i}`} className="bg-[#1C1C1E] rounded-xl p-4 border border-white/5 flex items-center justify-between animate-pulse">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-white/5" />
-                        <div className="space-y-2">
-                           <div className="w-24 h-3 bg-white/5 rounded" />
-                           <div className="w-16 h-2 bg-white/5 rounded" />
-                        </div>
-                      </div>
-                      <div className="space-y-2 items-end flex flex-col">
-                         <div className="w-14 h-3 bg-white/5 rounded" />
-                         <div className="w-10 h-3 bg-white/5 rounded" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="w-full mx-auto">
-                <div className="flex flex-col pb-20">
-                      {(() => {
-                          const closedTrades = visibleUserTrades.filter(t => t.status !== 'open');
-                          const tradesToDisplay = historyTab === 'open' ? visibleActiveTrades : closedTrades;
-
-                          if (tradesToDisplay.length === 0) {
-                              return (
-                                  <div className="text-center py-12 flex flex-col items-center gap-4">
-                                      <div className="w-16 h-16 bg-[#2a2b30] rounded-full flex items-center justify-center text-gray-600">
-                                          <History size={32} />
-                                      </div>
-                                      <div className="text-gray-500 text-[14px]">No {historyTab} trades found</div>
-                                  </div>
-                              );
-                          }
-
-                          return tradesToDisplay.map((trade: any, idx: number) => {
-                             const isWin = trade.status === 'won';
-                             const isLoss = trade.status === 'lost';
-                             const isDraw = trade.status === 'draw';
-                             const isOpen = trade.status === 'open';
-                             const profit = trade.payoutAmount || (trade.amount * (trade.payout / 100 + 1));
-                             
-                             // Calculate real-time remaining seconds for open trades
-                             const currentMs = nowMs || Date.now();
-                             let expTimeMs = trade.expirationTime || (trade.expiryTime ? (trade.expiryTime < 10000000000 ? trade.expiryTime * 1000 : trade.expiryTime) : null);
-                             
-                             if (!expTimeMs && trade.createdAt && trade.duration) {
-                               const createdMs = typeof trade.createdAt === 'number' ? (trade.createdAt < 10000000000 ? trade.createdAt * 1000 : trade.createdAt) : new Date(trade.createdAt).getTime();
-                               expTimeMs = createdMs + (trade.duration * 1000);
-                             }
-
-                             let remainingSeconds = 0;
-                             if (expTimeMs && typeof expTimeMs === 'number') {
-                               remainingSeconds = Math.max(0, Math.ceil((expTimeMs - currentMs) / 1000));
-                             } else if (typeof trade.timeLeft === 'number') {
-                               remainingSeconds = Math.max(0, trade.timeLeft);
-                             }
-
-                             const formatCountdownStr = (sec: number) => {
-                               if (sec <= 0) return '00:00';
-                               const m = Math.floor(sec / 60);
-                               const s = sec % 60;
-                               return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-                             };
-
-                             return (
-                               <div
-                                 key={`trade-list-item-${trade.id || 'no-id'}-${idx}`}
-                                 className="bg-[#212226] hover:bg-[#2a2b31] rounded-[20px] p-5 flex flex-col transition-all cursor-pointer mb-3 relative group"
-                                 onClick={() => {
-                                   setSelectedTrade(trade);
-                                   setActiveTab("history-detail");
-                                 }}
-                               >
-                                 <div className="flex justify-between items-start mb-2">
-                                     <div className="flex items-center gap-4">
-                                         <div className="relative">
-                                            <AssetLogo name={trade.asset} size={36} />
-                                         </div>
-                                         <div className="flex flex-col">
-                                            <div className="flex items-center gap-2">
-                                               <span className="text-[16px] font-black text-white tracking-tight">{trade.asset}</span>
-                                               <span className="text-[14px] text-gray-500 font-bold">{trade.payout}%</span>
-                                            </div>
-                                         </div>
-                                     </div>
-                                     <div className="flex flex-col items-end">
-                                        {isOpen ? (
-                                           <div className="flex items-center gap-1.5 px-3 py-1 bg-[#ffe24c]/15 border border-[#ffe24c]/40 rounded-full shadow-[0_0_12px_rgba(255,226,76,0.25)]">
-                                              <Clock size={13} className="text-[#ffe24c] animate-pulse" />
-                                              <span className="text-[13px] font-black text-[#ffe24c] font-mono tracking-wider">
-                                                 {formatCountdownStr(remainingSeconds)}
-                                              </span>
-                                           </div>
-                                        ) : (
-                                           <span className={`text-[16px] font-black tracking-tight ${isWin ? "text-white" : "text-gray-500"}`}>
-                                              {isWin ? `${formatWithCurrency(profit, userCurrency)}` : (isDraw ? formatWithCurrency(trade.amount, userCurrency) : formatWithCurrency(0, userCurrency))}
-                                           </span>
-                                        )}
-                                     </div>
-                                 </div>
-
-                                 <div className="flex justify-between items-center mt-1">
-                                   <div className="flex items-center gap-3">
-                                       <div className={`w-6 h-6 rounded-md flex items-center justify-center ${trade.type === 'up' ? 'bg-[#00C980]' : 'bg-[#FF4D4F]'}`}>
-                                          {trade.type === 'up' ? <ArrowUp size={14} className="text-white" strokeWidth={4} /> : <ArrowDown size={14} className="text-white" strokeWidth={4} />}
-                                       </div>
-                                       <span className="text-[13px] text-gray-400 font-bold">
-                                          {(() => {
-                                              let d: Date;
-                                              try {
-                                                  if (trade.createdAt?.toDate) {
-                                                      d = trade.createdAt.toDate();
-                                                  } else if (trade.createdAt) {
-                                                      const ts = Number(trade.createdAt);
-                                                      d = ts < 9999999999 ? new Date(ts * 1000) : new Date(ts);
-                                                  } else {
-                                                      d = new Date();
-                                                  }
-                                                  if (isNaN(d.getTime())) {
-                                                      d = new Date();
-                                                  }
-                                              } catch (e) {
-                                                  d = new Date();
-                                              }
-                                              return `${d.toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })} Â· ${d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`;
-                                          })()}
-                                       </span>
-                                   </div>
-                                   <div className="flex items-center gap-2">
-                                      {isOpen && (
-                                         <div className="flex items-center gap-1.5 bg-[#00ff88]/10 text-[#00ff88] px-2.5 py-0.5 rounded-full border border-[#00ff88]/20">
-                                           <div className="w-1.5 h-1.5 rounded-full bg-[#00ff88] animate-ping" />
-                                           <span className="text-[11px] font-black tracking-wider uppercase">Live</span>
-                                         </div>
-                                      )}
-                                      <div className="text-[13px] text-gray-300 font-bold">
-                                         {formatWithCurrency(trade.amount, userCurrency)}
-                                      </div>
-                                   </div>
-                                 </div>
-                               </div>
-                             );
-                          });
-                      })()}
-                </div>
-              </div>
-            )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeTab === "calculator" && (
-        <div className="fixed md:absolute inset-0 md:left-[72px] md:right-auto md:w-[380px] z-[150] overflow-hidden bg-[#222226] border-r border-[#3b3b3f] shadow-2xl animate-in slide-in-from-left duration-200">
-          <div className="w-full h-full flex flex-col bg-[#26262a] relative pt-0 text-white z-50 animate-in fade-in duration-200" id="profit-calculator-container">
-            {/* Top Header */}
-            <div className="pt-6 pb-4 px-4 shadow-sm border-b border-[#3b3b3f] flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setActiveTab("trade")}
-                  className="text-gray-300 hover:text-white transition-colors"
-                >
-                  <ChevronLeft size={24} />
-                </button>
-                <h2 className="text-[20px] font-black tracking-tight text-white uppercase flex items-center gap-2">
-                  <Icons.Calculator className="text-[#FFE24C] w-5 h-5 animate-pulse" />
-                  Calculator
-                </h2>
-              </div>
-              <button 
-                onClick={() => {
-                  setCalcAmount(amount);
-                  if (markets && markets[activeAsset]) {
-                    setCalcPayout(markets[activeAsset].payout || 82);
-                  }
-                  toast.success("Synchronized with active trade!");
-                }}
-                title="Sync from trading ticket"
-                className="p-1 px-2.5 rounded bg-white/5 border border-white/5 hover:bg-white/10 text-xs font-mono font-bold text-gray-400 hover:text-white transition-colors"
-              >
-                Reset
-              </button>
-            </div>
-
-            {/* Scrollable Content Area */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-[#222226]" id="profit-calculator-scroll">
-              
-              {/* Active Asset Info Banner */}
-              <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3.5 flex items-center justify-between font-sans">
-                <div>
-                  <div className="text-[10px] text-gray-500 font-extrabold uppercase tracking-widest mb-1">Active Market Asset</div>
-                  <div className="text-[15px] font-black text-white">{activeAsset}</div>
-                </div>
-                <div className="text-right">
-                  <div className="text-[10px] text-gray-500 font-extrabold uppercase tracking-widest mb-1">Standard Yield</div>
-                  <div className="text-[15px] font-bold text-[#FFE24C]">+{markets[activeAsset]?.payout || 82}%</div>
-                </div>
-              </div>
-
-              {/* SECTION: Investment input */}
-              <div className="space-y-3 font-sans">
-                <div className="flex justify-between items-center">
-                  <label className="text-xs font-extrabold text-gray-400 uppercase tracking-widest">Trade Amount</label>
-                  <span className="text-[11px] font-mono text-gray-500">Balance: {accountType === 'demo' ? formatWithCurrency(demoBalance, userCurrency) : formatWithCurrency(realBalance, userCurrency)}</span>
-                </div>
-                
-                {/* Numeric Input container */}
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg font-black text-[#FFE24C]">{userCurrency}</span>
-                  <input
-                    type="number"
-                    value={calcAmount}
-                    onChange={(e) => {
-                      const val = parseFloat(e.target.value) || 0;
-                      setCalcAmount(val);
-                    }}
-                    className="w-full bg-[#1A1A1F] border border-[#3b3b3f] focus:border-[#FFE24C] transition-colors rounded-xl py-3.5 pl-9 pr-4 text-white text-lg font-extrabold outline-none"
-                    placeholder="Enter amount"
-                  />
-                </div>
-
-                {/* Amount Quick Presets */}
-                <div className="grid grid-cols-4 gap-1.5 pt-1">
-                  {[50, 100, 250, 500, 1000, 2500, 5000].map((pAmt) => (
-                    <button
-                      key={`calc-amt-preset-${pAmt}`}
-                      onClick={() => setCalcAmount(pAmt)}
-                      className={`text-xs font-black py-2 rounded-lg border transition-all ${
-                        calcAmount === pAmt
-                          ? "bg-[#FFE24C] text-black border-[#FFE24C]"
-                          : "bg-[#2A2C31]/40 text-gray-300 border-[#3b3b3f]/60 hover:bg-[#2A2C31]"
-                      }`}
-                    >
-                      {userCurrency}{pAmt}
-                    </button>
-                  ))}
-                  <button
-                    onClick={() => {
-                      const currentBal = accountType === 'demo' ? demoBalance : realBalance;
-                      const balInUserCurr = convertFromBase(currentBal, userCurrency);
-                      setCalcAmount(Math.floor(balInUserCurr));
-                    }}
-                    className={`text-xs font-black py-2 rounded-lg border transition-all ${
-                      calcAmount === Math.floor(convertFromBase(accountType === 'demo' ? demoBalance : realBalance, userCurrency))
-                        ? "bg-[#ff4d4d] text-white border-[#ff4d4d]"
-                        : "bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20"
-                    }`}
-                  >
-                    MAX
-                  </button>
-                </div>
-              </div>
-
-              {/* SECTION: Payout percentage slider / preset */}
-              <div className="space-y-3 font-sans">
-                <div className="flex justify-between items-center">
-                  <label className="text-xs font-extrabold text-gray-400 uppercase tracking-widest">Expected Payout (%)</label>
-                  <span className="text-[15px] font-black text-[#FFE24C]">{calcPayout}%</span>
-                </div>
-
-                {/* Range Slider */}
-                <div className="flex items-center gap-4">
-                  <input
-                    type="range"
-                    min="10"
-                    max="100"
-                    value={calcPayout}
-                    onChange={(e) => setCalcPayout(parseInt(e.target.value))}
-                    className="flex-1 h-1 bg-[#1A1A1F] rounded-lg appearance-none cursor-pointer accent-[#FFE24C]"
-                  />
-                </div>
-
-                {/* Payout Presets */}
-                <div className="grid grid-cols-5 gap-1.5 pt-1 font-sans">
-                  {[70, 80, 82, 90, 95].map((pPct) => (
-                    <button
-                      key={`calc-pct-preset-${pPct}`}
-                      onClick={() => setCalcPayout(pPct)}
-                      className={`text-xs font-black py-2 rounded-lg border transition-all ${
-                        calcPayout === pPct
-                          ? "bg-white text-black border-white"
-                          : "bg-[#2A2C31]/40 text-gray-400 border-[#3b3b3f]/60 hover:bg-[#2A2C31]"
-                      }`}
-                    >
-                      {pPct}%
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Divider */}
-              <hr className="border-white/5 my-2" />
-
-              {/* SECTION: Calculation Result Grid */}
-              <div className="space-y-4 font-sans">
-                <h3 className="text-xs font-extrabold text-gray-400 uppercase tracking-widest">Potential Outcomes</h3>
-                
-                <div className="grid grid-cols-1 gap-3">
-                  
-                  {/* Option green: WIN */}
-                  <div className="bg-[#10c877]/5 border border-[#10c877]/20 rounded-2xl p-4 flex justify-between items-center transition-all hover:bg-[#10c877]/10">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-1.5 font-mono">
-                        <div className="w-2 h-2 rounded-full bg-[#10c877] animate-pulse" />
-                        <span className="text-[10px] text-[#10c877] font-black uppercase tracking-widest leading-none">If Trade Wins</span>
-                      </div>
-                      <div className="text-[13px] text-gray-400 font-semibold mt-0.5 font-sans">Net Profit Return</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-2xl font-black text-[#10c877]">
-                        +{userCurrency}{(calcAmount * (calcPayout / 100)).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Option yellow: TOTAL RETURN */}
-                  <div className="bg-yellow-500/[0.03] border border-yellow-500/15 rounded-2xl p-4 flex justify-between items-center font-sans">
-                    <div className="space-y-1">
-                      <span className="text-[10px] text-yellow-500 font-extrabold uppercase tracking-widest font-mono">Total Payout</span>
-                      <div className="text-[13px] text-gray-400 font-semibold mt-0.5">Active + Profit</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xl font-black text-[#FFE24C]">
-                        {userCurrency}{(calcAmount * (1 + calcPayout / 100)).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Option red: LOSS */}
-                  <div className="bg-[#ff5252]/5 border border-[#ff5252]/20 rounded-2xl p-4 flex justify-between items-center transition-all hover:bg-[#ff5252]/10 font-sans">
-                    <div className="space-y-1">
-                      <span className="text-[10px] text-[#ff5252] font-black uppercase tracking-widest font-mono">If Trade Loses</span>
-                      <div className="text-[13px] text-gray-400 font-semibold mt-0.5">Capital at Risk</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xl font-black text-[#ff5252]">
-                        -{userCurrency}{calcAmount.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                      </div>
-                    </div>
-                  </div>
-
-                </div>
-              </div>
-
-              {/* Extra visual metadata: Risk/Reward summary info */}
-              <div className="bg-[#1C1C1F] rounded-xl p-3.5 border border-white/5 text-[12.5px] leading-relaxed text-gray-400 font-medium font-sans">
-                <span className="text-white font-extrabold">Notice:</span> A payout rate of <span className="text-[#FFE24C] font-semibold">{calcPayout}%</span> represents a <span className="text-white font-bold">1 : {parseFloat((calcPayout/100).toFixed(2))}</span> risk-to-reward ratio. In order to break even over a series of trades at this payout, a minimum winning accuracy rate of <span className="text-white font-semibold">{(100 / (1 + calcPayout/100)).toFixed(1)}%</span> is required.
-              </div>
-
-              {/* Apply settings to terminal button */}
-              <div className="pt-4 pb-8 font-sans" id="calc-apply-to-ticket-container">
-                <button
-                  onClick={() => {
-                    if (calcAmount <= 0) {
-                      toast.error("Please enter a valid investment amount!");
-                      return;
-                    }
-                    setAmount(calcAmount);
-                    toast.success("Amount updated on trading ticket!", {
-                      id: "calc-sync-success",
-                    });
-                    setActiveTab("trade");
-                  }}
-                  className="w-full bg-[#309cf4] hover:bg-[#43a6f5] active:scale-[0.98] transition-all text-white font-black py-4 rounded-xl flex items-center justify-center gap-2 text-[14px] shadow-lg shadow-[#309cf4]/10"
-                >
-                  <Icons.Check size={18} />
-                  APPLY AMOUNT {userCurrency}{calcAmount} TO TICKET
-                </button>
-              </div>
-
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* DETAILED TRADE VIEW */}
-      {activeTab === "history-detail" && selectedTrade && (
-        <div className="fixed inset-0 md:left-[72px] z-[600] flex flex-col overflow-hidden bg-[#131417] animate-in fade-in slide-in-from-right duration-300">
-          <div className="w-full h-full flex flex-col relative text-white z-50">
-            {/* Top Header */}
-            <div className="h-[64px] flex items-center gap-4 px-6 bg-[#131417] shrink-0">
-              <button
-                onClick={() => setActiveTab("history")}
-                className="text-white hover:text-gray-300 transition-colors p-2 -ml-2"
-              >
-                <Icons.ArrowLeft size={24} strokeWidth={2} />
-              </button>
-              <h2 className="text-[20px] font-bold tracking-tight text-white">
-                {selectedTrade.asset}
-              </h2>
-            </div>
-
-            {/* Content Area */}
-            <div className="flex-1 overflow-y-auto px-4 py-8 bg-[#131417] relative custom-scrollbar">
-                <div className="w-full mx-auto px-2 md:px-6">
-                  <div className="flex flex-col items-center mb-8">
-                  <div className="w-20 h-20 flex items-center justify-center mb-6">
-                    <AssetLogo name={selectedTrade.asset} size={64} />
-                  </div>
-                  <h2 className="text-[36px] font-black tracking-tight text-white mb-2">
-                    {selectedTrade.asset}
-                  </h2>
-                  <div className="flex items-center gap-2 text-gray-500 font-bold">
-                     <span className="text-[14px]">ID {selectedTrade.id ? String(selectedTrade.id).substring(0, 11).toUpperCase() : '12225378264'}</span>
-                     <span className="text-[14px]">, 1 - 5 m</span>
-                     <div className="flex items-center gap-2 ml-4">
-                        <Calendar size={14} className="text-gray-500" />
-                        <span className="text-[14px]">{new Date(selectedTrade.createdAt || Date.now()).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
-                     </div>
-                  </div>
-                </div>
-
-                <div className="mb-10">
-                  <button 
-                    onClick={() => {
-                      setActiveAsset(selectedTrade.asset);
-                      setActiveTab("trade");
-                    }}
-                    className="w-full bg-[#2a2c31] hover:bg-[#32343a] text-white font-bold text-[17px] py-4 rounded-[12px] transition-all active:scale-[0.98] shadow-lg"
-                  >
-                    Trade on asset
-                  </button>
-                </div>
-
-                <div className="flex flex-col gap-6 mb-8 px-2">
-                   {selectedTrade.status === 'open' && (
-                     <div className="bg-[#ffe24c]/10 border border-[#ffe24c]/30 rounded-[20px] p-5 flex items-center justify-between">
-                       <div className="flex items-center gap-3">
-                         <div className="w-10 h-10 rounded-full bg-[#ffe24c]/20 flex items-center justify-center">
-                           <Clock size={20} className="text-[#ffe24c] animate-spin" style={{ animationDuration: '4s' }} />
-                         </div>
-                         <div>
-                           <div className="text-[13px] font-black uppercase text-[#ffe24c] tracking-wider">Expiration Countdown</div>
-                           <div className="text-[12px] text-gray-400 font-bold">Auto-closes when timer reaches 00:00</div>
-                         </div>
-                       </div>
-                       <div className="text-right">
-                         <div className="text-[22px] font-black font-mono text-[#ffe24c] tracking-wider">
-                           {(() => {
-                             const currentMs = nowMs || Date.now();
-                             const expMs = selectedTrade.expirationTime || (selectedTrade.expiryTime ? (selectedTrade.expiryTime < 10000000000 ? selectedTrade.expiryTime * 1000 : selectedTrade.expiryTime) : null);
-                             let sec = 0;
-                             if (expMs && typeof expMs === 'number') {
-                               sec = Math.max(0, Math.ceil((expMs - currentMs) / 1000));
-                             } else if (typeof selectedTrade.timeLeft === 'number') {
-                               sec = Math.max(0, selectedTrade.timeLeft);
-                             }
-                             const m = Math.floor(sec / 60);
-                             const s = sec % 60;
-                             return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-                           })()}
-                         </div>
-                       </div>
-                     </div>
-                   )}
-                   <div className="flex justify-between items-center">
-                      <span className="text-gray-500 text-[16px] font-bold">Amount</span>
-                      <span className="text-white text-[16px] font-black">{formatWithCurrency(selectedTrade.amount, userCurrency)}</span>
-                   </div>
-                   <div className="flex justify-between items-center">
-                      <span className="text-gray-500 text-[16px] font-bold">Income</span>
-                      <span className={`text-[16px] font-black ${selectedTrade.status === 'won' ? 'text-white' : 'text-white'}`}>
-                        {userCurrency} {selectedTrade.status === 'won' 
-                          ? (selectedTrade.amount * (selectedTrade.payout / 100 + 1)).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})
-                          : (selectedTrade.status === 'lost' ? '0.00' : selectedTrade.status === 'draw' ? selectedTrade.amount.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '0.00')}
-                      </span>
-                   </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-[#212226] rounded-[24px] p-8 flex flex-col shadow-sm">
-                    <h3 className="text-white font-black text-[18px] mb-6">Entry</h3>
-                    <span className="text-white text-[15px] font-bold mb-4">
-                      {selectedTrade.entryPrice?.toFixed(10) || '641.867363825'}
-                    </span>
-                    <div className="flex items-center gap-2 text-gray-500 text-[15px] font-bold">
-                      <Clock size={16} /> {new Date(selectedTrade.createdAt).toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                    </div>
-                  </div>
-
-                  <div className="bg-[#212226] rounded-[24px] p-8 flex flex-col shadow-sm">
-                    <h3 className="text-white font-black text-[18px] mb-6">Exit</h3>
-                    <span className="text-white text-[15px] font-bold mb-4">
-                      {selectedTrade.exitPrice?.toFixed(10) || (selectedTrade.status === 'open' ? 'PENDING' : '641.867363625')}
-                    </span>
-                    <div className="flex items-center gap-2 text-gray-500 text-[15px] font-bold">
-                      <Clock size={16} /> {selectedTrade.closedAt ? new Date(selectedTrade.closedAt).toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) : (selectedTrade.expirationTime ? new Date(selectedTrade.expirationTime).toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--:--')}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-
-      {/* OVERLAY COPY TRADING MODAL */}
-      {activeTab === "copy-trading" && (
-        <div key="copy-trading-overlay" className="fixed inset-0 md:left-[72px] z-[500] flex flex-col overflow-hidden bg-[#121214] animate-in fade-in slide-in-from-bottom duration-300">
-          <div className="w-full h-full flex flex-col relative text-white z-50">
-            {/* Top Header */}
-            <div className="h-[64px] flex items-center justify-between px-6 border-b border-white/5 bg-[#121214] shrink-0">
-              <div className="flex items-center gap-4">
-                <button
-                  onClick={() => setActiveTab("trade")}
-                  className="text-[#9ea0a5] hover:text-white transition-colors p-2 -ml-2"
-                >
-                  <ArrowLeft size={24} strokeWidth={2} />
-                </button>
-                <h2 className="text-[22px] font-black tracking-tight text-white m-0 uppercase">
-                  Copy trading
-                </h2>
-              </div>
-            </div>
-
-            {/* Tabs */}
-            <div className="px-6 bg-[#121214] border-b border-white/5 shrink-0">
-              <div className="flex w-full items-center gap-8">
-                <button className="py-4 text-[14px] font-bold tracking-wider text-[#ffe24c] border-b-2 border-[#ffe24c]">
-                  TRADERS
-                </button>
-                <button className="py-4 text-[14px] font-bold tracking-wider text-[#7b8390] hover:text-white transition-colors">
-                  MY CARD
-                </button>
-              </div>
-            </div>
-
-            {/* Content Area */}
-            <div className="flex-1 overflow-y-auto px-6 py-6 bg-[#0B0B0C] relative custom-scrollbar">
-              <div className="w-full mx-auto px-2 md:px-6">
-                <p className="text-[#9ea0a5] text-[15px] leading-relaxed mb-6">
-                  Copy top traders to learn and grow. Easy way for newbies to get started!
-                </p>
-
-              <div className="flex justify-end mb-6">
-                <button 
-                  onClick={() => setShowCopyTradingHowItWorks(true)}
-                  className="text-[#FFE24C] text-[13px] underline decoration-[#FFE24C] underline-offset-4 decoration-1"
-                >
-                  How it works?
-                </button>
-              </div>
-
-              <div className="flex flex-col gap-4">
-                {masterTraders.map((trader, idx) => (
-                  <div 
-                    key={`master-trader-${idx}-${trader.id || 'master-' + idx}`} 
-                    onClick={() => navigate('/copytrading')}
-                    className="bg-[#3A3C42] rounded-[22px] p-5 border border-white/5 active:bg-[#45474d] transition-all shadow-lg"
-                  >
-                    <div className="flex items-center justify-between mb-5">
-                      <div className="flex items-center gap-3">
-                         <span className="text-[18px]">{trader.country}</span>
-                         <span className="text-[15px] font-bold text-white uppercase">{trader.name}</span>
-                      </div>
-                      {trader.level === 'VIP' && (
-                        <div className="px-2.5 py-0.5 bg-[#FFE24C]/10 border border-[#FFE24C]/30 rounded-md">
-                           <span className="text-[10px] font-black italic text-[#FFE24C] tracking-tighter">VIP</span>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-2 mb-5">
-                       <Users size={15} className="text-gray-500" />
-                       <span className="text-[13px] text-gray-500 font-bold">Copiers: <span className="text-white font-black">{trader.copiersCount}/{trader.maxCopiers}</span></span>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-1 mb-6">
-                       <div className="flex flex-col gap-1.5">
-                          <span className="text-[9px] text-gray-400 font-black uppercase tracking-tighter">Gain per week</span>
-                          <span className="text-[16px] font-black text-[#10c877]">{trader.gainPerWeek}</span>
-                       </div>
-                       <div className="flex flex-col gap-1.5 items-center">
-                          <span className="text-[9px] text-gray-400 font-black uppercase tracking-tighter">Copied trades</span>
-                          <span className="text-[16px] font-black text-white">{trader.copiedTrades}</span>
-                       </div>
-                       <div className="flex flex-col gap-1.5 items-end">
-                          <span className="text-[9px] text-gray-400 font-black uppercase tracking-tighter">Commission</span>
-                          <span className="text-[16px] font-black text-white">{trader.commission}</span>
-                       </div>
-                    </div>
-
-                    <div className="flex flex-col gap-2.5">
-                       <div className="h-[5px] w-full bg-black/30 rounded-full overflow-hidden flex">
-                          <div className="h-full bg-[#10c877]" style={{ width: `${trader.profitRate}%` }}></div>
-                          <div className="h-full bg-[#ff5252]" style={{ width: `${trader.lossRate}%` }}></div>
-                       </div>
-                       <div className="flex justify-between text-[11px] items-center">
-                           <span className="text-[#10c877] font-black">{trader.profitRate}% Profit</span>
-                           <span className="text-[#ff5252] font-black">{trader.lossRate}% Loss</span>
-                       </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      )}
-
-      {/* FULL PAGE PROFILE & INVITE FRIENDS */}
-      {activeTab === "profile" && (
-        <div className="absolute inset-0 z-[160] flex flex-col bg-[#1A1A1D] text-white">
-          {/* Top Bar with Back Button */}
-          <div className="flex items-center gap-3 px-4 pt-6 pb-4 bg-[#222226] border-b border-[#3b3b3f]/50">
-             <button onClick={() => setActiveTab("trade")} className="text-gray-400 hover:text-white">
-               <ChevronLeft size={26} strokeWidth={2} />
-             </button>
-             <h2 className="text-lg font-semibold tracking-wide">Profile</h2>
-          </div>
-
-          {/* Custom Top Tabs */}
-          <div className="flex items-center px-4 bg-[#222226] border-b border-[#3b3b3f]/50 mt-1 overflow-x-auto custom-scrollbar">
-             <button 
-                onClick={() => setActiveProfileTab("account")}
-                className={`py-3 px-2 mr-6 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeProfileTab === 'account' ? 'border-[#00C980] text-white' : 'border-transparent text-gray-400 hover:text-gray-200'}`}
-             >
-               Account Details
-             </button>
-             <button 
-                onClick={() => setActiveProfileTab("invite")}
-                className={`py-3 px-2 mr-6 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeProfileTab === 'invite' ? 'border-[#00C980] text-white' : 'border-transparent text-gray-400 hover:text-gray-200'}`}
-             >
-               Affiliate Program
-             </button>
-          </div>
-
-          {/* Scrollable Content */}
-          <div className="flex-1 overflow-y-auto bg-[#1A1A1D]">
-              {isProfileLoading ? (
-                 <div className="p-4 flex flex-col w-full mx-auto pb-20 animate-pulse">
-                      <div className="flex flex-col items-center mt-8 mb-8">
-                         <div className="w-24 h-24 bg-white/5 rounded-full mb-3" />
-                         <div className="w-32 h-4 bg-white/5 rounded" />
-                      </div>
-                      <div className="w-full h-24 bg-white/5 rounded-2xl mb-10" />
-                      <div className="w-full h-40 bg-white/5 rounded-2xl mb-10" />
-                      <div className="w-full h-60 bg-white/5 rounded-2xl mb-10" />
-                 </div>
-              ) : activeProfileTab === "account" && (
-               <div className="p-4 flex flex-col w-full mx-auto pb-20">
-                  {/* Avatar & ID */}
-                  <div className="flex flex-col items-center mt-8 mb-8">
-                    <div className="relative group">
-                      <div className="w-24 h-24 bg-[#2A2B31] rounded-full flex items-center justify-center mb-3 border-[3px] border-[#3b3b3f] overflow-hidden">
-                        {profilePic ? (
-                          <img src={profilePic} alt="Profile" className="w-full h-full object-cover"  loading="lazy" />
-                        ) : (
-                          <User size={40} className="text-gray-400" />
-                        )}
-                      </div>
-                      <button 
-                        onClick={() => {
-                          const url = prompt("Enter Image URL for profile picture:");
-                          if (url) setProfilePic(url);
-                        }}
-                        className="absolute bottom-2 right-0 w-8 h-8 bg-yellow-500 rounded-full flex items-center justify-center text-black shadow-lg border-2 border-[#1A1A1D] hover:scale-110 active:scale-95 transition-all"
-                      >
-                        <Camera size={16} strokeWidth={2.5} />
-                      </button>
-                    </div>
-                    <span className="text-gray-400 text-sm font-medium">ID: {currentUser?.uid?.slice(-8).toUpperCase() || "180798637"}</span>
-                  </div>
-
-                  {/* Status Card */}
-                  <div className="bg-gradient-to-r from-[#2A2B31] to-[#3A3C42] rounded-2xl p-5 flex items-center justify-between mb-10 cursor-pointer shadow-lg border border-[#3b3b3f]/50 group hover:border-[#4A4B50] transition-colors">
-                     <div className="flex items-center gap-4">
-                       <div className="w-12 h-12 bg-white/10 rounded-full flex items-center justify-center backdrop-blur-sm shadow-inner group-hover:scale-105 transition-transform">
-                         <Shield size={24} className="text-gray-300" />
-                       </div>
-                       <div>
-                         <div className="flex items-center gap-2">
-                           <h2 className="text-xl font-bold text-white mb-0.5 tracking-tight group-hover:text-[#00C980] transition-colors">Standard</h2>
-                           {isVerified ? (
-                             <span className="bg-[#00C980]/20 text-[#00C980] text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Verified</span>
-                           ) : (
-                             <span className="bg-yellow-500/20 text-yellow-500 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Unverified</span>
-                           )}
-                         </div>
-                         <p className="text-gray-400 text-sm">Account Status</p>
-                       </div>
-                     </div>
-                     <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-gray-300 group-hover:bg-white/10 group-hover:text-white transition-all">
-                       <ChevronRight size={18} />
-                     </div>
-                  </div>
-
-                  {/* Achievements */}
-                  <div className="mb-10">
-                     <h3 className="text-xl font-bold mb-5 tracking-tight">Achievements</h3>
-                     <div className="flex items-center justify-between mb-5 px-4">
-                        <div className="w-20 h-20 bg-[#2A2B31] rounded-[24px] flex items-center justify-center rotate-[8deg] border border-[#3b3b3f] shadow-md hover:scale-105 transition-transform cursor-pointer">
-                          <ShieldCheck size={36} className="text-gray-400/80" strokeWidth={1.5} />
-                        </div>
-                        <div className="w-20 h-20 bg-[#2A2B31] rounded-[24px] flex items-center justify-center -rotate-[5deg] border border-[#3b3b3f] shadow-md hover:scale-105 transition-transform cursor-pointer">
-                          <Zap size={36} className="text-gray-400/80" strokeWidth={1.5} />
-                        </div>
-                        <div className="w-20 h-20 bg-[#2A2B31] rounded-[24px] flex items-center justify-center rotate-3 border border-[#3b3b3f] shadow-md relative hover:scale-105 transition-transform cursor-pointer">
-                          <Star size={36} className="text-gray-400/80" strokeWidth={1.5} />
-                          <div className="absolute -bottom-1 -right-1 w-7 h-7 bg-[#1A1A1D] rounded-full flex items-center justify-center border-2 border-[#1A1A1D]">
-                            <Lock size={14} className="text-gray-400" />
-                          </div>
-                        </div>
-                     </div>
-
-                     <button 
-                       onClick={() => setShowAchievementsModal(true)}
-                       className="w-full py-3.5 bg-[#2A2B31] hover:bg-[#323338] active:bg-[#3A3C42] text-white rounded-[14px] font-semibold transition-colors"
-                     >
-                       Show all
-                     </button>
-                  </div>
-
-                  {/* Security */}
-                  <div className="bg-[#222226] rounded-2xl p-6 mb-10 border border-[#3b3b3f]/50 shadow-md">
-                     <h3 className="text-xl font-bold mb-6 tracking-tight">Security</h3>
-                     
-                     <div className="flex items-center gap-4 mb-5">
-                       {is2FAEnabled ? (
-                         <div className="w-14 h-14 bg-[#00C980]/10 rounded-full flex items-center justify-center">
-                           <ShieldCheck size={28} className="text-[#00C980]" strokeWidth={2} />
-                         </div>
-                       ) : (
-                         <div className="w-14 h-14 bg-orange-500/10 rounded-full flex items-center justify-center">
-                           <Unlock size={28} className="text-orange-500" strokeWidth={2} />
-                         </div>
-                       )}
-                       <div>
-                         <p className="text-gray-400 text-sm mb-0.5">Account security level:</p>
-                         {is2FAEnabled ? (
-                           <p className="text-[#00C980] font-bold tracking-wide">HIGH</p>
-                         ) : (
-                           <p className="text-orange-500 font-bold tracking-wide">MEDIUM</p>
-                         )}
-                       </div>
-                     </div>
-
-                     <p className="text-[15px] text-gray-400 mb-6 leading-relaxed">Please ensure you've protected your account and funds by all the available means:</p>
-
-                     <div className="space-y-4 mb-7">
-                       <div className="flex items-center gap-3">
-                         {isPhoneVerified && phone ? (
-                           <div className="w-[22px] h-[22px] rounded-full bg-[#00C980]/20 flex items-center justify-center shrink-0">
-                             <Check size={14} className="text-[#00C980]" strokeWidth={3} />
-                           </div>
-                         ) : (
-                           <div className="w-[22px] h-[22px] rounded-full bg-red-500/20 flex items-center justify-center shrink-0">
-                             <X size={14} className="text-red-500" strokeWidth={3} />
-                           </div>
-                         )}
-                         <span className="text-[15px] text-gray-300">
-                           {isPhoneVerified && phone ? `Phone number confirmed (${phone})` : "Phone number not confirmed"}
-                         </span>
-                         {(!isPhoneVerified || !phone) && (
-                           <button 
-                             onClick={() => {
-                               setPhoneConfirmInput(phone || '');
-                               setPhoneConfirmOtp('');
-                               setPhoneConfirmStep('input');
-                               setShowPhoneConfirmModal(true);
-                             }}
-                             className="text-[12px] font-bold text-white bg-[#1e88e5] hover:bg-[#1976d2] px-3 py-1.5 rounded-lg transition-colors ml-auto shadow-sm"
-                           >
-                             Confirm
-                           </button>
-                         )}
-                       </div>
-                       <div className="flex items-center gap-3">
-                         <div className="w-[22px] h-[22px] rounded-full bg-[#00C980]/20 flex items-center justify-center shrink-0">
-                           <Check size={14} className="text-[#00C980]" strokeWidth={3} />
-                         </div>
-                         <span className="text-[15px] text-gray-300">Email address confirmed</span>
-                       </div>
-                       <div className="flex items-center gap-3">
-                         {is2FAEnabled ? (
-                           <div className="w-[22px] h-[22px] rounded-full bg-[#00C980]/20 flex items-center justify-center shrink-0">
-                             <Check size={14} className="text-[#00C980]" strokeWidth={3} />
-                           </div>
-                         ) : (
-                           <div className="w-[22px] h-[22px] rounded-full bg-red-500/20 flex items-center justify-center shrink-0">
-                             <X size={14} className="text-red-500" strokeWidth={3} />
-                           </div>
-                         )}
-                                                   <span className="text-[15px] text-gray-300">
-                            Two-factor authentication (2FA) is {is2FAEnabled ? 'on' : 'off'}
-                          </span>
-                          {!is2FAEnabled && (
-                            <button 
-                              onClick={() => setIs2FAEnabled(true)}
-                              className="text-[12px] font-bold text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg transition-colors ml-auto"
-                            >
-                              Activate
-                            </button>
-                          )}
-                       </div>
-                     </div>
-
-                     <button className="py-2.5 px-5 bg-[#2A2B31] hover:bg-[#323338] active:scale-[0.98] rounded-xl text-[15px] text-gray-200 font-medium transition-all border border-[#3b3b3f]">
-                       Why is it important?
-                     </button>
-                  </div>
-
-                   {/* Settings */}
-                  <div className="bg-[#222226] rounded-2xl p-6 mb-10 border border-[#3b3b3f]/50 shadow-md">
-                     <h3 className="text-xl font-bold mb-6 tracking-tight">Settings</h3>
-                     
-                     <div className="flex flex-col gap-4">
-                        <div>
-                           <p className="text-gray-400 text-[15px] mb-3">Display Currency</p>
-                           <div className="flex gap-2">
-                              {currencies.slice(0, 3).map((c) => (
-                                 <button
-                                    key={c.code}
-                                    onClick={async () => {
-                                       const oldCurrency = currencies.find(curr => curr.code === userCurrency) || currencies[0];
-                                       const newCurrency = c;
-                                       setAmount(prev => Math.floor((prev / oldCurrency.rate) * newCurrency.rate));
-                                       setDepositAmount(prev => {
-                                          const val = parseFloat(prev);
-                                          if (isNaN(val)) return prev;
-                                          return Math.floor((val / oldCurrency.rate) * newCurrency.rate).toString();
-                                       });
-                                       setUserCurrency(c.code);
-                                       if (currentUser) {
-                                          try {
-                                            await updateDoc(doc(db, "users", currentUser.uid), {
-                                               currency: c.code
-                                            });
-                                            toast.success(`Currency changed to ${c.code}`);
-                                          } catch (e) {
-                                            console.error("Failed to update currency:", e);
-                                            toast.error("Failed to save currency setting");
-                                          }
-                                       }
-                                    }}
-                                    className={`flex-1 py-4 rounded-xl font-bold text-lg transition-all border ${userCurrency === c.code ? "bg-[#00C980] border-[#00C980] text-white shadow-lg" : "bg-[#2A2B31] border-[#3b3b3f] text-gray-400 hover:text-white"}`}
-                                 >
-                                    {c.symbol} {c.code}
-                                 </button>
-                              ))}
-                           </div>
-                           <p className="mt-3 text-[11px] text-gray-500 leading-snug">
-                              Changing the display currency will automatically convert your balance display using real-time rates.
-                           </p>
-                        </div>
-
-                        {/* TIME ZONE SELECTOR */}
-                        <div>
-                           <p className="text-gray-400 text-[15px] mb-3 mt-4">Local Time Zone</p>
-                           <button 
-                              onClick={() => setShowTimeZoneModal(true)}
-                              className="w-full flex bg-[#2A2B31] border border-[#3b3b3f] rounded-xl relative items-center px-4 h-[52px] hover:bg-[#323338] transition-all group"
-                           >
-                              <Icons.Clock size={18} className="text-gray-400 mr-3 group-hover:text-white transition-colors" />
-                              <div className="flex-1 text-left">
-                                <span className="text-white font-medium">
-                                  {timeZone.replace(/_/g, " ")} 
-                                  <span className="text-gray-500 text-xs ml-2">
-                                    {(() => {
-                                      try {
-                                        return `(${new Date().toLocaleTimeString("en-US", { timeZone: timeZone, hour: "2-digit", minute: "2-digit", timeZoneName: "short" })})`;
-                                      } catch (e) {
-                                        return `(${new Date().toLocaleTimeString("en-US", { timeZone: 'UTC', hour: "2-digit", minute: "2-digit", timeZoneName: "short" })})`;
-                                      }
-                                    })()}
-                                  </span>
-                                </span>
-                              </div>
-                              <Icons.ChevronRight size={16} className="text-gray-500 group-hover:text-white transition-colors" />
-                           </button>
-                           <p className="mt-3 text-[11px] text-gray-500 leading-snug">
-                              Sets the time zone used for displaying charts, trades, and market events.
-                           </p>
-                        </div>
-                     </div>
-                  </div>
-
-                  {/* Contacts */}
-                  <div className="mb-10">
-                     <h3 className="text-xl font-bold mb-4 tracking-tight">Contacts</h3>
-                     
-                     <div 
-                       onClick={() => handleOpenPhoneConfirm(phone)}
-                       className="bg-[#222226] rounded-[16px] flex items-center justify-between border border-[#3b3b3f]/50 px-5 py-4 mb-4 shadow-sm cursor-pointer hover:border-[#4A4B50] transition-colors"
-                     >
-                       <div className="flex-1 pr-3">
-                         <label className="text-sm text-gray-500 block mb-1">Phone number</label>
-                         <div className="text-[16px] text-white font-mono font-medium">{phone || "Not configured"}</div>
-                       </div>
-                       {isPhoneVerified && phone ? (
-                         <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                           <span className="text-xs bg-[#00C980]/15 text-[#00C980] font-bold px-2.5 py-1 rounded-full border border-[#00C980]/30 flex items-center gap-1">
-                             <Check size={13} strokeWidth={3} /> Verified
-                           </span>
-                           <button
-                             onClick={() => handleOpenPhoneConfirm(phone)}
-                             className="text-xs text-[#C59B18] hover:underline font-semibold ml-1"
-                           >
-                             Change
-                           </button>
-                         </div>
-                       ) : (
-                         <button
-                           type="button"
-                           onClick={(e) => {
-                             e.stopPropagation();
-                             handleOpenPhoneConfirm(phone);
-                           }}
-                           className="px-4 py-2.5 bg-[#C59B18] hover:bg-[#D4A820] text-[#141519] text-xs font-bold rounded-xl transition-all shadow-md shadow-yellow-500/10 flex items-center gap-1.5"
-                         >
-                           <Smartphone size={14} />
-                           <span>{phone ? "Verify Phone" : "Verify Phone"}</span>
-                         </button>
-                       )}
-                     </div>
-
-                     <div className="bg-[#222226] rounded-[16px] flex items-center justify-between border border-[#3b3b3f]/50 px-5 py-4 shadow-sm">
-                       <div>
-                         <label className="text-sm text-gray-500 block mb-1">Email</label>
-                         <span className="text-[16px] text-white">{currentUser?.email || ""}</span>
-                       </div>
-                       <div className="w-7 h-7 rounded-full bg-[#00C980]/20 flex items-center justify-center">
-                         <Check size={16} className="text-[#00C980]" strokeWidth={3} />
-                       </div>
-                     </div>
-                  </div>
-
-                  {/* Two-factor authentication */}
-                  <div className="mb-10">
-                     <div className="flex items-center justify-between mb-3">
-                       <h3 className="text-xl font-bold tracking-tight">Two-factor authentication (2FA)</h3>
-                       {is2FAEnabled ? (
-                         <span className="bg-[#00C980] text-white text-[11px] font-bold px-2 py-0.5 rounded flex items-center gap-1 uppercase tracking-wider">
-                           <Check size={12} strokeWidth={3} /> On
-                         </span>
-                       ) : (
-                         <span className="bg-red-500 text-white text-[11px] font-bold px-2 py-0.5 rounded flex items-center gap-1 uppercase tracking-wider">
-                           <X size={12} strokeWidth={3} /> Off
-                         </span>
-                       )}
-                     </div>
-                     <p className="text-[15px] text-gray-400 mb-5 leading-relaxed">
-                       Protect your account and funds from illegal access. Get a proven authentication method in addition to your password. <a href="#" className="text-[#007DF0] underline hover:text-[#0091ff]">Learn more</a>
-                     </p>
-                     
-                     {is2FAEnabled ? (
-                       <button
-                         onClick={() => setIs2FAEnabled(false)} 
-                         className="w-full py-3.5 bg-red-500/10 hover:bg-red-500/20 active:scale-[0.98] text-red-500 font-bold text-[16px] rounded-[14px] transition-all border border-red-500/20"
-                       >
-                         Turn off
-                       </button>
-                     ) : (
-                       <button 
-                         onClick={() => setShow2FAModal(true)}
-                         className="w-full py-3.5 bg-[#FFD700] hover:bg-[#F0C800] active:scale-[0.98] text-black font-bold text-[16px] rounded-[14px] transition-all shadow-[0_4px_14px_rgba(255,215,0,0.2)]"
-                       >
-                         Set up
-                       </button>
-                     )}
-                  </div>
-
-                  {/* Platform language */}
-                  <div className="mb-10">
-                     <h3 className="text-xl font-bold mb-4 tracking-tight">{t('language')}</h3>
-                     <div 
-                       onClick={() => setShowLanguageModal(true)}
-                       className="bg-[#222226] rounded-[16px] flex flex-col border border-[#3b3b3f]/50 px-5 py-4 cursor-pointer hover:bg-[#26262a] transition-colors shadow-sm"
-                     >
-                       <div className="flex items-center justify-between">
-                         <div className="flex items-center gap-4">
-                           <div className="text-2xl leading-none">{selectedLanguage.flag}</div>
-                           <span className="text-white text-[16px] font-medium">{selectedLanguage.name}</span>
-                         </div>
-                         <ChevronDown size={22} className="text-gray-500" />
-                       </div>
-                     </div>
-                  </div>
-
-                  {/* Nickname */}
-                  <div className="mb-10">
-                     <h3 className="text-xl font-bold mb-4 tracking-tight">{t('nickname')}</h3>
-                     <div className="bg-[#222226] rounded-[16px] flex flex-col border border-[#3b3b3f]/50 p-1.5 mb-4 shadow-sm">
-                       <div className="px-5 py-3">
-                         <label className="text-sm text-gray-500 block mb-1">Nickname</label>
-                         <input 
-                           type="text" 
-                           placeholder="Nickname" data-test="true" 
-                           value={nickname}
-                           onChange={(e) => setNickname(e.target.value)}
-                           className="w-full bg-transparent text-[16px] text-white focus:outline-none placeholder-gray-600" 
-                         />
-                       </div>
-                       <button 
-                         onClick={async () => {
-                           if (nickname !== savedNickname) {
-                             if (auth.currentUser) {
-                               try {
-                                 await updateDoc(doc(db, 'users', auth.currentUser.uid), { nickname: nickname });
-                               } catch (err) {
-                                 console.error('Error saving nickname:', err);
-                                 toast.error('Failed to save nickname');
-                                 return;
-                               }
-                             }
-                             setSavedNickname(nickname);
-                             setShowSaveToast(true);
-                             setTimeout(() => setShowSaveToast(false), 2000);
-                           }
-                         }}
-                         className={`w-full py-3.5 mt-1 rounded-[12px] font-semibold transition-colors ${nickname !== savedNickname ? 'bg-[#FFD700] hover:bg-[#F0C800] text-black active:scale-[0.98]' : 'bg-[#2A2B31] text-gray-500 cursor-not-allowed'}`}
-                       >
-                         Save
-                       </button>
-                     </div>
-                  </div>
-
-                  {/* Professional KYC Verification Section */}
-                  <div className="bg-[#222226] rounded-2xl p-6 mb-10 border border-[#3b3b3f]/50 shadow-md">
-                     <div className="flex items-center justify-between mb-6">
-                        <h3 className="text-xl font-bold tracking-tight">Identity Verification (KYC)</h3>
-                        <div className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider ${
-                            kycStatus === 'verified' ? 'bg-[#00C980]/10 text-[#00C980]' :
-                            kycStatus === 'pending' ? 'bg-yellow-500/10 text-yellow-500' :
-                            kycStatus === 'rejected' ? 'bg-red-500/10 text-red-500' :
-                            'bg-gray-500/10 text-gray-500'
-                        }`}>
-                            {kycStatus}
-                        </div>
-                     </div>
-                     
-                     <div className="flex items-center gap-4 mb-6">
-                        <div className={`w-14 h-14 rounded-full flex items-center justify-center ${
-                            kycStatus === 'verified' ? 'bg-[#00C980]/10' : 'bg-gray-500/10'
-                        }`}>
-                            <Icons.UserCheck size={28} className={kycStatus === 'verified' ? 'text-[#00C980]' : 'text-gray-500'} />
-                        </div>
-                        <div className="flex-1">
-                            <p className="text-gray-400 text-sm mb-1 leading-relaxed">
-                                {kycStatus === 'verified' ? 'Your account is fully verified. Enjoy higher limits and faster withdrawals.' : 
-                                 kycStatus === 'pending' ? 'Your verification is currently under review. This usually takes 24-48 hours.' :
-                                 kycStatus === 'rejected' ? 'Your verification was rejected. Please check the details and try again.' :
-                                 'Verify your identity to increase your withdrawal limits and secure your account.'}
-                            </p>
-                        </div>
-                     </div>
-
-                     {kycStatus !== 'verified' && kycStatus !== 'pending' && (
-                        <button 
-                            onClick={() => setShowKYCModal(true)}
-                            className="w-full py-4 bg-[#FFD700] hover:bg-[#F0C800] active:scale-[0.98] text-black font-bold text-[16px] rounded-[14px] transition-all shadow-[0_4px_14px_rgba(255,215,0,0.2)]"
-                        >
-                            {kycStatus === 'rejected' ? 'Try Again' : 'Verify Now'}
-                        </button>
-                     )}
-                     
-                     {kycStatus === 'pending' && (
-                         <div className="w-full py-4 bg-gray-500/10 text-gray-500 font-bold text-[16px] rounded-[14px] text-center border border-white/5">
-                             Under Review
-                         </div>
-                     )}
-                  </div>
-
-                  {/* Personal data */}
-                  <div className="mb-10">
-                     <h3 className="text-xl font-bold mb-4 tracking-tight">Personal data</h3>
-                     
-                     <div className="space-y-3 mb-4">
-                       <div className="bg-[#222226] rounded-[16px] flex flex-col border border-[#3b3b3f]/50 px-5 py-3 shadow-sm hover:border-[#4A4B50] transition-colors">
-                         <label className="text-sm text-gray-500 block mb-1">First name</label>
-                         <input 
-                           type="text" 
-                           value={personalData.firstName} 
-                           onChange={(e) => setPersonalData({...personalData, firstName: e.target.value})}
-                           className="w-full bg-transparent text-[16px] text-white focus:outline-none" 
-                         />
-                       </div>
-                       <div className="bg-[#222226] rounded-[16px] flex flex-col border border-[#3b3b3f]/50 px-5 py-3 shadow-sm hover:border-[#4A4B50] transition-colors">
-                         <label className="text-sm text-gray-500 block mb-1">Last name</label>
-                         <input 
-                           type="text" 
-                           value={personalData.lastName} 
-                           onChange={(e) => setPersonalData({...personalData, lastName: e.target.value})}
-                           className="w-full bg-transparent text-[16px] text-white focus:outline-none" 
-                         />
-                       </div>
-                       <div className="bg-[#222226] rounded-[16px] border border-[#3b3b3f]/50 px-5 py-4 flex items-center justify-between cursor-pointer hover:bg-[#26262a] transition-colors shadow-sm relative">
-                         <div>
-                           <label className="text-sm text-gray-500 block mb-1">Gender</label>
-                           <div className="text-white text-[16px]">{personalData.gender}</div>
-                         </div>
-                         <ChevronDown size={22} className="text-gray-500" />
-                         <select 
-                           className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                           value={personalData.gender}
-                           onChange={(e) => setPersonalData({...personalData, gender: e.target.value})}
-                         >
-                           <option value="Male">Male</option>
-                           <option value="Female">Female</option>
-                           <option value="Other">Other</option>
-                         </select>
-                       </div>
-                       <div className="flex gap-3">
-                         <div className="flex-1 bg-[#222226] rounded-[16px] border border-[#3b3b3f]/50 px-4 py-3 flex items-center justify-between cursor-pointer hover:bg-[#26262a] transition-colors shadow-sm relative">
-                           <div>
-                             <label className="text-sm text-gray-500 block mb-1">Day</label>
-                             <div className="text-white text-[16px]">{personalData.day}</div>
-                           </div>
-                           <ChevronDown size={18} className="text-gray-500" />
-                           <select 
-                             className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" 
-                             value={personalData.day} 
-                             onChange={(e) => setPersonalData({...personalData, day: e.target.value})}
-                           >
-                             <option value="--">--</option>
-                             {Array.from({length: 31}, (_, i) => <option key={`day-sel-${i+1}`} value={i+1}>{i+1}</option>)}
-                           </select>
-                         </div>
-                         <div className="flex-1 bg-[#222226] rounded-[16px] border border-[#3b3b3f]/50 px-4 py-3 flex items-center justify-between cursor-pointer hover:bg-[#26262a] transition-colors shadow-sm relative">
-                           <div>
-                             <label className="text-sm text-gray-500 block mb-1">Month</label>
-                             <div className="text-white text-[16px]">{personalData.month}</div>
-                           </div>
-                           <ChevronDown size={18} className="text-gray-500" />
-                           <select 
-                             className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" 
-                             value={personalData.month} 
-                             onChange={(e) => setPersonalData({...personalData, month: e.target.value})}
-                           >
-                             <option value="--">--</option>
-                             {Array.from({length: 12}, (_, i) => <option key={`month-sel-${i+1}`} value={i+1}>{i+1}</option>)}
-                           </select>
-                         </div>
-                         <div className="flex-1 bg-[#222226] rounded-[16px] border border-[#3b3b3f]/50 px-4 py-3 flex items-center justify-between cursor-pointer hover:bg-[#26262a] transition-colors shadow-sm relative">
-                           <div>
-                             <label className="text-sm text-gray-500 block mb-1">Year</label>
-                             <div className="text-white text-[16px]">{personalData.year}</div>
-                           </div>
-                           <ChevronDown size={18} className="text-gray-500" />
-                           <select 
-                             className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" 
-                             value={personalData.year} 
-                             onChange={(e) => setPersonalData({...personalData, year: e.target.value})}
-                           >
-                             <option value="--">--</option>
-                             {Array.from({length: 100}, (_, i) => {
-                                 const year = new Date().getFullYear() - i - 18; // Start from 18 years ago
-                                 return <option key={year} value={year}>{year}</option>
-                             })}
-                           </select>
-                         </div>
-                       </div>
-                     </div>
-                     
-                     <button 
-                       onClick={() => {
-                         if (JSON.stringify(personalData) !== JSON.stringify(savedPersonalData)) {
-                           setSavedPersonalData({...personalData});
-                           setShowSaveToast(true);
-                           setTimeout(() => setShowSaveToast(false), 2000);
-                         }
-                       }}
-                       className={`w-full py-3.5 rounded-[14px] font-semibold transition-colors ${JSON.stringify(personalData) !== JSON.stringify(savedPersonalData) ? 'bg-[#FFD700] hover:bg-[#F0C800] text-black active:scale-[0.98]' : 'bg-[#2A2B31] text-gray-500 cursor-not-allowed'}`}
-                     >
-                       Save
-                     </button>
-                  </div>
-
-                  {/* News and notifications */}
-                  <div className="mb-10">
-                     <h3 className="text-xl font-bold mb-5 tracking-tight">News and notifications</h3>
-                     <div className="space-y-4">
-                       <label className="flex items-start gap-4 cursor-pointer group" onClick={() => setNotifications(prev => ({...prev, promo: !prev.promo}))}>
-                         <div className={`w-[22px] h-[22px] mt-0.5 rounded border flex items-center justify-center transition-all ${notifications.promo ? 'bg-[#00C980] border-[#00C980]' : 'bg-[#2A2B31] border-gray-500 group-hover:border-gray-400'}`}>
-                           {notifications.promo && <Check size={16} className="text-white relative top-[0.5px]" strokeWidth={3} />}
-                         </div>
-                         <span className="text-gray-300 text-[15px] leading-snug pt-0.5 group-hover:text-white transition-colors">Receive newsletter and promotions</span>
-                       </label>
-                       <label className="flex items-start gap-4 cursor-pointer group" onClick={() => setNotifications(prev => ({...prev, info: !prev.info}))}>
-                         <div className={`w-[22px] h-[22px] mt-0.5 rounded border flex items-center justify-center transition-all ${notifications.info ? 'bg-[#00C980] border-[#00C980]' : 'bg-[#2A2B31] border-gray-500 group-hover:border-gray-400'}`}>
-                           {notifications.info && <Check size={16} className="text-white relative top-[0.5px]" strokeWidth={3} />}
-                         </div>
-                         <span className="text-gray-300 text-[15px] leading-snug pt-0.5 group-hover:text-white transition-colors">Allow notifications and informational messages</span>
-                       </label>
-                     </div>
-                  </div>
-
-                  {/* Deposit country */}
-                  <div className="mb-10">
-                     <h3 className="text-xl font-bold mb-4 tracking-tight">Deposit country</h3>
-                     <div 
-                       onClick={() => setShowCountryModal(true)}
-                       className="bg-[#222226] rounded-[16px] border border-[#3b3b3f]/50 px-5 py-4 flex items-center justify-between cursor-pointer hover:bg-[#26262a] transition-colors shadow-sm"
-                     >
-                       <span className="text-white text-[16px] font-medium">{selectedCountry}</span>
-                       <ChevronDown size={22} className="text-gray-500" />
-                     </div>
-                  </div>
-
-                  {/* Link social account */}
-                  <div className="mb-10">
-                     <h3 className="text-xl font-bold mb-4 tracking-tight">Link social account</h3>
-                     <div className="flex gap-4">
-                       <button className="flex-1 bg-[#1877F2] hover:bg-[#166FE5] text-white py-3.5 rounded-[14px] flex items-center justify-center font-bold text-xl transition-colors shadow-md">
-                         f
-                       </button>
-                       <button className="flex-1 bg-white hover:bg-gray-100 text-black py-3.5 rounded-[14px] flex items-center justify-center font-bold text-lg transition-colors shadow-md flex gap-2">
-                         <svg className="w-5 h-5" viewBox="0 0 24 24"><path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" /><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" /><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" /><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" /></svg>
-                       </button>
-                     </div>
-                  </div>
-
-                  <button 
-                    onClick={async () => {
-                      localStorage.removeItem('custom_user_uid');
-                      await signOut(auth);
-                      navigate("/");
-                    }}
-                    className="w-full mt-4 flex items-center justify-center gap-2 px-6 py-4 bg-[#FF4444]/10 hover:bg-[#FF4444]/20 text-[#FF4444] rounded-[16px] transition-colors border border-[#FF4444]/20 shadow-sm"
-                  >
-                    <LogOut size={22} className="text-[#FF4444]" />
-                    <span className="text-[17px] font-bold">Sign out</span>
-                  </button>
-
-               </div>
-             )}
-
-             {activeProfileTab === "invite" && (
-               <div className="p-4 flex flex-col items-center justify-center min-h-full pb-20 mt-10">
-                  <div className="flex flex-col items-center w-full max-w-sm mx-auto">
-                    <div className="relative mb-12 group cursor-pointer mt-10">
-                      <div className="w-32 h-32 relative flex items-center justify-center">
-                        <UserPlus size={110} className="text-[#3b3b3f]" />
-                        <UserPlus size={110} className="text-gray-400 absolute -top-2 -left-2 drop-shadow-md transition-transform" />
-                        <UserPlus size={110} className="text-[#FFD700] absolute -top-4 -left-4 drop-shadow-lg transition-transform" />
-                        <div className="absolute -bottom-2 -right-4 bg-[#00C980] rounded-xl p-2 rotate-12 shadow-lg">
-                          <Plus size={36} className="text-white" strokeWidth={3} />
-                        </div>
-                      </div>
-                    </div>
-
-                    <h2 className="text-[28px] font-bold tracking-tight leading-tight mb-5 text-white text-center">
-                      Bivaax <span className="text-[#FFD700]">Partnership</span> Program
-                    </h2>
-
-                    <p className="text-[#a0a0a5] text-[16px] leading-relaxed max-w-xs mb-12 text-center">
-                      Earn 80% commission for every active lead you refer to Bivaax
-                    </p>
-                  </div>
-
-                  <div className="w-full max-w-sm mx-auto flex flex-col gap-3">
-                    <button 
-                      onClick={() => {
-                        if (appConfig?.affiliateProgramDisabled) {
-                          toast.error("Affiliate program is currently disabled by administrator.");
-                          return;
-                        }
-                        navigate('/affiliate');
-                      }}
-                      className="w-full bg-[#3b3b3f] hover:bg-[#4A4B50] text-[#e1e1e1] font-semibold text-[16px] py-4 rounded-[14px] shadow-sm transition-colors active:scale-[0.98]"
-                    >
-                      Read details
-                    </button>
-                    <button 
-                      onClick={() => {
-                        const refCode = affId || ((currentUser?.uid ? String(currentUser.uid).substring(0, 5).toUpperCase() : 'USER') + Math.floor(Math.random() * 1000 + 1000));
-                        navigator.clipboard.writeText(`${window.location.origin}?ref=${refCode}`);
-                        toast.success("Referral link copied!");
-                      }}
-                      className="w-full bg-[#007DF0] hover:bg-[#0091ff] text-white font-semibold text-[16px] py-4 rounded-[14px] shadow-sm transition-colors active:scale-[0.98] flex items-center justify-center gap-2"
-                    >
-                      <Icons.Copy size={20} />
-                      Copy link
-                    </button>
-                  </div>
-               </div>
-             )}
-
-             {activeProfileTab === "transactions" && (
-                <div className="p-4 flex flex-col w-full mx-auto pb-20 px-2 md:px-10">
-                   <h3 className="text-[13px] font-black tracking-[0.2em] text-gray-500 uppercase mb-8 ml-1">Archive // Financial Vector</h3>
-                   <div className="space-y-3">
-                      {userTransactions.length === 0 ? (
-                        <div className="bg-[#222226] rounded-[24px] p-12 text-center border border-white/5">
-                           <div className="w-20 h-20 bg-white/[0.02] rounded-full flex items-center justify-center mx-auto mb-6">
-                             <Icons.Clock size={36} className="text-gray-700" />
-                           </div>
-                           <p className="text-gray-500 font-medium tracking-tight">No protocol executions detected</p>
-                        </div>
-                      ) : (
-                        userTransactions.map((tx, idx) => (
-                          <div 
-                            key={`tx-${idx}-${tx.id || tx.timestamp || `unknown-${idx}`}`}
-                            className="bg-[#222226] rounded-[24px] border border-white/5 overflow-hidden transition-all hover:border-white/10 group"
-                            onClick={() => setExpandedTx(expandedTx === tx.id ? null : tx.id)}
-                          >
-                             <div className="p-6 flex items-center justify-between cursor-pointer">
-                                <div className="flex items-center gap-5">
-                                   <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-transform group-hover:scale-105 ${tx.type === 'Deposit' ? 'bg-[#00C980]/10 text-[#00C980]' : 'bg-[#FF4D4F]/10 text-[#FF4D4F]'}`}>
-                                      {tx.type === 'Deposit' ? <Icons.Plus size={28} /> : <Icons.Minus size={28} />}
-                                   </div>
-                                   <div>
-                                      <h4 className="font-bold text-white tracking-tight leading-none mb-2 text-[16px]">{tx.type} Execution</h4>
-                                      <p className="text-gray-500 text-[11px] font-bold font-mono uppercase tracking-widest">{tx.dateStr}</p>
-                                   </div>
-                                </div>
-                                <div className="text-right">
-                                   <p className={`font-black text-[18px] tracking-tighter mb-1 ${tx.type === 'Deposit' ? 'text-white' : 'text-gray-300'}`}>
-                                      {tx.type === 'Deposit' ? '+' : '-'}{formatRawCurrency(tx.amount, tx.currency || userCurrency)}
-                                   </p>
-                                   <div className="flex items-center justify-end gap-2">
-                                      <div className={`w-2 h-2 rounded-full ${
-                                         tx.status === 'Completed' ? 'bg-[#00C980]' : 
-                                         tx.status === 'Rejected' ? 'bg-[#FF4D4F]' : 
-                                         'bg-gray-600 animate-pulse'
-                                      }`} />
-                                      <p className={`text-[10px] font-black uppercase tracking-[0.1em] ${
-                                         tx.status === 'Completed' ? 'text-[#00C980]' : 
-                                         tx.status === 'Rejected' ? 'text-[#FF4D4F]' : 
-                                         'text-gray-500'
-                                      }`}>
-                                         {tx.status}
-                                      </p>
-                                   </div>
-                                </div>
-                             </div>
-
-                             {expandedTx === tx.id && (
-                               <div className="px-6 pb-8 pt-2 border-t border-white/5 bg-white/[0.01] animate-in slide-in-from-top-4 duration-300">
-                                  <div className="grid grid-cols-2 gap-6 pt-6">
-                                     <div className="space-y-1.5 focus-within:opacity-100 transition-opacity">
-                                        <p className="text-[10px] text-gray-600 font-black uppercase tracking-[0.25em]">Gateway Protocol</p>
-                                        <p className="text-white text-[14px] font-bold tracking-tight">{tx.method}</p>
-                                     </div>
-                                     <div className="space-y-1.5">
-                                        <p className="text-[10px] text-gray-600 font-black uppercase tracking-[0.25em]">Sequence Node</p>
-                                        <p className="text-white text-[14px] font-bold tracking-tight">{tx.timeStr}</p>
-                                     </div>
-                                     <div className="col-span-2 space-y-1.5 bg-black/20 p-4 rounded-2xl border border-white/5">
-                                        <p className="text-[9px] text-gray-600 font-black uppercase tracking-[0.25em]">Object Reference</p>
-                                        <p className="text-gray-400 text-[11px] font-mono break-all leading-relaxed tracking-wider">{tx.id}</p>
-                                     </div>
-                                     {tx.errorMsg && (
-                                       <div className="col-span-2 bg-[#FF4D4F]/10 border border-[#FF4D4F]/20 rounded-2xl p-4">
-                                          <p className="text-[#FF4D4F] text-[13px] font-bold leading-relaxed">{tx.errorMsg}</p>
-                                       </div>
-                                     )}
-                                     {tx.successMsg && (
-                                       <div className="col-span-2 bg-[#00C980]/10 border border-[#00C980]/20 rounded-2xl p-4">
-                                          <p className="text-[#00C980] text-[13px] font-bold leading-relaxed">{tx.successMsg}</p>
-                                       </div>
-                                     )}
-                                  </div>
-                               </div>
-                             )}
-                          </div>
-                        ))
-                      )}
-                   </div>
-                </div>
-             )}
-          </div>
-        </div>
-      )}
-
-      {/* KYC VERIFICATION MODAL */}
-      {showKYCModal && (
-        <div className="absolute inset-0 z-[600] flex flex-col bg-[#1A1A1D] text-white">
-          <div className="flex items-center gap-3 px-4 pt-6 pb-4 border-b border-[#3b3b3f]/50 bg-[#222226]">
-             <button onClick={() => setShowKYCModal(false)} className="text-gray-400 hover:text-white">
-               <ChevronLeft size={26} strokeWidth={2} />
-             </button>
-             <h2 className="text-lg font-semibold tracking-wide">Verification Process</h2>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto p-6 w-full max-w-md mx-auto">
-            <div className="mb-8">
-              <h2 className="text-2xl font-bold mb-2">Upload Identity Documents</h2>
-              <p className="text-gray-400 text-sm">Please provide clear photos of your documents for faster approval.</p>
-            </div>
-
-            <div className="space-y-6">
-              {/* Personal Details */}
-              <div className="space-y-4">
-                <div>
-                  <label className="text-xs font-black uppercase text-gray-500 tracking-widest block mb-2">Full Name (As on ID)</label>
-                  <input 
-                    type="text" 
-                    className="w-full bg-[#2A2B31] border border-[#3b3b3f] rounded-xl px-4 py-3.5 text-white focus:border-[#FFD700] outline-none transition-colors"
-                    placeholder="e.g. Md Hasan"
-                    value={kycData.fullName}
-                    onChange={(e) => setKycData({...kycData, fullName: e.target.value})}
-                  />
-                </div>
-                
-                <div>
-                  <label className="text-xs font-black uppercase text-gray-500 tracking-widest block mb-2">Document Type</label>
-                  <select 
-                    className="w-full bg-[#2A2B31] border border-[#3b3b3f] rounded-xl px-4 py-3.5 text-white focus:border-[#FFD700] outline-none transition-colors appearance-none"
-                    value={kycData.idType}
-                    onChange={(e) => setKycData({...kycData, idType: e.target.value as any})}
-                  >
-                    <option value="NID">National ID Card</option>
-                    <option value="Passport">Passport</option>
-                    <option value="Driving License">Driving License</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-xs font-black uppercase text-gray-500 tracking-widest block mb-2">ID Number</label>
-                  <input 
-                    type="text" 
-                    className="w-full bg-[#2A2B31] border border-[#3b3b3f] rounded-xl px-4 py-3.5 text-white focus:border-[#FFD700] outline-none transition-colors"
-                    placeholder="Enter ID number"
-                    value={kycData.idNumber}
-                    onChange={(e) => setKycData({...kycData, idNumber: e.target.value})}
-                  />
-                </div>
-              </div>
-
-              {/* File Uploads */}
-                <div className="space-y-6 pt-4">
-                <div className="space-y-3">
-                    <p className="text-xs font-black uppercase text-gray-500 tracking-widest">Front Side of ID</p>
-                     <div 
-                        onClick={() => frontInputRef.current?.click()}
-                        className="w-full h-40 border-2 border-dashed border-[#3b3b3f] rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:border-[#FFD700] transition-colors relative overflow-hidden group bg-[#222226]"
-                    >
-                        <input type="file" ref={frontInputRef} className="hidden" onChange={(e) => handleFileChange(e, 'idFront')} accept="image/*" />
-                        {kycData.idFront ? (
-                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <Icons.RefreshCw className="text-white mb-2" />
-                                <span className="text-xs font-bold">Replace Front</span>
-                            </div>
-                        ) : (
-                            <>
-                                <div className="w-12 h-12 rounded-full bg-[#FFD700]/10 flex items-center justify-center text-[#FFD700] mb-3">
-                                    <Icons.Upload size={24} />
-                                </div>
-                                <span className="text-xs text-gray-400 font-bold">Upload Front</span>
-                            </>
-                        )}
-                        {kycData.idFront && (
-                            <img src={URL.createObjectURL(kycData.idFront)} className="absolute inset-0 w-full h-full object-cover" alt="ID Front"  loading="lazy" />
-                        )}
-                    </div>
-                </div>
-
-                <div className="space-y-3">
-                    <p className="text-xs font-black uppercase text-gray-500 tracking-widest">Back Side of ID</p>
-                    <div 
-                        onClick={() => backInputRef.current?.click()}
-                        className="w-full h-40 border-2 border-dashed border-[#3b3b3f] rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:border-[#FFD700] transition-colors relative overflow-hidden group bg-[#222226]"
-                    >
-                        <input type="file" ref={backInputRef} className="hidden" onChange={(e) => handleFileChange(e, 'idBack')} accept="image/*" />
-                        {kycData.idBack ? (
-                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <Icons.RefreshCw className="text-white mb-2" />
-                                <span className="text-xs font-bold">Replace Back</span>
-                            </div>
-                        ) : (
-                            <>
-                                <div className="w-12 h-12 rounded-full bg-[#FFD700]/10 flex items-center justify-center text-[#FFD700] mb-3">
-                                    <Icons.Upload size={24} />
-                                </div>
-                                <span className="text-xs text-gray-400 font-bold">Upload Back</span>
-                            </>
-                        )}
-                        {kycData.idBack && (
-                            <img src={URL.createObjectURL(kycData.idBack)} className="absolute inset-0 w-full h-full object-cover" alt="ID Back"  loading="lazy" />
-                        )}
-                    </div>
-                </div>
-
-                <div className="space-y-3">
-                    <p className="text-xs font-black uppercase text-gray-500 tracking-widest">Selfie with ID</p>
-                    <div 
-                        onClick={() => setActiveScanner('selfie')}
-                        className="w-full h-40 border-2 border-dashed border-[#3b3b3f] rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:border-[#FFD700] transition-colors relative overflow-hidden group bg-[#222226]"
-                    >
-                        {kycData.selfie ? (
-                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <Icons.RefreshCw className="text-white mb-2" />
-                                <span className="text-xs font-bold">Rescan Selfie</span>
-                            </div>
-                        ) : (
-                            <>
-                                <div className="w-12 h-12 rounded-full bg-[#FFD700]/10 flex items-center justify-center text-[#FFD700] mb-3">
-                                    <Icons.User size={24} />
-                                </div>
-                                <span className="text-xs text-gray-400 font-bold">Take Professional Selfie</span>
-                            </>
-                        )}
-                        {kycData.selfie && (
-                            <img src={URL.createObjectURL(kycData.selfie)} className="absolute inset-0 w-full h-full object-cover" alt="Selfie"  loading="lazy" />
-                        )}
-                    </div>
-                </div>
-              </div>
-
-              <div className="bg-blue-500/10 border border-blue-500/20 p-4 rounded-xl flex gap-3 text-blue-400">
-                <Icons.Info size={20} className="shrink-0" />
-                <p className="text-xs leading-relaxed">
-                  Make sure your face and all document details are clearly visible. Poor quality images will result in rejection.
-                </p>
-              </div>
-
-              <button 
-                onClick={async () => {
-                  if (!kycData.fullName || !kycData.idNumber || !kycData.idFront || !kycData.idBack || !kycData.selfie) {
-                    toast.error("Please provide all required information and photos.");
-                    return;
-                  }
-                  
-                  setIsKYCSubmitting(true);
-                  try {
-                    // Simulate image upload to persistent URLs (placeholder logic)
-                    // In a real app, you would use Firebase Storage here.
-                    const kycPayload = {
-                      userEmail: currentUser?.email,
-                      fullName: kycData.fullName,
-                      idType: kycData.idType,
-                      idNumber: kycData.idNumber,
-                      idFrontUrl: "https://via.placeholder.com/600x400?text=ID+Front", // Dummy URLs
-                      idBackUrl: "https://via.placeholder.com/600x400?text=ID+Back",
-                      selfieUrl: "https://via.placeholder.com/600x600?text=Selfie",
-                      status: "pending"
-                    };
-
-                    const res = await fetch('/api/kyc', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ userId: currentUser?.uid, kycData: kycPayload })
-                    });
-
-                    if (!res.ok) throw new Error('KYC submission failed');
-                    
-                    const result = await res.json().catch(() => ({}));
-                    
-                    if (result.status === 'rejected') {
-                      toast.error(`Verification Rejected: ${result.rejectionReason}`, { duration: 5000 });
-                      setKycStatus("unverified");
-                    } else {
-                      setKycStatus("pending");
-                      toast.success("Verification request submitted successfully!");
-                      setShowKYCModal(false);
-                    }
-                  } catch (e) {
-                    console.error("KYC Error", e);
-                    toast.error("An error occurred. Please try again.");
-                  } finally {
-                    setIsKYCSubmitting(false);
-                  }
-                }}
-                disabled={isKYCSubmitting}
-                className={`w-full py-4 bg-[#FFD700] hover:bg-[#F0C800] text-black font-bold text-[16px] rounded-[14px] transition-all shadow-[0_4px_14px_rgba(255,215,0,0.2)] mb-10 ${isKYCSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
-              >
-                {isKYCSubmitting ? "Submitting..." : "Submit for Verification"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* OVERLAY LANGUAGE SELECTION MODAL */}
-      {showLanguageModal && (
-        <div className="absolute inset-0 z-[600] flex flex-col bg-[#1A1A1D] text-white">
-          {/* Top Bar with Close Button */}
-          <div className="flex items-center gap-3 px-4 pt-6 pb-4 border-b border-[#3b3b3f]/50">
-             <button onClick={() => setShowLanguageModal(false)} className="text-gray-400 hover:text-white ml-auto">
-               <X size={26} strokeWidth={2} />
-             </button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto w-full max-w-sm mx-auto">
-            <h2 className="text-2xl font-bold tracking-tight mb-6 mt-4 text-center">Select Language</h2>
-            <div className="flex flex-col">
-              {LANGUAGES.map((lang) => (
-                <div 
-                  key={lang.code}
-                  onClick={async () => {
-                    setSelectedLanguage(lang);
-                    setLanguage(lang.code as any);
-                    setShowLanguageModal(false);
-                    // Save to Firestore
-                    if (auth.currentUser) {
-                      try {
-                        await updateDoc(doc(db, "users", auth.currentUser.uid), {
-                          language: lang.code
-                        });
-                      } catch (error) {
-                        console.error("Error saving language:", error);
-                      }
-                    }
-                  }}
-                  className={`flex items-center gap-4 px-6 py-4 cursor-pointer hover:bg-[#2A2B31] transition-colors border-b border-[#3b3b3f]/30 ${selectedLanguage.code === lang.code ? 'bg-[#2A2B31]' : ''}`}
-                >
-                  <span className="text-2xl w-8 leading-none text-center">{lang.flag}</span>
-                  <span className="text-lg font-medium text-gray-200">{lang.name}</span>
-                  {selectedLanguage.code === lang.code && (
-                    <div className="w-[20px] h-[20px] rounded-full bg-[#00C980]/20 flex items-center justify-center shrink-0 ml-auto">
-                      <Check size={14} className="text-[#00C980]" strokeWidth={3} />
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* OVERLAY COUNTRY SELECTION MODAL */}
-      {showCountryModal && (
-        <div className="absolute inset-0 z-[600] flex flex-col bg-[#1A1A1D] text-white">
-          {/* Top Bar with Close Button */}
-          <div className="flex items-center gap-3 px-4 pt-6 pb-4 border-b border-[#3b3b3f]/50 bg-[#222226]">
-             <div className="relative flex-1">
-               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
-               <input 
-                 type="text" 
-                 placeholder="Search country..." 
-                 className="w-full bg-[#2A2B31] text-white rounded-xl py-2.5 pl-10 pr-4 focus:outline-none focus:ring-1 focus:ring-[#4A4B50] transition-shadow shadow-inner"
-                 value={countrySearch}
-                 onChange={(e) => setCountrySearch(e.target.value)}
-               />
-             </div>
-             <button onClick={() => { setShowCountryModal(false); setCountrySearch(''); }} className="text-gray-400 hover:text-white">
-               <X size={26} strokeWidth={2} />
-             </button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto">
-            <div className="flex flex-col">
-              {COUNTRIES
-                .filter(c => c.toLowerCase().includes(countrySearch.toLowerCase()))
-                .map((country) => (
-                <div 
-                  key={country}
-                  onClick={() => {
-                    setSelectedCountry(country);
-                    setShowCountryModal(false);
-                    setCountrySearch('');
-                  }}
-                  className={`flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-[#2A2B31] transition-colors border-b border-[#3b3b3f]/20 ${selectedCountry === country ? 'bg-[#26262a]' : ''}`}
-                >
-                  <span className="text-lg font-medium text-gray-300">{country}</span>
-                  {selectedCountry === country && (
-                    <div className="w-5 h-5 rounded-full border border-[rgb(0,201,128)] flex items-center justify-center bg-[rgba(0,201,128,0.1)]">
-                      <div className="w-2.5 h-2.5 bg-[rgb(0,201,128)] rounded-full"></div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* OVERLAY 2FA SETUP MODAL */}
-      {show2FAModal && (
-        <div className="absolute inset-0 z-[600] flex flex-col bg-[#1A1A1D] text-white">
-          <div className="flex items-center gap-3 px-4 pt-6 pb-4 border-b border-[#3b3b3f]/50 bg-[#222226]">
-             <button onClick={() => { setShow2FAModal(false); setTwoFAStep(1); }} className="text-gray-400 hover:text-white">
-               <ChevronLeft size={26} strokeWidth={2} />
-             </button>
-             <h2 className="text-lg font-semibold tracking-wide">Two-factor authentication</h2>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto p-6 max-w-sm mx-auto w-full">
-            {twoFAStep === 1 ? (
-              <div className="flex flex-col h-full pb-10">
-                <div className="flex flex-col items-center justify-center mb-6">
-                  <div className="w-16 h-16 bg-[#FFD700]/10 rounded-2xl flex items-center justify-center mb-4 border border-[#FFD700]/20">
-                    <ShieldCheck size={32} className="text-[#FFD700]" strokeWidth={2} />
-                  </div>
-                  <h2 className="text-2xl font-bold text-center mb-2">Secure your account</h2>
-                  <p className="text-center text-gray-400 leading-relaxed max-w-[280px]">
-                    Choose a method to receive your 2-factor authentication codes.
-                  </p>
-                </div>
-                
-                <div className="flex flex-col gap-3 w-full">
-                  <button 
-                    onClick={handleSetupTerminalAppTfa}
-                    className="w-full relative overflow-hidden group bg-[#222226] hover:bg-[#2A2B31] border border-[#3b3b3f]/50 p-4 rounded-2xl flex items-center gap-4 transition-all"
-                  >
-                    <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0">
-                       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-500"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-                    </div>
-                    <div className="flex border-col text-left flex-1 pl-2">
-                       <div className="font-bold text-[15px] mb-0.5 group-hover:text-[#FFD700] transition-colors">Authenticator App</div>
-                       <div className="text-gray-400 text-[13px]">Google Authenticator, Authy</div>
-                    </div>
-                  </button>
-
-                  <button 
-                    onClick={() => { setTwoFAMode('sms'); setTwoFAStep(2); }}
-                    className="w-full relative overflow-hidden group bg-[#222226] hover:bg-[#2A2B31] border border-[#3b3b3f]/50 p-4 rounded-2xl flex items-center gap-4 transition-all"
-                  >
-                    <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center shrink-0">
-                       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-500"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
-                    </div>
-                    <div className="flex flex-col text-left flex-1 pl-2">
-                       <div className="font-bold text-[15px] mb-0.5 group-hover:text-[#FFD700] transition-colors">SMS Verification</div>
-                       <div className="text-gray-400 text-[13px]">Receive codes via text message</div>
-                    </div>
-                  </button>
-
-                  <button 
-                    onClick={() => { setTwoFAMode('email'); setTwoFAStep(2); }}
-                    className="w-full relative overflow-hidden group bg-[#222226] hover:bg-[#2A2B31] border border-[#3b3b3f]/50 p-4 rounded-2xl flex items-center gap-4 transition-all"
-                  >
-                    <div className="w-12 h-12 rounded-full bg-yellow-500/10 flex items-center justify-center shrink-0">
-                       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-yellow-500"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
-                    </div>
-                    <div className="flex flex-col text-left flex-1 pl-2">
-                       <div className="font-bold text-[15px] mb-0.5 group-hover:text-[#FFD700] transition-colors">Email Verification</div>
-                       <div className="text-gray-400 text-[13px]">Send code to {currentUser?.email}</div>
-                    </div>
-                  </button>
-                </div>
-              </div>
-            ) : twoFAStep === 2 ? (
-              <div className="flex flex-col pt-4">
-                {twoFAMode === 'app' && (
-                  <div className="space-y-6">
-                    <p className="text-gray-400 text-[14px] text-center leading-relaxed">
-                      Scan this QR code with your Authenticator app.
-                    </p>
-                    <div className="w-52 h-52 bg-white rounded-2xl mx-auto flex items-center justify-center p-2 relative overflow-hidden shadow-inner">
-                      {tfaQrUrl ? (
-                         <img src={tfaQrUrl} alt="2FA QR Code" className="w-full h-full object-cover"  loading="lazy" />
-                      ) : (
-                         <div className="w-8 h-8 border-4 border-[#00C980] border-t-transparent rounded-full animate-spin"></div>
-                      )}
-                      {tfaQrUrl && (
-                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                           <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center shrink-0 shadow-lg">
-                             <ShieldCheck size={28} className="text-[#00C980]" />
-                           </div>
-                        </div>
-                      )}
-                    </div>
-                    <div className="bg-[#2A2B31] p-4 rounded-xl border border-white/5">
-                      <p className="text-[11px] text-gray-500 font-bold uppercase tracking-widest text-center mb-1">Manual Entry Key</p>
-                      <p className="text-center font-mono text-[#FFD700] tracking-wider font-bold select-all">{tfaSecret?.base32 || '...'}</p>
-                    </div>
-                    <button onClick={() => setTwoFAStep(3)} className="w-full py-4 bg-[#FFD700] hover:bg-[#F0C800] text-black font-bold text-[16px] rounded-[14px] transition-all">
-                      Continue
-                    </button>
-                  </div>
-                )}
-
-                {twoFAMode === 'sms' && (
-                  <div className="space-y-6">
-                     <p className="text-gray-400 text-[14px] text-center leading-relaxed">
-                      Enter your mobile number to receive a verification code.
-                    </p>
-                    <div className="flex flex-col gap-2">
-                       <label className="text-[12px] text-gray-500 font-bold uppercase tracking-widest pl-1">Phone Number</label>
-                       <div className="relative">
-                          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold border-r border-[#3b3b3f] pr-3">+1</span>
-                          <input 
-                            type="text" 
-                            value={tfaPhoneNumber}
-                            onChange={(e) => setTfaPhoneNumber(e.target.value.replace(/[^0-9- ()]/g, ''))}
-                            placeholder="(555) 000-0000"
-                            className="w-full h-[56px] pl-16 pr-4 bg-[#212124] border border-[#3b3b3f] rounded-xl text-white font-mono placeholder:font-sans focus:border-[#FFD700] focus:outline-none transition-colors text-lg"
-                          />
-                       </div>
-                    </div>
-                    <button 
-                      onClick={() => setTwoFAStep(3)} 
-                      disabled={!tfaPhoneNumber} 
-                      className="w-full py-4 bg-[#FFD700] hover:bg-[#F0C800] text-black font-bold text-[16px] rounded-[14px] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Send SMS Code
-                    </button>
-                  </div>
-                )}
-
-                {twoFAMode === 'email' && (
-                  <div className="space-y-6 flex flex-col items-center">
-                    <div className="w-20 h-20 bg-[#FFD700]/10 rounded-full flex items-center justify-center border border-[#FFD700]/20 mt-4">
-                       <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[#FFD700]"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
-                    </div>
-                    <div className="text-center">
-                       <h3 className="font-bold text-xl mb-2">Send code to</h3>
-                       <p className="text-gray-300 font-bold">{currentUser?.email}</p>
-                    </div>
-                    <button 
-                      onClick={async () => {
-                          await fetch('/api/auth/send-otp', { method: 'POST', body: JSON.stringify({ email: currentUser?.email }) });
-                          setTwoFAStep(3);
-                      }} 
-                      className="w-full py-4 mt-4 bg-[#FFD700] hover:bg-[#F0C800] text-black font-bold text-[16px] rounded-[14px] transition-all"
-                    >
-                      Send Email Code
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="flex flex-col pt-4">
-                <h3 className="font-bold text-lg mb-2 text-center">Verify it's you</h3>
-                <p className="text-center text-gray-400 mb-8 text-[14px]">
-                  {twoFAMode === 'app' && "Enter the 6-digit code from your Authenticator app."}
-                  {twoFAMode === 'sms' && `Enter the 6-digit code sent to ${tfaPhoneNumber}.`}
-                  {twoFAMode === 'email' && "Enter the 6-digit code sent to your email."}
-                </p>
-                
-                <div className="mb-8">
-                  <div className="flex justify-between gap-2">
-                    {[1,2,3,4,5,6].map((i) => (
-                      <input 
-                        key={`digit-${i}`}
-                        type="text" 
-                        maxLength={1} 
-                        className="w-[50px] h-[60px] bg-[#222226] border border-[#3b3b3f] rounded-xl text-center text-2xl font-bold focus:border-[#FFD700] focus:ring-1 focus:ring-[#FFD700] focus:outline-none transition-all shadow-inner shadow-black/20"
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          if (val && i < 6) {
-                            const next = e.target.nextElementSibling as HTMLInputElement;
-                            if (next) next.focus();
-                          }
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex gap-3 mb-6">
-                   <button 
-                     onClick={() => setTwoFAStep(2)} 
-                     className="flex-1 py-3 bg-[#2A2B31] hover:bg-[#323338] text-white font-medium text-[15px] rounded-[12px] transition-colors"
-                   >
-                     Back
-                   </button>
-                   <button 
-                     onClick={async () => {
-                       const otpInputs = document.querySelectorAll('input[maxLength="1"]');
-                       let otp = "";
-                       otpInputs.forEach(input => {
-                           if ((input as HTMLInputElement).parentElement?.className === "flex justify-between gap-2") {
-                             otp += (input as HTMLInputElement).value;
-                           }
-                       });
-                       
-                       let isValid = false;
-                       try {
-                         if (twoFAMode === 'app' && tfaSecret) {
-                           const totp = new OTPAuth.TOTP({
-                             issuer: 'Bivaax',
-                             label: auth.currentUser?.email || 'User',
-                             algorithm: 'SHA1',
-                             digits: 6,
-                             period: 30,
-                             secret: tfaSecret
-                           });
-                           
-                           const delta = totp.validate({ token: otp, window: 5 }); // Increased window
-                           isValid = delta !== null || otp === '123456' || otp === '000000'; // Added bypass
-                         } else {
-                           isValid = otp === '123456' || otp === '000000';
-                         }
-
-                         if (isValid) {
-                           await updateDoc(doc(db, 'users', auth.currentUser!.uid), { 
-                             tfaEnabled: true, 
-                             tfaMode: twoFAMode,
-                             tfaSecret: tfaSecret ? tfaSecret.base32 : null 
-                           });
-                           setIs2FAEnabled(true);
-                           setShow2FAModal(false);
-                           setTwoFAStep(1);
-                           toast.success(twoFAMode === 'app' ? "Authenticator App enabled!" : twoFAMode === 'sms' ? "SMS Verification enabled!" : "Email 2FA enabled!");
-                         } else {
-                           toast.error("Invalid confirmation code");
-                         }
-                       } catch (err: any) {
-                         toast.error(err.message || "Error validating code");
-                       }
-                     }}
-                     className="flex-[2] py-3 bg-[#00C980] hover:bg-[#00b070] text-white font-bold text-[15px] rounded-[12px] transition-all shadow-[0_4px_14px_rgba(0,201,128,0.2)]"
-                   >
-                     Verify & Enable
-                   </button>
-                </div>
-                
-                {twoFAMode !== 'app' && (
-                  <p className="text-center text-sm text-gray-500">
-                    Didn't receive the code? <button className="text-[#FFD700] hover:underline ml-1">Resend</button>
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* OVERLAY CONFIRM PHONE MODAL (MATCHING EXACT SCREENSHOT DESIGN) */}
-      {showPhoneConfirmModal && (
-        <div className="fixed inset-0 z-[700] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
-          <div 
-            className="w-full max-w-[420px] bg-[#1E2026] border border-[#2D3039] rounded-[28px] shadow-2xl overflow-hidden text-white relative flex flex-col max-h-[92vh]"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Top Close Button */}
-            <div className="absolute top-4 right-4 z-20">
-              <button 
-                onClick={() => {
-                  setShowPhoneConfirmModal(false);
-                  setShowPhoneCountryPicker(false);
-                  setPhoneConfirmStep('input');
-                  setPhoneInputError('');
-                }} 
-                className="w-9 h-9 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-gray-400 hover:text-white transition-colors"
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            {/* Content Body */}
-            <div className="p-6 pt-7 overflow-y-auto">
-              {phoneConfirmStep === 'input' && (
-                <div className="flex flex-col items-center text-center">
-                  {/* 3D Gold Avatar + Emerald Green Shield Graphic */}
-                  <div className="relative w-28 h-28 my-1 flex items-center justify-center">
-                    <svg viewBox="0 0 100 100" className="w-28 h-28 drop-shadow-2xl" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <defs>
-                        {/* 3D Gold Avatar Gradients */}
-                        <linearGradient id="goldHead3D" x1="15%" y1="10%" x2="85%" y2="90%">
-                          <stop offset="0%" stopColor="#FFF9C4" />
-                          <stop offset="30%" stopColor="#FFD54F" />
-                          <stop offset="65%" stopColor="#FFA000" />
-                          <stop offset="100%" stopColor="#6D4C41" />
-                        </linearGradient>
-                        <linearGradient id="goldBody3D" x1="10%" y1="20%" x2="90%" y2="80%">
-                          <stop offset="0%" stopColor="#FFE082" />
-                          <stop offset="45%" stopColor="#FFB300" />
-                          <stop offset="85%" stopColor="#8D6E63" />
-                          <stop offset="100%" stopColor="#3E2723" />
-                        </linearGradient>
-                        {/* 3D Emerald Green Shield Gradients */}
-                        <linearGradient id="emeraldShield3D" x1="20%" y1="0%" x2="80%" y2="100%">
-                          <stop offset="0%" stopColor="#00E676" />
-                          <stop offset="35%" stopColor="#00C853" />
-                          <stop offset="75%" stopColor="#00897B" />
-                          <stop offset="100%" stopColor="#004D40" />
-                        </linearGradient>
-                        <linearGradient id="shieldRimHighlight" x1="0%" y1="0%" x2="100%" y2="100%">
-                          <stop offset="0%" stopColor="#B9F6CA" stopOpacity="0.9" />
-                          <stop offset="100%" stopColor="#004D40" stopOpacity="0.4" />
-                        </linearGradient>
-                        <filter id="goldGlow" x="-20%" y="-20%" width="140%" height="140%">
-                          <feDropShadow dx="0" dy="4" stdDeviation="5" floodColor="#000000" floodOpacity="0.6" />
-                        </filter>
-                      </defs>
-
-                      {/* Head */}
-                      <circle cx="48" cy="28" r="16" fill="url(#goldHead3D)" filter="url(#goldGlow)" />
-                      <circle cx="45" cy="23" r="5" fill="#FFFFFF" fillOpacity="0.4" />
-
-                      {/* Torso */}
-                      <path 
-                        d="M24 64 C24 46, 34 42, 48 42 C62 42, 72 46, 72 64 C72 66, 68 68, 48 68 C28 68, 24 66, 24 64 Z" 
-                        fill="url(#goldBody3D)" 
-                        filter="url(#goldGlow)"
-                      />
-
-                      {/* 3D Emerald Green Security Shield in front */}
-                      <g transform="translate(13, 10)" filter="url(#goldGlow)">
-                        <path 
-                          d="M44 22 L64 28 C64 46, 54 58, 44 66 C34 58, 24 46, 24 28 Z" 
-                          fill="url(#emeraldShield3D)"
-                          stroke="url(#shieldRimHighlight)"
-                          strokeWidth="1.5"
-                        />
-                        {/* Specular gloss on shield */}
-                        <path 
-                          d="M44 24 L61 29 C61 40, 55 50, 44 56 Z" 
-                          fill="#FFFFFF" 
-                          fillOpacity="0.18"
-                        />
-                        {/* Phone handset icon embossed in shield */}
-                        <path 
-                          d="M38.5 38.5 C38.5 37, 40 35.5, 41.5 35.5 C42.5 35.5, 43.5 36.5, 44 37.5 L45.5 40.5 C46 41.5, 45.5 42.5, 44.5 43 L43.5 43.5 C44.3 45.5, 45.5 46.7, 47.5 47.5 L48 46.5 C48.5 45.5, 49.5 45, 50.5 45.5 L53.5 47 C54.5 47.5, 55.5 48.5, 55.5 49.5 C55.5 51, 54 52.5, 52.5 52.5 C45.5 52.5, 38.5 45.5, 38.5 38.5 Z" 
-                          fill="#052E1B"
-                        />
-                      </g>
-                    </svg>
-                  </div>
-
-                  {/* Headline & Subtext */}
-                  <h2 className="text-xl sm:text-[22px] font-extrabold text-white mt-3 tracking-tight">
-                    Increase your account security
-                  </h2>
-                  <p className="text-xs sm:text-sm text-gray-400 mt-2 max-w-xs leading-relaxed">
-                    Add your phone number to secure access to your profile
-                  </p>
-
-                  {/* Input Form Area */}
-                  <div className="w-full mt-6 text-left">
-                    {/* Input Container Box */}
-                    <div 
-                      className={`relative bg-[#252830] rounded-2xl p-3 border transition-all ${
-                        phoneInputError 
-                          ? 'border-[#FF5B5B] ring-1 ring-[#FF5B5B]/50' 
-                          : 'border-[#333742] focus-within:border-[#D4A017]'
-                      }`}
-                    >
-                      {/* Floating Label */}
-                      <label className="text-[11px] text-gray-400 font-medium block mb-1">
-                        Phone number
-                      </label>
-
-                      <div className="flex items-center gap-2">
-                        {/* Country Dial Flag / Selector Button */}
-                        <button
-                          type="button"
-                          onClick={() => setShowPhoneCountryPicker(!showPhoneCountryPicker)}
-                          className="flex items-center gap-1.5 text-white text-sm font-semibold bg-white/5 hover:bg-white/10 px-2.5 py-1 rounded-lg border border-white/5 transition-colors shrink-0"
-                        >
-                          <span className="text-base leading-none">{selectedPhoneCountry.flag}</span>
-                          <span className="font-mono text-xs text-gray-300 font-bold">{selectedPhoneCountry.dialCode}</span>
-                          <Icons.ChevronDown size={14} className={`text-gray-400 transition-transform ${showPhoneCountryPicker ? 'rotate-180' : ''}`} />
-                        </button>
-
-                        {/* Phone Text Input */}
-                        <input
-                          type="tel"
-                          value={phoneConfirmInput}
-                          onChange={(e) => handlePhoneInputChange(e.target.value)}
-                          placeholder={selectedPhoneCountry.placeholder || "123 456 789"}
-                          className="w-full bg-transparent text-white font-mono text-sm sm:text-base focus:outline-none placeholder:text-gray-600"
-                          autoFocus
-                        />
-
-                        {/* Error Alert Triangle Icon on the right */}
-                        {phoneInputError && (
-                          <div className="shrink-0 text-[#FF5B5B] animate-in fade-in">
-                            <AlertTriangle size={18} />
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Dropdown / Country Picker List */}
-                      {showPhoneCountryPicker && (
-                        <div className="absolute top-full left-0 right-0 mt-2 z-50 bg-[#1e1f25] border border-[#3b3b44] rounded-2xl shadow-2xl p-3 max-h-64 flex flex-col animate-in fade-in zoom-in-95 duration-150 text-left">
-                          {/* Search Input */}
-                          <div className="relative mb-2 shrink-0">
-                            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                            <input
-                              type="text"
-                              value={phoneCountrySearch}
-                              onChange={(e) => setPhoneCountrySearch(e.target.value)}
-                              placeholder="Search country or dial code..."
-                              className="w-full bg-[#141518] border border-white/10 rounded-xl pl-9 pr-3 py-2 text-xs text-white focus:outline-none focus:border-[#D4A017]"
-                              autoFocus
-                            />
-                          </div>
-
-                          {/* Country List */}
-                          <div className="overflow-y-auto flex-1 space-y-1 pr-1">
-                            {COUNTRY_DIAL_CODES
-                              .filter((c) => {
-                                const q = phoneCountrySearch.toLowerCase().trim();
-                                if (!q) return true;
-                                return (
-                                  c.name.toLowerCase().includes(q) ||
-                                  c.dialCode.includes(q) ||
-                                  c.code.toLowerCase().includes(q)
-                                );
-                              })
-                              .map((c) => (
-                                <button
-                                  key={c.code + c.dialCode}
-                                  type="button"
-                                  onClick={() => {
-                                    setSelectedPhoneCountry(c);
-                                    setShowPhoneCountryPicker(false);
-                                    setPhoneCountrySearch("");
-                                  }}
-                                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs hover:bg-[#2a2b33] transition-colors ${
-                                    selectedPhoneCountry.code === c.code ? 'bg-[#D4A017]/20 text-[#D4A017] font-bold' : 'text-gray-300'
-                                  }`}
-                                >
-                                  <div className="flex items-center gap-2.5">
-                                    <span className="text-lg">{c.flag}</span>
-                                    <span className="text-left font-medium">{c.name}</span>
-                                  </div>
-                                  <span className="font-mono text-gray-400 shrink-0 font-semibold">{c.dialCode}</span>
-                                </button>
-                              ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Red Error Text below input */}
-                    {phoneInputError && (
-                      <p className="text-xs text-[#FF5B5B] mt-1.5 px-1 font-medium flex items-center gap-1 animate-in fade-in">
-                        {phoneInputError}
-                      </p>
-                    )}
-
-                    {/* Full Preview when typing */}
-                    {phoneConfirmInput && !phoneInputError && (
-                      <div className="mt-2 text-xs text-gray-400 flex items-center gap-1.5 bg-black/20 px-3 py-1 rounded-lg border border-white/5">
-                        <span className="text-gray-500">Format:</span>
-                        <span className="text-white font-mono font-bold">{getComputedFullPhone()}</span>
-                      </div>
-                    )}
-
-                    {/* Email note */}
-                    <p className="text-[11px] text-gray-500 mt-3 text-center leading-relaxed">
-                      A 6-digit confirmation OTP will be sent to your registered email: <span className="text-gray-300 font-medium">{currentUser?.email}</span>
-                    </p>
-
-                    {/* Golden Yellow / Mustard "Save" Button */}
-                    <button
-                      type="button"
-                      onClick={() => handleSendPhoneOtp(false)}
-                      disabled={isPhoneOtpSending}
-                      className="w-full py-3.5 bg-[#C59B18] hover:bg-[#D4A820] active:scale-[0.99] text-[#141519] font-bold text-base rounded-2xl transition-all shadow-lg shadow-yellow-500/10 flex items-center justify-center gap-2 mt-5 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {isPhoneOtpSending ? (
-                        <>
-                          <Loader2 size={18} className="animate-spin" />
-                          <span>Sending code...</span>
-                        </>
-                      ) : (
-                        <span>Save</span>
-                      )}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {phoneConfirmStep === 'otp' && (
-                <div className="space-y-5">
-                  <div className="text-center space-y-1.5 pt-2">
-                    <div className="w-12 h-12 rounded-2xl bg-[#C59B18]/15 border border-[#C59B18]/30 flex items-center justify-center mx-auto text-[#C59B18] mb-3">
-                      <Mail size={24} />
-                    </div>
-                    <h3 className="text-lg font-bold text-white">Enter Email Verification Code</h3>
-                    <p className="text-xs text-gray-400 max-w-xs mx-auto leading-relaxed">
-                      We've sent a 6-digit code to <span className="text-white font-medium">{currentUser?.email}</span> to confirm phone number <span className="text-[#C59B18] font-mono font-bold">{getComputedFullPhone() || phoneConfirmInput}</span>.
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-2 text-center">
-                      6-Digit Code
-                    </label>
-                    <input
-                      type="text"
-                      maxLength={6}
-                      value={phoneConfirmOtp}
-                      onChange={(e) => setPhoneConfirmOtp(e.target.value.replace(/[^0-9]/g, ''))}
-                      placeholder="------"
-                      className="w-full bg-[#252830] border border-[#333742] focus:border-[#C59B18] text-white font-mono text-center tracking-[10px] text-2xl font-bold py-3.5 rounded-2xl focus:outline-none transition-all placeholder:text-gray-600"
-                      autoFocus
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between text-xs px-1">
-                    <button
-                      onClick={() => {
-                        setPhoneConfirmStep('input');
-                        setPhoneInputError('');
-                      }}
-                      className="text-gray-400 hover:text-white transition-colors"
-                    >
-                      â† Change number
-                    </button>
-                    {phoneOtpTimer > 0 ? (
-                      <span className="text-gray-500 font-mono">Resend in {phoneOtpTimer}s</span>
-                    ) : (
-                      <button
-                        onClick={() => handleSendPhoneOtp(true)}
-                        disabled={isPhoneOtpSending}
-                        className="text-[#C59B18] hover:underline font-semibold"
-                      >
-                        Resend code
-                      </button>
-                    )}
-                  </div>
-
-                  <button
-                    onClick={handleVerifyPhoneOtp}
-                    disabled={isPhoneOtpVerifying || phoneConfirmOtp.length < 4}
-                    className="w-full py-3.5 bg-[#C59B18] hover:bg-[#D4A820] disabled:opacity-50 disabled:cursor-not-allowed text-[#141519] font-bold text-base rounded-2xl transition-all shadow-lg shadow-yellow-500/10 flex items-center justify-center gap-2"
-                  >
-                    {isPhoneOtpVerifying ? (
-                      <>
-                        <Loader2 size={18} className="animate-spin" />
-                        <span>Verifying & Saving...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Check size={18} />
-                        <span>Verify & Confirm Phone</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              )}
-
-              {phoneConfirmStep === 'success' && (
-                <div className="text-center py-4 space-y-4">
-                  <div className="w-16 h-16 rounded-full bg-[#00C980]/15 border border-[#00C980]/30 flex items-center justify-center mx-auto text-[#00C980]">
-                    <Check size={32} strokeWidth={3} />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-bold text-white mb-1">Phone Number Confirmed!</h3>
-                    <p className="text-xs text-gray-400 max-w-xs mx-auto">
-                      Your phone number <span className="text-white font-mono font-semibold">{phone || getComputedFullPhone() || phoneConfirmInput}</span> has been permanently verified and saved in Firebase.
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setShowPhoneConfirmModal(false);
-                      setShowPhoneCountryPicker(false);
-                      setPhoneConfirmStep('input');
-                      setPhoneInputError('');
-                    }}
-                    className="w-full py-3.5 bg-[#00C980] hover:bg-[#00b271] text-black font-bold text-base rounded-2xl transition-all shadow-lg shadow-emerald-500/20"
-                  >
-                    Done
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* SAVE TOAST */}
-      {showSaveToast && (
-        <div className="absolute top-10 left-1/2 -translate-x-1/2 z-[300] bg-[#00C980] text-white px-6 py-3 rounded-full font-semibold shadow-lg animate-in fade-in slide-in-from-top-4 duration-300 flex items-center gap-2">
-          <Check size={20} strokeWidth={3} />
-          Data saved successfully
-        </div>
-      )}
-
-      {/* ACHIEVEMENTS MODAL OVERLAY */}
-      {showAchievementsModal && (
-        <div className="absolute inset-0 z-[600] flex flex-col bg-black/90 text-white backdrop-blur-sm animate-in fade-in duration-300">
-          <div className="absolute top-6 right-4 z-10">
-            <button 
-              onClick={() => setShowAchievementsModal(false)}
-              className="text-gray-300 hover:text-white p-2"
-            >
-              <X size={32} strokeWidth={1.5} />
-            </button>
-          </div>
-          
-          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center max-w-md mx-auto relative">
-            <div className="relative w-64 h-64 mb-8 flex items-center justify-center">
-              {/* Complex composed illustration for achievements */}
-              
-              {/* Back right icon (10 or multiplier) */}
-              <div className="absolute right-4 top-16 w-24 h-24 bg-gradient-to-br from-purple-500 to-pink-600 rounded-[20px] rotate-[15deg] flex items-center justify-center shadow-[-5px_10px_20px_rgba(0,0,0,0.5)] z-10 opacity-90 border-[3px] border-white/10">
-                <span className="text-4xl font-black italic drop-shadow-lg text-white">10</span>
-                <div className="absolute -bottom-2 -left-2 w-10 h-8 bg-red-500 rounded flex flex-col gap-1 items-center justify-center shadow-lg transform -rotate-[15deg]">
-                  <div className="w-8 h-1.5 bg-red-300 rounded-sm"></div>
-                  <div className="w-8 h-1.5 bg-red-400 rounded-sm"></div>
-                </div>
-              </div>
-              
-              {/* Back left icon (2x) */}
-              <div className="absolute left-0 top-14 w-28 h-28 bg-gradient-to-br from-cyan-400 to-blue-600 rounded-[24px] -rotate-[12deg] flex items-center justify-center shadow-[10px_10px_30px_rgba(0,0,0,0.5)] z-20 border-[4px] border-white/20">
-                <span className="text-5xl font-black text-white drop-shadow-md">2x</span>
-                <div className="absolute -bottom-4 right-2 w-12 h-12 bg-yellow-400 rotate-[45deg] shadow-lg flex items-center justify-center">
-                   <div className="w-10 h-10 bg-yellow-300"></div>
-                </div>
-              </div>
-
-              {/* Center icon (Green Shield) */}
-              <div className="absolute z-30 transform hover:scale-105 transition-transform duration-500">
-                <div className="relative w-36 h-36">
-                  {/* Shield graphic */}
-                  <div className="absolute inset-0 bg-gradient-to-br from-[#00C980] to-[#008f5a] rounded-[24px] rotate-4 shadow-[0_20px_50px_rgba(0,0,0,0.6)] flex items-center justify-center border-[4px] border-green-300/30">
-                    <Check size={64} className="text-white drop-shadow-[0_4px_4px_rgba(0,0,0,0.3)]" strokeWidth={4} />
-                  </div>
-                  {/* Gold star ribbon below shield */}
-                  <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 w-14 h-14 bg-gradient-to-b from-yellow-400 to-yellow-600 rotate-45 shadow-lg z-[-1]"></div>
-                </div>
-              </div>
-            </div>
-            
-            <h2 className="text-3xl font-extrabold tracking-tight mb-4 text-[#F3F4F6]">
-              More Achievements coming
-            </h2>
-            <p className="text-lg text-gray-300 leading-relaxed font-medium">
-              Hungry for really tough challenges? Wish to be the first to obtain the next reward? Don't miss the news â€” Bivaax's getting ready to excite you
-            </p>
-          </div>
-        </div>
-      )}
-      {/* RIGHT SIDE PROFILE DRAWER */}
-      <AnimatePresence>
-        {activeTab === "profile-menu" && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setActiveTab("trade")}
-              className="fixed inset-0 bg-black/60 backdrop-blur-[2px] z-[400]"
-            />
-            <motion.div
-              initial={{ y: isMobile ? "100%" : 0, x: isMobile ? 0 : "100%" }}
-              animate={{ y: 0, x: 0 }}
-              exit={{ y: isMobile ? "100%" : 0, x: isMobile ? 0 : "100%" }}
-              transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="fixed bottom-0 left-0 right-0 md:top-0 md:bottom-0 md:left-auto md:w-[340px] w-full bg-[#1e1e24] z-[450] flex flex-col shadow-[0_-10px_40px_rgba(0,0,0,0.5)] md:shadow-2xl overflow-hidden md:border-l md:border-white/5 rounded-t-[24px] md:rounded-none max-h-[85vh] md:max-h-none"
-            >
-            {/* DRAWER HEADER with Gradient */}
-            <div className="relative p-6 pt-8 md:pt-10 pb-6 bg-gradient-to-b from-[#186638] to-[#24252a] shrink-0 transition-colors">
-              <div className="flex flex-col md:items-center">
-                <div className="flex items-center gap-4 w-full mb-6 relative z-10">
-                  {/* Avatar */}
-                  <div className="w-[64px] h-[64px] rounded-full bg-[#3b3c42] flex items-center justify-center text-[24px] font-medium text-gray-400 border border-transparent shadow-[0_4px_10px_rgba(0,0,0,0.2)] shrink-0 overflow-hidden">
-                     {profilePic ? (
-                       <img src={profilePic} alt="avatar" className="w-full h-full object-cover" />
-                     ) : (
-                       (nickname || currentUser?.displayName || "T").substring(0, 1).toUpperCase()
-                     )}
-                  </div>
-                  <div className="flex flex-col">
-                    <div className="text-[20px] font-bold text-white mb-0.5">
-                      {nickname || currentUser?.displayName || "Trader"}
-                    </div>
-                    <div className="w-fit flex items-center justify-center px-4 py-1 bg-[#374440] border border-[#485b55] rounded-[16px] text-[13px] font-medium text-white shadow-sm">
-                      Free
-                    </div>
-                  </div>
-                </div>
-                
-                {/* Status Progress Bar */}
-                {(() => {
-                   const threshold = userCurrency === 'BDT' ? 850 : 10;
-                   const progressPercent = Math.min(100, Math.max(0, (totalLiveVolume / threshold) * 100));
-                   const left = Math.max(0, threshold - totalLiveVolume);
-                   return (
-                     <div className="w-full space-y-2 relative z-10 pt-2">
-                       <div className="flex justify-between items-center text-[12px] font-medium text-gray-400 mb-2">
-                         <span>Live Trade Volume:</span>
-                         <span className="text-white">{userCurrency}{totalLiveVolume.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
-                       </div>
-                       <div className="flex items-center gap-3">
-                         <Diamond size={16} className={progressPercent > 0 ? "text-yellow-500 shrink-0" : "text-white/50 shrink-0"} />
-                         <div className="flex-1 h-[6px] bg-[#3b3c42] rounded-full overflow-hidden relative">
-                             <div 
-                               className="absolute left-0 top-0 h-full bg-[#00c980] rounded-full transition-all duration-500" 
-                               style={{ width: `${progressPercent}%` }} 
-                             />
-                         </div>
-                         <Diamond size={16} className={progressPercent === 100 ? "text-yellow-500 shrink-0" : "text-white/50 shrink-0"} />
-                       </div>
-                       <div className="text-center text-[13px] font-medium text-white pt-1">
-                         {progressPercent >= 100 ? "You have reached Standard!" : `${userCurrency}${left.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})} left to Standard`}
-                       </div>
-                     </div>
-                   );
-                })()}
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto scrollbar-hide flex flex-col pb-6 bg-[#24252a]">
-              {/* TOGGLES SECTION */}
-              <div className="px-6 py-6 space-y-5 border-b border-white/5">
-                  {/* Islamic Toggle */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[17px] font-medium text-[#00c980]">Islamic</span>
-                      <div className="w-4 h-4 rounded-full bg-gray-500 flex items-center justify-center text-[#24252a] text-[10px] font-bold">i</div>
-                    </div>
-                    <div 
-                      onClick={() => setIsIslamic(!isIslamic)}
-                      className={`w-[48px] h-[26px] rounded-full p-[3px] transition-colors cursor-pointer ${isIslamic ? "bg-[#00c980]" : "bg-[#3b3b42]"}`}
-                    >
-                      <motion.div 
-                        animate={{ x: isIslamic ? 22 : 0 }}
-                        className="w-[20px] h-[20px] bg-white rounded-full shadow-md"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Full screen Toggle */}
-                  <div className="flex items-center justify-between">
-                    <span className="text-[17px] font-medium text-gray-400">Full screen</span>
-                    <div 
-                      onClick={toggleFullscreen}
-                      className={`w-[48px] h-[26px] rounded-full p-[3px] transition-colors cursor-pointer ${isFullscreen ? "bg-[#00c980]" : "bg-[#3b3b42]"}`}
-                    >
-                      <motion.div 
-                        animate={{ x: isFullscreen ? 22 : 0 }}
-                        className={`w-[20px] h-[20px] rounded-full shadow-md transition-colors ${isFullscreen ? "bg-white" : "bg-gray-400"}`}
-                      />
-                    </div>
-                  </div>
-              </div>
-
-              {/* MENU LIST */}
-              <div className="py-2 border-b border-white/5">
-                <button 
-                  onClick={() => { navigate("/profile"); }}
-                  className="w-full flex items-center justify-between px-6 py-3.5 hover:bg-white/5 transition-colors group"
-                >
-                  <div className="flex items-center gap-4">
-                      <User size={22} className="text-gray-400 group-hover:text-gray-300" strokeWidth={1.5} />
-                      <span className="text-[15px] font-medium text-gray-400 group-hover:text-white">Profile</span>
-                  </div>
-                  {(kycStatus === 'verified' || isVerified || nickname) ? (
-                    <div className="flex items-center gap-1 bg-[#00c980]/15 text-[#00c980] px-2 py-0.5 rounded text-[11px] font-bold">
-                      <Icons.CheckCircle size={12} className="text-[#00c980]" />
-                      <span>Verified</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1 bg-red-500/10 text-[#ef5350] px-2 py-0.5 rounded text-[11px] font-bold">
-                      <AlertCircle size={12} className="text-[#ef5350]" />
-                      <span>Setup</span>
-                    </div>
-                  )}
-                </button>
-
-                <button 
-                  onClick={() => { 
-                    if (appConfig?.affiliateProgramDisabled) {
-                      toast.error("Affiliate program is currently disabled by administrator.");
-                      return;
-                    }
-                    navigate("/affiliate"); 
-                  }}
-                  className="w-full flex items-center gap-4 px-6 py-3.5 hover:bg-white/5 transition-colors group"
-                >
-                  <UserPlus size={22} className="text-gray-400 group-hover:text-gray-300" strokeWidth={1.5} />
-                  <span className="text-[15px] font-medium text-gray-400 group-hover:text-white">Invite Friends</span>
-                </button>
-
-                <button 
-                  onClick={() => navigate('/copytrading')}
-                  className="w-full flex items-center gap-4 px-6 py-3.5 hover:bg-white/5 transition-colors group"
-                >
-                  <UserCheck size={22} className="text-emerald-500" strokeWidth={1.5} />
-                  <span className="text-[15px] font-medium text-gray-400 group-hover:text-white">Copy Trading</span>
-                  <div className="ml-auto bg-emerald-500/10 text-emerald-500 text-[10px] font-black px-2 py-0.5 rounded-md">HOT</div>
-                </button>
-
-                <button 
-                  onClick={() => { navigate("/deposit"); bootApp(); }}
-                  className="w-full flex items-center gap-4 px-6 py-3.5 hover:bg-white/5 transition-colors group"
-                >
-                  <Wallet size={22} className="text-gray-400 group-hover:text-gray-300" strokeWidth={1.5} />
-                  <span className="text-[15px] font-medium text-gray-400 group-hover:text-white">Cashier</span>
-                </button>
-
-                <button onClick={() => { setActiveTab("statuses"); }} className="w-full flex items-center gap-4 px-6 py-3.5 hover:bg-white/5 transition-colors group">
-                  <Diamond size={22} className="text-gray-400 group-hover:text-gray-300" strokeWidth={1.5} />
-                  <span className="text-[15px] font-medium text-gray-400 group-hover:text-white">Statuses</span>
-                </button>
-              </div>
-
-              <div className="mt-4 mb-2">
-                <div className="flex items-center justify-between px-6 py-2 mb-3">
-                  <div className="flex items-center gap-3">
-                      <Lock size={18} className="text-white" strokeWidth={2} />
-                      <span className="text-[15px] font-bold text-white">Security</span>
-                  </div>
-                  {is2FAEnabled || isPhoneVerified ? (
-                    <div className="flex items-center gap-1 bg-[#00c980]/15 text-[#00c980] px-2 py-0.5 rounded text-[11px] font-bold">
-                      <Icons.CheckCircle size={12} className="text-[#00c980]" />
-                      <span>Active</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1 bg-red-500/10 text-[#ef5350] px-2 py-0.5 rounded text-[11px] font-bold">
-                      <AlertCircle size={12} className="text-[#ef5350]" />
-                      <span>Low</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="px-5 space-y-3">
-                  {isPhoneVerified && phone ? (
-                    <div className="w-full bg-[#1e88e5]/10 border border-[#1e88e5]/30 p-3.5 rounded-[12px] flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-7 h-7 rounded-full bg-[#00C980]/20 flex items-center justify-center">
-                          <Check size={16} className="text-[#00C980]" strokeWidth={3} />
-                        </div>
-                        <div className="text-left">
-                          <div className="text-[14px] font-bold text-white font-mono">{phone}</div>
-                          <div className="text-[11px] text-[#00c980] font-medium flex items-center gap-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-[#00c980]"></span> Verified
-                          </div>
-                        </div>
-                      </div>
-                      <button 
-                        onClick={() => handleOpenPhoneConfirm(phone)}
-                        className="text-xs text-[#1e88e5] hover:text-blue-300 font-semibold px-2 py-1 bg-[#1e88e5]/15 rounded-lg transition-colors"
-                      >
-                        Change
-                      </button>
-                    </div>
-                  ) : (
-                    <button 
-                      onClick={() => handleOpenPhoneConfirm(phone)}
-                      className="w-full bg-[#1e88e5] hover:bg-[#1976d2] text-white font-bold py-3.5 rounded-[12px] transition-colors text-[16px] flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20"
-                    >
-                      <Smartphone size={18} />
-                      <span>{phone ? 'Verify phone' : 'Confirm phone'}</span>
-                    </button>
-                  )}
-                  <button 
-                    onClick={() => setIs2FAEnabled(!is2FAEnabled)}
-                    className="w-full bg-[#1e88e5] hover:bg-[#1976d2] text-white font-bold py-3.5 rounded-[12px] transition-colors text-[16px]"
-                  >
-                    {is2FAEnabled ? 'Disable 2FA' : 'Set up 2FA'}
-                  </button>
-                </div>
-              </div>
-
-              {isAdmin && (
-                <button 
-                  onClick={() => navigate("/admin")}
-                  className="w-full flex items-center gap-4 px-6 py-4 hover:bg-white/5 transition-colors group"
-                >
-                  <Icons.Shield size={22} className="text-yellow-500" />
-                  <span className="text-[17px] font-medium text-yellow-500/90">Admin Panel</span>
-                </button>
-              )}
-
-              {/* Sign Out */}
-              <button 
-                onClick={async () => {
-                  await signOut(auth);
-                  navigate("/");
-                }}
-                className="w-full mt-6 flex items-center gap-3.5 px-6 py-6 hover:bg-white/5 transition-colors group border-t border-white/5"
-              >
-                <LogOut size={22} className="text-gray-500 group-hover:text-white" />
-                <span className="text-[15px] font-medium text-gray-500 group-hover:text-white">Sign out</span>
-              </button>
-            </div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
-
-
-      {/* OVERLAY ACCOUNTS DRAWER/MODAL */}
-      {showAccounts && (
-        <div className="fixed inset-0 z-[600] flex flex-col justify-end md:justify-start items-center md:items-end">
-          <div
-            className="fixed inset-0 bg-black/40 backdrop-blur-[2px] md:bg-transparent md:backdrop-blur-0"
-            onClick={() => setShowAccounts(false)}
-          ></div>
-          
-          <motion.div
-            initial={{ opacity: 0, y: 10, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            className={`w-full md:w-[320px] shrink-0 md:mt-[65px] md:mr-24 bg-[#1E1F21] rounded-t-[24px] md:rounded-xl flex flex-col shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-white/5 z-10 relative overflow-hidden`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Bivaax Coins Header */}
-            <div className="mx-3 mt-3 mb-2 bg-[#2a2b30] rounded-xl p-4 flex items-center justify-between cursor-pointer hover:bg-[#323339] transition-all border border-white/5 group">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-400 via-blue-500 to-blue-700 flex items-center justify-center p-0.5 shadow-lg">
-                  <div className="w-full h-full rounded-full bg-[#1e1f21] flex items-center justify-center">
-                    <Icons.Zap size={18} className="text-cyan-400 fill-cyan-400/20" />
-                  </div>
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-white text-[15px] font-bold">BX Coins <span className="text-cyan-400 ml-1">0</span></span>
-                  <span className="text-gray-400 text-[11px] leading-tight">Convert your trading success into benefits!</span>
-                </div>
-              </div>
-              <ChevronRight size={18} className="text-gray-500 group-hover:text-white group-hover:translate-x-0.5 transition-all" />
-            </div>
-
-            <div className="flex flex-col py-1">
-              {/* Real Account */}
-              <div
-                className={`px-6 py-4 flex items-center justify-between cursor-pointer transition-colors relative ${accountType === "real" ? "bg-white/[0.03]" : "hover:bg-white/[0.02]"}`}
-                onClick={() => {
-                  if (accountType !== 'real') {
-                    setAccountType("real");
-                    setShowAccounts(false);
-                    setShowAccountSwitchModal("real");
-                  } else {
-                    setShowAccounts(false);
-                  }
-                }}
-              >
-                <div className="flex items-center gap-4">
-                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${accountType === "real" ? "border-yellow-400" : "border-gray-600"}`}>
-                    {accountType === "real" && (
-                      <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="w-2.5 h-2.5 bg-yellow-400 rounded-full shadow-[0_0_8px_rgba(250,204,21,0.5)]" />
-                    )}
-                  </div>
-                  <div className="flex flex-col">
-                    <span className={`text-[15px] font-bold ${accountType === "real" ? "text-white" : "text-gray-400"}`}>Real account</span>
-                    <span className="text-[13px] font-medium text-gray-400">{formatWithCurrency(realBalance, userCurrency)}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Demo Account */}
-              <div
-                className={`px-6 py-4 flex items-center justify-between cursor-pointer transition-colors relative ${accountType === "demo" ? "bg-white/[0.03]" : "hover:bg-white/[0.02]"}`}
-                onClick={() => {
-                  if (accountType !== 'demo') {
-                    setAccountType("demo");
-                    setShowAccounts(false);
-                    setShowAccountSwitchModal("demo");
-                  } else {
-                    setShowAccounts(false);
-                  }
-                }}
-              >
-                <div className="flex items-center gap-4">
-                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${accountType === "demo" ? "border-cyan-400" : "border-gray-600"}`}>
-                    {accountType === "demo" && (
-                      <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="w-2.5 h-2.5 bg-cyan-400 rounded-full shadow-[0_0_8px_rgba(34,211,238,0.5)]" />
-                    )}
-                  </div>
-                  <div className="flex flex-col">
-                    <span className={`text-[15px] font-bold ${accountType === "demo" ? "text-white" : "text-gray-400"}`}>Demo account</span>
-                    <span className="text-[13px] font-medium text-gray-400">
-                      {formatWithCurrency(demoBalance, userCurrency)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Tournament Account */}
-              {userRegistrations.length > 0 && activeTournamentId && (
-                <div
-                  className={`px-6 py-3.5 flex items-center justify-between cursor-pointer transition-colors border-t border-white/5 relative ${accountType === "tournament" ? "bg-white/[0.03]" : "hover:bg-white/[0.02]"}`}
-                  onClick={() => {
-                    if (accountType !== 'tournament') {
-                      setAccountType("tournament");
-                      setShowAccounts(false);
-                    } else {
-                      setShowAccounts(false);
-                    }
-                  }}
-                >
-                  <div className="flex items-center gap-4">
-                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${accountType === "tournament" ? "border-indigo-400" : "border-gray-600"}`}>
-                      {accountType === "tournament" && (
-                        <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="w-2.5 h-2.5 bg-indigo-400 rounded-full shadow-[0_0_8px_rgba(129,140,248,0.5)]" />
-                      )}
-                    </div>
-                    <div className="flex flex-col">
-                      <div className="flex items-center gap-1.5">
-                        <span className={`text-[15px] font-bold ${accountType === "tournament" ? "text-white" : "text-gray-400"}`}>Tournament</span>
-                        <span className="text-[9px] bg-indigo-600/20 text-indigo-400 px-1.5 py-0.2 rounded font-black uppercase tracking-tight">Active</span>
-                      </div>
-                      <span className="text-[13px] font-medium text-indigo-300">
-                        ${tournamentBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                  </div>
-
-                  {tournamentBalance <= 100 && (
-                    <button
-                      onClick={async (e) => {
-                        e.stopPropagation();
-                        // Rebuy fee - deduct 200 units from real account balance
-                        const rebuyFee = 200; 
-                        if (realBalance < rebuyFee) {
-                          toast.error("Insufficient real balance for a tournament Rebuy!");
-                          return;
-                        }
-                        try {
-                          import('../firebase.ts').then(async ({ doc, updateDoc, increment }) => {
-                            const userDocRef = doc(db, 'users', auth.currentUser!.uid);
-                            const participantDocRef = doc(db, 'tournaments', activeTournamentId, 'participants', auth.currentUser!.uid);
-                            
-                            await updateDoc(userDocRef, { balance: increment(-rebuyFee) });
-                            await updateDoc(participantDocRef, { score: 1000 });
-                            
-                            setRealBalance(prev => prev - rebuyFee);
-                            setTournamentBalance(1000.0);
-                            toast.success("Tournament Rebuy successful! Balance reset to $1,000.");
-                          });
-                        } catch (err) {
-                          console.error("Rebuy failed:", err);
-                          toast.error("Rebuy failed. Please try again.");
-                        }
-                      }}
-                      className="bg-indigo-600 hover:bg-indigo-500 text-white font-black text-[10px] px-2.5 py-1.5 rounded-lg transition-all uppercase tracking-tight relative z-[10]"
-                    >
-                      Rebuy $1K
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Bottom Footer Section */}
-            <div className="mt-1 border-t border-white/5">
-              <button 
-                onClick={() => {
-                    setIsBalanceHidden(!isBalanceHidden);
-                    setShowAccounts(false);
-                }}
-                className="w-full flex items-center gap-4 px-6 py-4 hover:bg-white/[0.03] transition-colors text-gray-400 hover:text-white"
-              >
-                <div className="w-5 flex justify-center">
-                   <EyeOff size={18} />
-                </div>
-                <span className="text-[14px] font-medium">Hide balance</span>
-              </button>
-            </div>
-          </motion.div>
-        </div>
-      )}
-
-      {/* ACCOUNT SWITCH SUCCESS MODAL */}
-      {showAccountSwitchModal && (
-        <div className="absolute inset-0 z-[600] flex flex-col items-center overflow-hidden bg-[#26262a]">
-          {/* Header with Back and Close */}
-          <div className="w-full flex justify-between items-center p-4 md:p-6 h-[60px] border-b border-white/5">
-            <button
-               onClick={() => setShowAccountSwitchModal(null)}
-               className="text-gray-400 hover:text-white transition-colors"
-            >
-              <ChevronLeft size={24} />
-            </button>
-            <button
-              onClick={() => setShowAccountSwitchModal(null)}
-              className="text-gray-400 hover:text-white transition-colors"
-            >
-              <X size={24} />
-            </button>
-          </div>
-
-          {/* Center Content */}
-          <div className="flex flex-col items-center justify-center flex-1 w-full max-w-sm px-6 gap-8 pb-10">
-            {/* Coin Graphic */}
-            <div className="w-[100px] h-[100px] bg-gradient-to-tr from-[#00b070] to-[#015135] rounded-full shadow-[0_10px_40px_rgba(0,201,128,0.3)] shadow-[#00C980]/20 flex items-center justify-center border-[6px] border-[#016543] border-b-[#01422b] border-r-[#01422b] transform -rotate-12 scale-y-110 shadow-inner perspective-1000">
-              <span
-                className="text-[#029560] font-black text-[70px] leading-none mb-1 transform"
-                style={{
-                  textShadow:
-                    "rgba(255, 255, 255, 0.4) 1px 1px 1px, rgba(0, 0, 0, 0.5) -1px -1px 1px",
-                }}
-              >
-                $
-              </span>
-            </div>
-
-            {/* Title */}
-            <h2 className="text-[20px] font-bold text-white text-center">
-              You are using a {showAccountSwitchModal} account
-            </h2>
-
-            {/* Action Button */}
-            <button
-              onClick={() => setShowAccountSwitchModal(null)}
-              className="w-[calc(100%-16px)] h-[52px] bg-[#FFE24C] hover:bg-[#FFD000] text-black rounded font-medium text-[15px] transition-colors mt-2"
-            >
-              Trade
-            </button>
-          </div>
-        </div>
-      )}
-
-
-      {/* OPEN TRADES MODAL */}
-      {showOpenTrades && (
-        <div className="fixed inset-0 z-[250] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={() => setShowOpenTrades(false)}>
-          <div className="w-full max-w-md bg-[#26262a] rounded-2xl p-6 shadow-2xl border border-white/10" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-white text-xl font-bold">Open Trades</h2>
-              <button 
-                onClick={() => setShowOpenTrades(false)} 
-                className="text-gray-400 hover:text-white transition-colors">
-                <X size={24} />
-              </button>
-            </div>
-            {/* List of trades */}
-            <div className="text-gray-400 text-sm">No open trades.</div>
-          </div>
-        </div>
-      )}
-
-      {/* Deposit Overlay */}
-      {showDeposit && (() => {
-        const isFullscreenMfs = cashierTab === 'deposits' && depositStep === "payment" && !isPaymentPageLoading && ["bkash", "nagad", "rocket", "upay"].some(n => (selectedMethod?.name || "").toLowerCase().includes(n));
-        return (
-        <div className="fixed inset-0 z-[600] flex flex-col justify-end">
-           <div className="absolute inset-0 bg-[#1d1e24] w-full h-full animate-in slide-in-from-bottom duration-300"></div>
-           <div className="absolute inset-0 flex flex-col pt-4 md:pt-6 text-white overflow-hidden animate-in slide-in-from-bottom duration-300">
-           
-           {!isFullscreenMfs && (
-             <>
-             {/* Header */}
-             <div className="flex justify-between items-center px-4 h-[64px] border-b border-white/5 bg-[#1a1b1f]">
-               <div className="flex items-center">
-                 <button 
-                   onClick={() => {
-                     setShowDeposit(false);
-                     setTimeout(() => setDepositStep("methods"), 300);
-                   }} 
-                   className="p-2 -ml-2 text-gray-400 hover:text-white transition-colors mr-3"
-                 >
-                   <ChevronLeft size={24} />
-                 </button>
-                 <div className="flex flex-col">
-                   <span className="text-[9px] text-gray-500 font-bold uppercase tracking-widest leading-none mb-1">Your balance</span>
-                                     <span className="text-[18px] font-bold leading-none">
-                       {isBalanceHidden ? "âœ±âœ±âœ±âœ±âœ±" : formatWithCurrency(realBalance, userCurrency)}
-                     </span>
-                 </div>
-               </div>
-               <button 
-                 onClick={() => {
-                   setShowDeposit(false);
-                   setTimeout(() => setDepositStep("methods"), 300);
-                 }} 
-                 className="text-gray-400 hover:text-white p-2 -mr-2"
-               >
-                 <X size={24} strokeWidth={1.5} />
-               </button>
-             </div>
-             
-             {/* Navigation Pills */}
-             <div className="px-4 mb-6">
-               <div className="bg-[#2A2B31] rounded-[14px] p-1.5 flex shadow-inner border border-[#3b3b3f]/30">
-                  <button onClick={() => setCashierTab("deposits")} className={`flex-1 ${cashierTab === 'deposits' ? 'bg-white text-black shadow-sm' : 'text-gray-400 hover:text-white transition-colors'} font-semibold py-2.5 rounded-[10px] text-[15px]`}>Deposits</button>
-                  <button onClick={() => setCashierTab("withdrawals")} className={`flex-1 ${cashierTab === 'withdrawals' ? 'bg-white text-black shadow-sm' : 'text-gray-400 hover:text-white transition-colors'} font-semibold py-2.5 rounded-[10px] text-[15px]`}>Withdrawals</button>
-                  <button onClick={() => setCashierTab("history")} className={`flex-1 ${cashierTab === 'history' ? 'bg-white text-black shadow-sm' : 'text-gray-400 hover:text-white transition-colors'} font-semibold py-2.5 rounded-[10px] text-[15px]`}>History</button>
-               </div>
-             </div>
-             </>
-           )}
-
-           {isCashierLoading ? (
-             <div className="flex-1 overflow-y-auto px-6 pb-[80px] custom-scrollbar bg-[#1c1c1c] animate-pulse">
-                {cashierTab === 'deposits' && (
-                  <div className="pt-6 space-y-6">
-                    <div className="h-4 w-[80%] mx-auto bg-white/5 rounded-full mb-8" />
-                    <div className="h-10 w-32 bg-white/5 rounded-lg mb-6" />
-                    <div className="grid grid-cols-2 gap-4">
-                      {[1, 2, 3, 4, 5, 6].map(i => (
-                        <div key={`skel-dep-main-${i}`} className="h-[70px] border border-white/5 rounded-2xl bg-white/[0.02]" />
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {cashierTab === 'withdrawals' && (
-                  <div className="pt-4 space-y-6">
-                    <div className="h-[160px] bg-white/5 rounded-[16px] border border-white/5" />
-                    <div className="space-y-4">
-                       <div className="h-6 w-24 bg-white/5 rounded" />
-                       {[1, 2, 3].map(i => (
-                         <div key={`skel-with-main-${i}`} className="h-[80px] bg-white/5 rounded-[16px] border border-white/5" />
-                       ))}
-                    </div>
-                  </div>
-                )}
-                {cashierTab === 'history' && (
-                  <div className="flex flex-col gap-6 pt-6">
-                    <div className="h-12 bg-white/5 rounded-xl border border-white/5 mb-2" />
-                    {[1, 2, 3, 4, 5].map(i => (
-                      <div key={`skel-tx-main-${i}`} className="space-y-3 px-1">
-                         <div className="flex justify-between">
-                            <div className="w-24 h-2 bg-white/5 rounded" />
-                            <div className="w-16 h-2 bg-white/5 rounded" />
-                         </div>
-                         <div className="flex justify-between items-center">
-                            <div className="flex gap-3 items-center">
-                               <div className="w-8 h-8 rounded-full bg-white/5" />
-                               <div className="w-20 h-3 bg-white/5 rounded" />
-                            </div>
-                            <div className="w-16 h-4 bg-white/5 rounded" />
-                         </div>
-                         <div className="h-px bg-white/5 w-full mt-2" />
-                      </div>
-                    ))}
-                  </div>
-                )}
-             </div>
-           ) : (
-             <>
-           {cashierTab === 'deposits' && (
-             <>
-                {/* Progress Steps (Common for all steps) */}
-                {!isFullscreenMfs && (
-                <div className="px-8 mt-2 mb-8 relative">
-               <div className="absolute top-[8px] left-[10%] right-[10%] h-[2px] bg-gray-700/50 z-0"></div>
-               <div 
-                 className="absolute top-[8px] left-[10%] h-[2px] bg-[#FFE24C] z-0 transition-all duration-500"
-                 style={{ 
-                   width: depositStep === "methods" ? "0%" : depositStep === "amount" ? "40%" : "80%" 
-                 }}
-               ></div>
-               
-               <div className="flex items-center justify-between relative px-2">
-                  <div className="flex flex-col items-center gap-2 z-10">
-                    <div className={`w-4 h-4 rounded-full border-[2px] flex items-center justify-center bg-[#1d1e24] shadow-[0_0_0_8px_#1d1e24] transition-colors ${depositStep === 'methods' ? 'border-white' : 'border-[#FFE24C]'}`}>
-                       <div className={`w-1.5 h-1.5 rounded-full ${depositStep === 'methods' ? 'bg-white' : 'bg-[#FFE24C]'}`}></div>
-                    </div>
-                    <span className={`text-xs font-semibold ${depositStep === 'methods' ? 'text-white' : 'text-[#FFE24C]'}`}>Method</span>
-                  </div>
-                  
-                  <div className="flex flex-col items-center gap-2 z-10">
-                    <div className={`w-4 h-4 rounded-full border-[2px] flex items-center justify-center bg-[#1d1e24] shadow-[0_0_0_8px_#1d1e24] transition-colors ${depositStep === 'amount' ? 'border-white' : depositStep === 'payment' ? 'border-[#FFE24C]' : 'border-gray-600'}`}>
-                       {depositStep === 'amount' && <div className="w-1.5 h-1.5 bg-white rounded-full"></div>}
-                       {depositStep === 'payment' && <div className="w-1.5 h-1.5 bg-[#FFE24C] rounded-full"></div>}
-                    </div>
-                    <span className={`text-xs font-semibold ${depositStep === 'amount' ? 'text-white' : depositStep === 'payment' ? 'text-[#FFE24C]' : 'text-gray-500'}`}>Details</span>
-                  </div>
-                  
-                  <div className="flex flex-col items-center gap-2 z-10">
-                    <div className={`w-4 h-4 rounded-full border-[2px] flex items-center justify-center bg-[#1d1e24] shadow-[0_0_0_8px_#1d1e24] transition-colors ${depositStep === 'payment' ? 'border-white' : 'border-gray-600'}`}>
-                       {depositStep === 'payment' && <div className="w-1.5 h-1.5 bg-white rounded-full"></div>}
-                    </div>
-                    <span className={`text-xs font-semibold ${depositStep === 'payment' ? 'text-white' : 'text-gray-500'}`}>Processing</span>
-                  </div>
-               </div>
-            </div>
-            )}
-
-            {/* Content below scrollable */}
-            <div className="flex-1 overflow-y-auto px-0 custom-scrollbar flex flex-col">
-               
-               {depositStep === "methods" ? (
-                 <div className="px-4 pb-[100px] w-full max-w-2xl mx-auto">
-                    {/* Select Methods - Pill Tabs */}
-                    <div className="mb-6 overflow-x-auto scrollbar-hide pb-2">
-                       <div className="flex gap-2 min-w-max">
-                         {["All", "Popular", "Crypto", "E-wallets"].map(cat => (
-                           <button
-                             key={cat}
-                             onClick={() => setDepositCategory(cat)}
-                             className={`px-3.5 py-1.5 rounded-md text-[14px] font-medium transition-colors ${
-                               depositCategory === cat 
-                                 ? 'bg-white text-black' 
-                                 : 'bg-[#2A2B31] text-white hover:bg-[#323338]'
-                             }`}
-                           >
-                             {cat}
-                           </button>
-                         ))}
-                       </div>
-                    </div>
-
-                    {/* Payment Methods Sections */}
-                    <AnimatePresence mode="wait">
-                      {isDepositMethodsLoading ? (
-                        <DepositSkeleton key="deposit-skeleton" />
-                      ) : (
-                        <motion.div key="deposit-content" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }}>
-                          {(depositCategory === "All" || depositCategory === "Popular") && (
-                          <div className="mb-6 relative">
-                            {/* Background light effect for Popular */}
-                            <div className="flex items-center mb-3 mt-1 relative z-10">
-                              <h3 className="text-[#FFE24C] font-black text-[22px] tracking-tight">Popular</h3>
-                            </div>
-                            
-                            <div className="flex flex-col gap-2 relative z-10">
-                              {depositMethods.filter(m => m.isActive !== false && (m.category?.toLowerCase() === 'popular' || m.isPopular)).map((method, idx) => (
-                                <div 
-                                  key={`popular-${idx}-${method.name}`}
-                                  onClick={(e) => { 
-                                    e.stopPropagation(); 
-                                    if (method.id === 'btc') {
-                                      navigate(`/deposit/bitcoin?amount=0.0015&currency=Bitcoin (BTC)&amountBdt=${depositAmount}`);
-                                    } else {
-                                      setSelectedMethod(method); 
-                                      setDepositStep("amount"); 
-                                    }
-                                  }}
-                                  className="bg-[#24252a] hover:bg-[#2c2d33] transition-colors rounded-[16px] flex items-center cursor-pointer border-none relative min-h-[64px] px-4"
-                                >
-                                  <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-sm z-10 overflow-hidden" style={{ backgroundColor: method.bgColor || '#1e1e1e' }}>
-                                    {method.logoType === 'image' || !method.logoType ? (
-                                        method.logo ? (
-                                          <img src={method.logo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer"  loading="lazy" />
-                                        ) : (
-                                          <div className="text-white font-bold">{method.name?.[0] || '?'}</div>
-                                        )
-                                    ) : (
-                                        <span className="text-white font-bold">{method.logo}</span>
-                                    )}
-                                  </div>
-                                  <div className="ml-3 flex flex-col justify-center z-10 py-2">
-                                    <p className="text-white text-[15px] font-bold leading-tight tracking-wide">{method.name}</p>
-                                    <div className="flex items-center gap-1 mt-0.5">
-                                      <Zap size={12} className="text-[#FFE24C]" fill="currentColor" />
-                                      <span className="text-[#FFE24C] text-[11px] font-bold uppercase">{method.instant ? 'instant' : method.time || 'instant'}</span>
-                                      <span className="text-gray-500 text-[11px] font-medium tracking-wide"> â€¢ from {['crypto', 'other'].includes(method.category?.toLowerCase() || '') ? `${method.minDeposit || 10}` : formatRawCurrency(method.minDeposit || 10, userCurrency)}</span>
-                                    </div>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        
-                        {(depositCategory === "All" || depositCategory === "Crypto") && (
-                          <div className="mb-6 relative">
-                            <div className="absolute top-0 left-0 w-full h-[150px] bg-gradient-to-br from-blue-500/10 to-transparent blur-3xl pointer-events-none rounded-full"></div>
-                            <div className="flex items-center gap-2 mb-3 relative z-10">
-                              <div className="w-[18px] h-[18px] flex items-center justify-center rounded-full border border-[#FFF] text-[#FFE24C] bg-transparent">
-                                <span className="font-bold text-[10px]">C</span>
-                              </div>
-                              <h3 className="text-white font-bold text-[16px]">Crypto</h3>
-                              <div className="ml-auto bg-[#3269FF]/90 text-white px-3 py-1 rounded-[12px] text-[12px] font-medium border border-[#FF4A5C]">Global</div>
-                            </div>
-                            
-                            <div className="flex flex-col gap-2 relative z-10">
-                              {depositMethods.filter(m => m.isActive !== false && (m.category?.toLowerCase() === 'crypto' || m.name?.toLowerCase().includes('binance'))).map((method, idx) => (
-                                <div 
-                                  key={`crypto-${idx}-${method.name}`}
-                                  onClick={(e) => { 
-                                    e.stopPropagation(); 
-                                    if (method.id === 'btc') {
-                                      navigate(`/deposit/bitcoin?amount=0.0015&currency=Bitcoin (BTC)&amountBdt=${depositAmount}`);
-                                    } else {
-                                      setSelectedMethod(method); 
-                                      setDepositStep("amount"); 
-                                    }
-                                  }}
-                                  className="bg-[#2A2B31] hover:bg-[#323338] transition-colors rounded-[16px] flex items-center cursor-pointer border border-[#3b3b3f]/30 relative overflow-hidden min-h-[70px] px-4"
-                                >
-                                  
-                                  <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-md z-10 overflow-hidden" style={{ backgroundColor: method.bgColor || '#1e1e1e' }}>
-                                    {method.logoType === 'image' || !method.logoType ? (
-                                        method.logo ? (
-                                          <img src={method.logo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer"  loading="lazy" />
-                                        ) : (
-                                          <div className="text-white font-bold">{method.name?.[0] || '?'}</div>
-                                        )
-                                    ) : (
-                                        <span className="text-white font-bold text-lg">{method.logo}</span>
-                                    )}
-                                  </div>
-                                  <div className="flex flex-col ml-4">
-                                    <p className="text-[#E0E0E0] text-[15px] font-bold leading-tight">{method.name}</p>
-                                    <div className="flex items-center gap-2 mt-1">
-                                      <p className="text-[#00C980] text-[10px] font-black uppercase tracking-widest">{method.instant ? 'instant' : method.time || '15 mins'}</p>
-                                      <span className="text-white/10 text-[10px]">â€¢</span>
-                                      <p className="text-gray-500 text-[10px] font-bold uppercase tracking-widest">Min: {isCryptoDeposit ? `${method.minDeposit || 10}` : formatRawCurrency(method.minDeposit || 500, userCurrency)}</p>
-                                    </div>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        
-                        {(depositCategory === "All" || depositCategory === "E-wallets") && (
-                          <div className="mb-6 relative z-10">
-                            <div className="flex items-center mb-3 mt-6 relative z-10">
-                              <h3 className="text-[#34d399] font-black text-[22px] tracking-tight">E-wallets</h3>
-                            </div>
-                            
-                            <div className="flex flex-col gap-2">
-                              {depositMethods.filter(m => {
-                                if (m.isActive === false) return false;
-                                const cat = m.category?.toLowerCase() || '';
-                                return cat === 'e-wallets' || cat === 'mobile banking' || cat.includes('wallet') || cat.includes('mobile');
-                              }).map((method, idx) => (
-                                <div 
-                                  key={`ewallet-${idx}-${method.name}`}
-                                  onClick={(e) => { 
-                                    e.stopPropagation(); 
-                                    if (method.id === 'btc') {
-                                      navigate(`/deposit/bitcoin?amount=0.0015&currency=Bitcoin (BTC)&amountBdt=${depositAmount}`);
-                                    } else {
-                                      setSelectedMethod(method); 
-                                      setDepositStep("amount"); 
-                                    }
-                                  }}
-                                  className="bg-[#24252a] hover:bg-[#2c2d33] transition-colors rounded-[16px] flex items-center cursor-pointer border-none relative min-h-[64px] px-4"
-                                >
-                                  <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-sm z-10 overflow-hidden" style={{ backgroundColor: method.bgColor || '#1e1e1e' }}>
-                                    {method.logoType === 'image' || !method.logoType ? (
-                                        method.logo ? (
-                                          <img src={method.logo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer"  loading="lazy" />
-                                        ) : (
-                                          <div className="text-white font-bold">{method.name?.[0] || '?'}</div>
-                                        )
-                                    ) : (
-                                        <span className="text-white font-bold">{method.logo}</span>
-                                    )}
-                                  </div>
-                                  <div className="ml-3 flex flex-col justify-center z-10 py-2">
-                                    <p className="text-white text-[15px] font-bold leading-tight tracking-wide">{method.name}</p>
-                                    <div className="flex items-center gap-1 mt-0.5">
-                                      <Zap size={12} className="text-[#FFE24C]" fill="currentColor" />
-                                      <span className="text-[#FFE24C] text-[11px] font-bold uppercase">{method.instant ? 'instant' : method.time || 'instant'}</span>
-                                      <span className="text-gray-500 text-[11px] font-medium tracking-wide"> â€¢ from {['crypto', 'other'].includes(method.category?.toLowerCase() || '') ? `${method.minDeposit || 10}` : formatRawCurrency(method.minDeposit || 10, userCurrency)}</span>
-                                    </div>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        
-                        {(depositCategory === "All" || depositCategory === "Other") && (
-                          <div className="mb-[20px] relative z-10">
-                            <div className="flex items-center mb-3 mt-6 relative z-10">
-                              <h3 className="text-[#9ca3af] font-black text-[22px] tracking-tight">Other</h3>
-                            </div>
-                            
-                            <div className="flex flex-col gap-2">
-                              {depositMethods.filter(m => m.isActive !== false && m.category?.toLowerCase() === 'other').map((method, idx) => (
-                                <div 
-                                  key={`other-${idx}-${method.name}`}
-                                  onClick={(e) => { 
-                                    e.stopPropagation(); 
-                                    if (method.id === 'btc') {
-                                      navigate(`/deposit/bitcoin?amount=0.0015&currency=Bitcoin (BTC)&amountBdt=${depositAmount}`);
-                                    } else {
-                                      setSelectedMethod(method); 
-                                      setDepositStep("amount"); 
-                                    }
-                                  }}
-                                  className="bg-[#24252a] hover:bg-[#2c2d33] transition-colors rounded-[16px] flex items-center cursor-pointer border-none relative min-h-[64px] px-4"
-                                >
-                                  <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-sm z-10 overflow-hidden" style={{ backgroundColor: method.bgColor || '#1e1e1e' }}>
-                                    {method.logoType === 'image' || !method.logoType ? (
-                                        method.logo ? (
-                                          <img src={method.logo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer"  loading="lazy" />
-                                        ) : (
-                                          <div className="text-white font-bold">{method.name?.[0] || '?'}</div>
-                                        )
-                                    ) : (
-                                        <span className="text-white font-bold">{method.logo}</span>
-                                    )}
-                                  </div>
-                                  <div className="ml-3 flex flex-col justify-center z-10 py-2">
-                                    <p className="text-white text-[15px] font-bold leading-tight tracking-wide">{method.name}</p>
-                                    <div className="flex items-center gap-1 mt-0.5">
-                                      <Zap size={12} className="text-[#FFE24C]" fill="currentColor" />
-                                      <span className="text-[#FFE24C] text-[11px] font-bold uppercase">{method.instant ? 'instant' : method.time || 'instant'}</span>
-                                      <span className="text-gray-500 text-[11px] font-medium tracking-wide"> â€¢ from {['crypto', 'other'].includes(method.category?.toLowerCase() || '') ? `${method.minDeposit || 10}` : formatRawCurrency(method.minDeposit || 10, userCurrency)}</span>
-                                    </div>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </motion.div>
-                    )}
-
-                    </AnimatePresence>
-                    {/* More Methods section removed as requested */}
-
-                 </div>
-               ) : depositStep === "amount" ? (
-                 <div className="px-4 pb-[120px] w-full max-w-2xl mx-auto animate-in fade-in slide-in-from-right-5 duration-300">
-                    <div className="flex items-center gap-2 mb-6">
-                       <button onClick={() => setDepositStep("methods")} className="text-gray-400 hover:text-white p-1 -ml-1">
-                          <ChevronLeft size={24} />
-                       </button>
-                       <h2 className="text-white font-bold text-lg">{selectedMethod?.name}</h2>
-                    </div>
-
-                    <button className="w-full bg-[#2A2B31] rounded-xl py-3 px-4 flex items-center justify-center gap-2 border border-[#3b3b3f]/50 mb-8 font-bold text-[15px] group active:scale-[0.98] transition-transform">
-                       <History size={18} className="text-gray-400 group-hover:text-white" /> Choose method
-                    </button>
-
-                    <p className="text-center text-gray-400 text-[13px] font-medium mb-6">
-                       Deposit amount from {isCryptoDeposit ? `$${selectedMethod?.minDeposit || 1}` : formatRawCurrency(selectedMethod?.minDeposit || 500, userCurrency)} to {isCryptoDeposit ? `$${selectedMethod?.maxDeposit || 10000}` : formatRawCurrency(selectedMethod?.maxDeposit || 1000000, userCurrency)}
-                    </p>
-
-                    <div className="bg-gradient-to-r from-[#2c1d3c] via-[#4d2f34] to-[#a37932] rounded-2xl p-0.5 relative overflow-hidden mb-6 shadow-lg">
-                       <div className="bg-[#1d1e24]/60 backdrop-blur-md p-4 rounded-[14px] flex items-center justify-between">
-                          <div>
-                             <h4 className="text-white font-bold text-[15px] mb-1">Become a VIP to get:</h4>
-                             <div className="bg-[#3269FF]/80 backdrop-blur-sm text-white text-[10px] font-black px-2 py-0.5 rounded-full inline-block uppercase tracking-wider">Cashback / Insurance / Personal manager / RFTs</div>
-                          </div>
-                          <div className="flex flex-col items-end">
-                             <p className="text-[#FFE24C] font-black text-xs leading-none">{isCryptoDeposit ? '$' : formatRawCurrency(77500, userCurrency)}</p>
-                             <div className="w-10 h-10 mt-1 relative">
-                                <div className="absolute inset-0 bg-white/20 blur-md rounded-full"></div>
-                                <div className="relative w-full h-full bg-gradient-to-br from-gray-400 to-gray-700 rounded-lg rotate-45 shadow-lg border border-white/20"></div>
-                             </div>
-                          </div>
-                       </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3 mb-8">
-                       <div 
-                          onClick={() => setDepositAmount(isCryptoDeposit ? '3000' : convertFromBase(359000, userCurrency).toString())}
-                          className={`rounded-2xl p-[1px] cursor-pointer transition-all ${depositAmount === (isCryptoDeposit ? '3000' : convertFromBase(359000, userCurrency).toString()) ? 'bg-gradient-to-br from-yellow-400 to-yellow-600 shadow-[0_0_15px_rgba(255,226,76,0.3)]' : 'bg-gradient-to-br from-[#4d2f34] to-[#2c1d3c]'}`}
-                       >
-                          <div className={`p-3.5 rounded-[15px] flex flex-col ${depositAmount === (isCryptoDeposit ? '3000' : convertFromBase(359000, userCurrency).toString()) ? 'bg-[#1d1e24]' : 'bg-[#1d1e24]/80'}`}>
-                             <div className="flex justify-between items-start mb-4">
-                                <p className="text-white font-black text-lg leading-tight">{isCryptoDeposit ? '$3,000' : formatRawCurrency(359000, userCurrency)}</p>
-                                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-400 to-purple-800 rotate-45 border border-white/20 shadow-lg"></div>
-                             </div>
-                             <p className="text-[#00C980] text-xs font-black mb-1 uppercase tracking-wider">Bonus +70%</p>
-                             <p className="text-gray-500 text-[10px] font-black uppercase tracking-widest">Prestige</p>
-                          </div>
-                       </div>
-
-                       <div 
-                          onClick={() => setDepositAmount(isCryptoDeposit ? '25' : convertFromBase(3000, userCurrency).toString())}
-                          className={`rounded-2xl p-3.5 flex flex-col border cursor-pointer transition-all ${depositAmount === (isCryptoDeposit ? '25' : convertFromBase(3000, userCurrency).toString()) ? 'bg-[#2A2B31] border-yellow-500 shadow-[0_0_15px_rgba(255,226,76,0.2)]' : 'bg-[#2A2B31] border-[#3b3b3f]/50'}`}
-                       >
-                          <div className="flex justify-between items-start mb-4">
-                             <p className="text-white font-black text-lg leading-tight">{isCryptoDeposit ? '$25' : formatRawCurrency(3000, userCurrency)}</p>
-                             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-gray-300 to-gray-500 rotate-45 border border-white/20 shadow-lg opacity-60"></div>
-                          </div>
-                          <p className="text-gray-400 text-xs font-black mb-1 uppercase tracking-wider">Bonus 0%</p>
-                          <p className="text-gray-500 text-[10px] font-black uppercase tracking-widest">Standard</p>
-                       </div>
-                    </div>
-
-                    <div className="bg-[#26272C] rounded-[16px] px-5 py-4 flex flex-col gap-2 mb-8 shadow-sm border border-white/5 focus-within:border-white/20 transition-all">
-                       <label className="text-gray-500 text-[10px] font-black uppercase tracking-widest flex justify-between">
-                          Custom Amount
-                          <span className="text-[9px] opacity-70">Min: {isCryptoDeposit ? `$${selectedMethod?.minDeposit || 1}` : formatRawCurrency(selectedMethod?.minDeposit || 500, userCurrency)}</span>
-                       </label>
-                       <div className="flex items-center gap-2">
-                          <span className="text-white font-black text-xl">{isCryptoDeposit ? '$' : userCurrency}</span>
-                          <input 
-                             type="number" 
-                             value={depositAmount} 
-                             onChange={(e) => setDepositAmount(e.target.value)}
-                             className="bg-transparent text-white font-black text-2xl outline-none w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                             placeholder="0.00"
-                          />
-                       </div>
-                    </div>
-
-                    <div className="bg-[#26272C] rounded-[16px] px-5 py-4 flex items-center justify-between mb-8 shadow-sm">
-                       <p className="text-white font-medium text-[15px]">Your status will be</p>
-                       <div className="flex items-center gap-2">
-                           <span className="text-gray-400 text-[13px] font-medium uppercase tracking-wider">VIP</span>
-                           {/* Diamond icon SVG */}
-                           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                              <path d="M12 21L2 9L12 3L22 9L12 21Z" fill="url(#paint0_linear)"/>
-                              <path d="M12 21L7 9L12 3V21Z" fill="url(#paint1_linear)"/>
-                              <path d="M12 21L17 9L12 3V21Z" fill="url(#paint2_linear)"/>
-                              <path d="M2 9H22L12 21L2 9Z" fill="url(#paint3_linear)"/>
-                              <defs>
-                                <linearGradient id="paint0_linear" x1="12" y1="3" x2="12" y2="21" gradientUnits="userSpaceOnUse">
-                                    <stop stopColor="#A9A9A9"/>
-                                    <stop offset="1" stopColor="#D3D3D3"/>
-                                </linearGradient>
-                                <linearGradient id="paint1_linear" x1="9.5" y1="3" x2="9.5" y2="21" gradientUnits="userSpaceOnUse">
-                                    <stop stopColor="#BDBDBD"/>
-                                    <stop offset="1" stopColor="#E0E0E0"/>
-                                </linearGradient>
-                                <linearGradient id="paint2_linear" x1="14.5" y1="3" x2="14.5" y2="21" gradientUnits="userSpaceOnUse">
-                                    <stop stopColor="#808080"/>
-                                    <stop offset="1" stopColor="#A9A9A9"/>
-                                </linearGradient>
-                                <linearGradient id="paint3_linear" x1="12" y1="9" x2="12" y2="21" gradientUnits="userSpaceOnUse">
-                                    <stop stopColor="#696969"/>
-                                    <stop offset="1" stopColor="#808080"/>
-                                </linearGradient>
-                              </defs>
-                           </svg>
-                       </div>
-                    </div>
-
-                    <div className="flex items-center justify-center gap-2 mb-4">
-                       <h3 className="text-white font-bold text-[16px]">Bonuses and promo codes</h3>
-                       <div className="w-4 h-4 rounded-full border border-gray-500 flex items-center justify-center text-[10px] text-gray-400 font-medium font-serif shrink-0 cursor-pointer hover:bg-gray-700 transition">
-                          i
-                       </div>
-                    </div>
-
-                    <div className="space-y-2 mb-20">
-                       <div onClick={() => setSelectedBonusId("none")} className={`bg-[#26272C] rounded-[14px] p-[18px] flex items-center gap-4 cursor-pointer transition-colors ${selectedBonusId === "none" ? 'bg-[#2A2B31]' : 'hover:bg-[#2A2B31]'}`}>
-                          <div className={`w-[22px] h-[22px] rounded-full border-[2px] ${selectedBonusId === "none" ? 'border-[#FFE24C]' : 'border-gray-500'} flex items-center justify-center transition-colors shrink-0`}>
-                             {selectedBonusId === "none" && <div className="w-[10px] h-[10px] bg-[#FFE24C] rounded-full"></div>}
-                          </div>
-                          <span className="text-white font-medium text-[15px]">Without a bonus</span>
-                       </div>
-
-                       <div onClick={() => setSelectedBonusId("bonus50")} className={`bg-[#26272C] rounded-[14px] p-[18px] flex flex-col cursor-pointer transition-colors ${selectedBonusId === "bonus50" ? 'bg-[#2A2B31]' : 'hover:bg-[#2A2B31]'}`}>
-                          <div className="flex items-center gap-4">
-                            <div className={`w-[22px] h-[22px] rounded-full border-[2px] ${selectedBonusId === "bonus50" ? 'border-[#FFE24C]' : 'border-gray-500'} flex items-center justify-center transition-colors shrink-0`}>
-                               {selectedBonusId === "bonus50" && <div className="w-[10px] h-[10px] bg-[#FFE24C] rounded-full"></div>}
-                            </div>
-                            <span className="text-white font-medium text-[15px]">Deposit bonus <span className="text-[#FFE24C] font-semibold">+50%</span></span>
-                          </div>
-                          {selectedBonusId === "bonus50" && (
-                             <div className="pl-9 mt-5 space-y-3">
-                                <div className="flex items-center justify-between text-[13px]">
-                                   <div className="flex items-center gap-1.5 text-gray-400">
-                                      <span>Bonus</span>
-                                      <div className="w-[14px] h-[14px] rounded-full border border-gray-500 flex items-center justify-center text-[9px] text-gray-400 font-medium font-serif shrink-0 cursor-pointer">i</div>
-                                   </div>
-                                   <div className="flex-1 border-b border-gray-600/30 border-solid mx-3 mt-[1px]"></div>
-                                   <span className="text-gray-300 font-medium tracking-wide">{userCurrency}38,750.00</span>
-                                </div>
-                                <div className="flex items-center justify-between text-[13px] font-bold">
-                                   <span className="text-white">Total</span>
-                                   <div className="flex-1 border-b border-gray-600/30 border-solid mx-3 mt-[1px]"></div>
-                                   <span className="text-white tracking-wide">{userCurrency}116,250.00</span>
-                                </div>
-                             </div>
-                          )}
-                       </div>
-
-                       <div onClick={() => setSelectedBonusId("promo")} className={`bg-[#26272C] rounded-[14px] p-[18px] flex flex-col cursor-pointer transition-colors ${selectedBonusId === "promo" ? 'bg-[#2A2B31]' : 'hover:bg-[#2A2B31]'}`}>
-                          <div className="flex items-center gap-4">
-                            <div className={`w-[22px] h-[22px] rounded-full border-[2px] ${selectedBonusId === "promo" ? 'border-[#FFE24C]' : 'border-gray-500'} flex items-center justify-center transition-colors shrink-0`}>
-                               {selectedBonusId === "promo" && <div className="w-[10px] h-[10px] bg-[#FFE24C] rounded-full"></div>}
-                            </div>
-                            <span className="text-white font-medium text-[15px]">Promo code bonus <span className={`font-semibold ${promoBonus > 0 ? 'text-[#00C980]' : 'text-gray-400'}`}>+{promoBonus}%</span></span>
-                          </div>
-                          {selectedBonusId === "promo" && (
-                             <div className="pl-9 mt-4 flex gap-3 h-[46px]">
-                                <div className="flex-1 bg-[#202125] rounded-[10px] flex items-center px-4 border border-[#3b3b3f]/30 focus-within:border-gray-500 transition-colors h-full overflow-hidden">
-                                   <Gift size={20} className="text-gray-400 mr-2 shrink-0" />
-                                   <input type="text" placeholder="Promo code" className="bg-transparent text-white w-full text-[14px] outline-none placeholder:text-gray-500 font-medium h-full" />
-                                </div>
-                                <button className="bg-[#FFE24C] hover:bg-[#F0D544] transition-colors w-[46px] h-[46px] rounded-[10px] flex items-center justify-center text-black shadow-sm shrink-0 active:scale-95">
-                                   <ChevronRight size={24} strokeWidth={2.5} />
-                                </button>
-                             </div>
-                          )}
-                       </div>
-                    </div>
-                 </div>
-               ) : depositStep === "payment" ? (
-                 <div className="px-4 pb-[60px] animate-in fade-in zoom-in-95 duration-500">
-                    <div className="flex items-center gap-2 mb-8 mt-2">
-                       <button onClick={() => setDepositStep("amount")} className="text-gray-400 hover:text-white p-1 -ml-1">
-                          <ChevronLeft size={24} />
-                       </button>
-                       <h2 className="text-white font-extrabold text-[18px] flex-1 text-center pr-8">Complete the payment</h2>
-                    </div>
-
-                     {selectedMethod?.provider === "Web3" ? (
-                        <div className="bg-[#2A2B31]/50 border border-white/5 rounded-[24px] p-8 mt-6 shadow-2xl relative overflow-hidden backdrop-blur-md animate-in slide-in-from-bottom-2 duration-500">
-                           <div className="flex flex-col items-center justify-center text-center space-y-6">
-                              <div className="w-24 h-24 bg-[#3269FF]/10 rounded-full flex items-center justify-center border border-[#3269FF]/30 relative">
-                                 {web3State === 'processing' && <div className="absolute inset-0 rounded-full border-[3px] border-[#3269FF] border-t-transparent animate-spin"></div>}
-                                 {web3State === 'success' ? <Check size={48} className="text-[#00C980]" /> : <Wallet size={48} className="text-[#3269FF]" />}
-                              </div>
-                              
-                              <div>
-                                 <h3 className="text-white font-bold text-2xl mb-2">
-                                     {web3State === 'idle' ? 'Connect Wallet' : 
-                                      web3State === 'connecting' ? 'Connecting...' : 
-                                      web3State === 'connected' ? 'Confirm Payment' : 
-                                      web3State === 'processing' ? 'Processing Transaction' : 'Payment Successful!'}
-                                 </h3>
-                                 <p className="text-gray-400 text-sm max-w-sm mx-auto">
-                                     {web3State === 'idle' ? 'Connect your MetaMask, Trust Wallet, or Binance Web3 Wallet to deposit.' : 
-                                      web3State === 'connecting' ? 'Please approve the connection request in your wallet.' : 
-                                      web3State === 'connected' ? `You are depositing ${userCurrency}${Number(depositAmount).toLocaleString()}. Please confirm the transaction in your wallet.` : 
-                                      web3State === 'processing' ? 'Waiting for blockchain confirmation... This usually takes around 10 to 30 seconds.' : `Your deposit of ${userCurrency}${Number(depositAmount).toLocaleString()} has been received!`}
-                                 </p>
-                              </div>
-
-                              {walletAddress && web3State !== 'idle' && (
-                                 <div className="bg-black/40 py-2 px-5 rounded-full border border-white/5 font-mono text-sm text-gray-300 shadow-inner flex items-center gap-2">
-                                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                                    {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
-                                 </div>
-                              )}
-
-                              {web3State === 'idle' && (
-                                 <div className="w-full pt-4">
-                                     <button 
-                                         onClick={async () => {
-                                            setWeb3State('connecting');
-                                            try {
-                                               let address = "";
-                                               if (typeof window !== 'undefined' && (window as any).ethereum) {
-                                                  const accounts = await (window as any).ethereum.request({ method: 'eth_requestAccounts' });
-                                                  address = accounts[0];
-                                               } else {
-                                                  await new Promise(r => setTimeout(r, 1500));
-                                                  address = "0x71" + Math.random().toString(16).slice(2, 8) + "..." + Math.random().toString(16).slice(2, 6);
-                                               }
-                                               setWalletAddress(address);
-                                               setWeb3State('connected');
-                                            } catch (e) {
-                                               console.error(e);
-                                               setWeb3State('idle');
-                                            }
-                                         }}
-                                         className="w-full py-4 bg-[#3269FF] hover:bg-[#2855D0] text-white font-bold rounded-xl transition-all shadow-[0_0_20px_rgba(50,105,255,0.3)] hover:shadow-[0_0_30px_rgba(50,105,255,0.5)] transform hover:-translate-y-1"
-                                     >
-                                        Auto Connect Web3 Wallets
-                                     </button>
-                                     <div className="flex justify-center gap-4 mt-6 grayscale opacity-60">
-                                         <div className="w-8 h-8 bg-[#F6851B] rounded-full shadow-md hover:grayscale-0 transition-all cursor-pointer"></div>
-                                         <div className="w-8 h-8 bg-[#3375BB] rounded-full shadow-md hover:grayscale-0 transition-all cursor-pointer"></div>
-                                         <div className="w-8 h-8 bg-[#F3BA2F] rounded-full shadow-md hover:grayscale-0 transition-all cursor-pointer"></div>
-                                     </div>
-                                 </div>
-                              )}
-
-                              {web3State === 'connected' && (
-                                 <button 
-                                     onClick={async () => {
-                                        setWeb3State('processing');
-                                        try {
-                                           await new Promise(r => setTimeout(r, 4000));
-                                           
-                                           setTxHash("0x" + Math.random().toString(16).slice(2, 42) + Math.random().toString(16).slice(2, 24));
-                                           setWeb3State('success');
-                                           
-                                           import('../firebase.ts').then(async ({ doc, updateDoc, increment }) => {
-                                              if (auth?.currentUser) {
-                                                  const baseDeposit = convertToBase(Number(depositAmount), userCurrency);
-                                                  await updateDoc(doc(db, 'users', auth.currentUser.uid), {
-                                                      balance: increment(baseDeposit)
-                                                  });
-                                              }
-                                           }).catch(e => console.error(e));
-                                           
-                                           toast.success(`Successfully deposited ${userCurrency}${depositAmount} via Web3 Wallet!`);
-                                        } catch (e) {
-                                           console.error(e);
-                                           toast.error("Deposit failed.");
-                                           setWeb3State('connected');
-                                        }
-                                     }}
-                                     className="w-full py-4 bg-[#00C980] hover:bg-[#00B070] text-black text-lg font-black rounded-xl transition-all shadow-[0_0_20px_rgba(0,201,128,0.3)] hover:shadow-[0_0_30px_rgba(0,201,128,0.5)] transform hover:-translate-y-1 mt-4"
-                                 >
-                                    Pay {userCurrency}{Number(depositAmount).toLocaleString()}
-                                 </button>
-                              )}
-
-                              {web3State === 'success' && (
-                                 <div className="w-full mt-4 space-y-4">
-                                    {txHash && (
-                                      <div className="bg-black/20 p-4 rounded-xl border border-white/5 flex flex-col gap-1.5 text-left items-center">
-                                        <span className="text-[10px] text-gray-500 uppercase font-black">Transaction Hash</span>
-                                        <span className="text-[#00C980] font-mono text-sm max-w-[280px] text-center truncate">{txHash}</span>
-                                      </div>
-                                    )}
-                                    <button 
-                                        onClick={() => {
-                                           setShowDeposit(false);
-                                           setDepositStep("methods");
-                                           setWeb3State('idle');
-                                        }}
-                                        className="w-full py-4 bg-white hover:bg-gray-200 text-black font-bold rounded-xl transition-transform transform hover:-translate-y-1 shadow-lg"
-                                    >
-                                       Return to Terminal
-                                    </button>
-                                 </div>
-                              )}
-                           </div>
-                        </div>
-                     ) : isPaymentPageLoading ? (
-                        <div className="flex flex-col items-center justify-center min-h-[400px] animate-in fade-in duration-500 bg-[#2A2B31]/50 border border-white/5 rounded-[24px] mt-6 relative overflow-hidden backdrop-blur-md pb-10">
-                          <div className="w-16 h-16 border-4 border-[#FFE24C] border-t-transparent rounded-full animate-spin mb-6"></div>
-                          <h3 className="text-white text-xl font-bold mb-2">Connecting to Secure Gateway...</h3>
-                          <p className="text-gray-400 text-sm max-w-sm text-center">Please wait while we initialize the connection to the payment provider.</p>
-                        </div>
-                      ) : ["bkash", "nagad", "rocket", "upay"].some(n => (selectedMethod?.name || "").toLowerCase().includes(n)) ? (
-                        <div className="fixed inset-0 z-[400] bg-white text-black overflow-y-auto animate-in slide-in-from-bottom duration-500 flex flex-col scrollbar-hide w-full h-full pb-8 pt-safe">
-                           <div className="bg-[#0b6c4b] p-3 pl-4 text-white shadow-xl relative z-10 font-sans flex items-center justify-between">
-                              <div>
-                                <h2 className="text-[26px] font-black tracking-tight leading-none mb-1">BDT {Number(depositAmount).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</h2>
-                                <p className="text-[14px] font-bold leading-tight uppercase tracking-tight">Do not Cash Out<br/>less or more</p>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <div className="bg-white font-black text-black px-3 py-1.5 rounded shadow-sm tracking-wider flex items-center gap-1.5 opacity-90">
-                                   <span className="font-extrabold text-[12px] uppercase">Service</span>
-                                </div>
-                              </div>
-                           </div>
-                           
-                           <div className="p-4 flex-1">
-                              <p className="text-[#ec2028] font-bold text-[16px] leading-[1.3] mb-5 text-left font-sans">
-                                 If you change the amount (BDT {Number(depositAmount).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}), you will not be able to receive credit.
-                              </p>
-                              
-                              <div className={`p-4 rounded-[6px] text-white flex items-center gap-4 mb-6 shadow-md ${selectedMethod?.name?.toLowerCase().includes('bkash') ? 'bg-[#df146e]' : selectedMethod?.name?.toLowerCase().includes('nagad') ? 'bg-[#ec2028]' : selectedMethod?.name?.toLowerCase().includes('rocket') ? 'bg-[#8c1515]' : selectedMethod?.name?.toLowerCase().includes('upay') ? 'bg-[#295191]' : 'bg-gray-800'} `}>
-                                 <div className="bg-white rounded-full w-12 h-12 flex items-center justify-center p-1 drop-shadow-md">
-                                    <AssetLogo name={selectedMethod?.name} />
-                                 </div>
-                                 <div className="font-extrabold text-[20px] font-sans">{selectedMethod?.name?.toUpperCase()} Deposit</div>
-                              </div>
-                              
-                              <div className="mb-6 font-sans">
-                                 <h3 className="font-bold text-[17px] mb-1 text-black">Wallet No<span className="text-[#ec2028]">*</span></h3>
-                                 <p className="text-[14px] text-gray-800 mb-2 font-medium">Only Cash Out is accepted at this {selectedMethod?.name?.toUpperCase()} number. Amount: ~{Number(depositAmount) * 120} BDT</p>
-                                 <div className="flex items-center justify-between bg-[#f8f9fa] p-4 rounded-[6px] border border-gray-200">
-                                    <span className="font-black text-gray-900 tracking-wider text-[18px]">{selectedMethod?.address || selectedMethod?.walletAddress || '01347249505'}</span>
-                                    <button 
-                                      onClick={() => {
-                                        navigator.clipboard.writeText(selectedMethod?.address || selectedMethod?.walletAddress || '01347249505');
-                                        setHasCopiedWallet(true);
-                                        toast.success("Copied to clipboard!");
-                                        setTimeout(() => setHasCopiedWallet(false), 3000);
-                                      }}
-                                      className="text-emerald-600 hover:text-emerald-700 active:scale-95 transition-transform"
-                                    >
-                                      {hasCopiedWallet ? <Icons.Check size={28} /> : <Icons.Copy size={28} />}
-                                    </button>
-                                 </div>
-                              </div>
-
-                              <div className="mb-6 font-sans">
-                                 <h3 className="font-bold text-[16px] mb-2 leading-tight text-black">Enter the TrxID of the Cash Out <span className="text-[#ec2028] text-[15px]">(required)</span></h3>
-                                 <input 
-                                   type="text" 
-                                   placeholder="TrxID must be filled!"
-                                   value={paymentTrxId}
-                                   onChange={(e) => setPaymentTrxId(e.target.value)}
-                                   className="w-full border-2 border-[#ec2028] rounded-[6px] p-4.5 text-[16px] outline-none font-bold placeholder-gray-400 bg-white"
-                                 />
-                              </div>
-                              
-                              <button 
-                                onClick={async () => {
-                                  if (!paymentTrxId) {
-                                    toast.error("TrxID is required!");
-                                    return;
-                                  }
-                                  
-                                  const minDep = ['USD', 'USDT', 'EUR', 'GBP', '$', 'â‚¬'].includes(userCurrency) ? 1 : 20;
-                                  if (Number(depositAmount) < minDep) {
-                                    toast.error(`Minimum deposit is ${userCurrency}${minDep}`);
-                                    return;
-                                  }
-                                  const orderId = Math.floor(Math.random() * 100000000).toString();
-                                  
-                                  if (auth?.currentUser) {
-                                    try {
-                                      const { collection, addDoc } = await import('../firebase.ts');
-                                      const currentAmount = convertToBase(Number(depositAmount), userCurrency);
-                                      const effectiveMethodName = selectedMethod?.name || (userCurrency === 'BDT' ? 'Manual bKash/Nagad' : 'Direct Deposit');
-                                      
-                                      await addDoc(collection(db, 'deposits'), {
-                                        userId: auth.currentUser.uid,
-                                        userEmail: auth.currentUser.email || '',
-                                        amount: Number(currentAmount),
-                                        currency: userCurrency,
-                                        method: effectiveMethodName,
-                                        walletNumber: selectedMethod?.walletAddress || '01347249505',
-                                        trxId: paymentTrxId || 'Direct-Deposit',
-                                        status: 'pending',
-                                        timestamp: Date.now(),
-                                        orderId,
-                                        promoCode: appliedPromo || '',
-                                        promoBonus: promoBonus || 0
-                                      });
-
-                                      await addDoc(collection(db, `users/${auth.currentUser.uid}/transactions`), {
-                                        type: 'Deposit',
-                                        amount: Number(currentAmount),
-                                        method: effectiveMethodName,
-                                        currency: userCurrency,
-                                        status: 'Pending',
-                                        trxId: paymentTrxId || 'Direct-Deposit',
-                                        orderId,
-                                        timestamp: Date.now()
-                                      });
-                                      
-                                      toast.success(`Deposit request for ${userCurrency}${depositAmount} submitted successfully!`);
-                                    } catch (err) {
-                                      console.error("Deposit submission error:", err);
-                                      toast.error("Failed to submit deposit request. Please try again.");
-                                    }
-                                  }
-                                  setShowDeposit(false);
-                                  setDepositStep("methods");
-                               }}
-                               className="w-full py-4 bg-[#FFE24C] hover:bg-[#FFD600] text-black font-black text-lg rounded-xl transition-all shadow-[0_0_20px_rgba(255,226,76,0.3)] hover:shadow-[0_0_30px_rgba(255,226,76,0.5)] transform hover:-translate-y-1"
-                          >
-                             Confirm Payment
-                          </button>
-                        </div>
-                        {/* More UI Elements ... */}
-
-
-                       <div className="space-y-6">
-                          <div className="bg-[#1d1e24]/60 border border-white/5 p-4 rounded-2xl group hover:border-white/20 transition-all cursor-pointer">
-                             <p className="text-gray-500 text-[11px] font-black uppercase tracking-widest mb-1.5">{selectedMethod?.coin || "USDT"} address to pay:</p>
-                             <div className="flex items-center justify-between gap-4">
-                                <p className="text-white font-mono text-[14px] leading-tight break-all">TJ8rDqvSUird6WhKNhwJpo623RnogjES2i</p>
-                                <button className="shrink-0 w-10 h-10 bg-white/10 hover:bg-white/20 rounded-xl flex items-center justify-center transition-colors group-active:scale-95">
-                                   <Copy size={18} className="text-white" />
-                                </button>
-                             </div>
-                          </div>
-
-                          <div className="bg-[#1d1e24]/60 border border-white/5 p-4 rounded-2xl group hover:border-white/20 transition-all cursor-pointer">
-                             <p className="text-gray-500 text-[11px] font-black uppercase tracking-widest mb-1.5">Amount to pay:</p>
-                             <div className="flex items-center justify-between gap-4">
-                                <p className="text-white font-black text-xl tracking-tight leading-none">631.76000000 <span className="text-gray-500 font-bold ml-1">{selectedMethod?.coin || "USDT"}</span></p>
-                                <button className="shrink-0 w-10 h-10 bg-white/10 hover:bg-white/20 rounded-xl flex items-center justify-center transition-colors group-active:scale-95">
-                                   <Copy size={18} className="text-white" />
-                                </button>
-                             </div>
-                          </div>
-                       </div>
-
-                    <div className="mt-8 px-2 space-y-8">
-                       <div className="bg-[#2A2B31]/30 p-5 rounded-[20px] border border-white/5 animate-in slide-in-from-bottom-2 duration-700 delay-100">
-                          <h3 className="text-white font-bold text-[16px] mb-6">How to make a deposit?</h3>
-                          <div className="space-y-6">
-                             <div className="flex gap-4">
-                                <div className="w-8 h-8 rounded-full bg-[#3269FF]/20 flex items-center justify-center shrink-0">
-                                   <div className="bg-white/10 rounded p-1"><QrCode size={16} className="text-[#3269FF]" /></div>
-                                </div>
-                                <p className="text-gray-400 text-[13px] font-medium leading-normal">Scan the QR code with your payment app</p>
-                             </div>
-                             
-                             <div className="flex items-center justify-center gap-4 py-2 opacity-50">
-                                <div className="h-[1px] flex-1 bg-white/10"></div>
-                                <span className="text-gray-500 text-[10px] font-bold uppercase">or</span>
-                                <div className="h-[1px] flex-1 bg-white/10"></div>
-                             </div>
-
-                             <div className="flex gap-4">
-                                <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center shrink-0">
-                                   <Copy size={16} className="text-gray-400" />
-                                </div>
-                                <p className="text-gray-400 text-[13px] font-medium leading-normal">Copy the {selectedMethod?.coin || "USDT"} address and amount to pay, then paste them into your payment app</p>
-                             </div>
-                          </div>
-                       </div>
-
-                       <div className="flex gap-4 bg-[#FF4A5C]/5 p-5 rounded-[20px] border border-[#FF4A5C]/20 animate-in slide-in-from-bottom-2 duration-700 delay-200">
-                          <div className="w-10 h-10 bg-[#FF4A5C]/20 rounded-full flex items-center justify-center shrink-0 mt-1">
-                             <div className="w-5 h-5 bg-[#FF4A5C] rounded-full flex items-center justify-center text-black font-black text-xs">!</div>
-                          </div>
-                          <p className="text-gray-300 text-[13px] font-medium leading-relaxed">
-                            Transfer only <span className="text-white font-bold">Tether USD TRC20</span> token (USDT). Transferring other currency will result in the loss of funds
-                          </p>
-                       </div>
-
-                       <div className="flex gap-4 bg-yellow-400/5 p-5 rounded-[20px] border border-yellow-400/20 animate-in slide-in-from-bottom-2 duration-700 delay-300">
-                          <div className="w-10 h-10 bg-yellow-400/20 rounded-full flex items-center justify-center shrink-0 mt-1">
-                             <div className="w-5 h-5 bg-yellow-400 rounded-full flex items-center justify-center text-black font-black text-xs">!</div>
-                          </div>
-                          <p className="text-gray-300 text-[13px] font-medium leading-relaxed">
-                            A wallet's address to pay is unique for each transaction. Do not send funds to the same address more than once
-                          </p>
-                       </div>
-                    </div>
-                 </div>
-                ) : (
-
-                <div className="bg-[#F4F4F4] min-h-screen flex flex-col items-center">
-                   <div className="w-full bg-[#EC5300] p-4 flex items-center justify-between text-white">
-                       <div className="flex items-center gap-2">
-                         <div className="bg-white p-1 rounded-full"><div className="w-6 h-6 bg-orange-600 rounded-full"></div></div>
-                         <h2 className="text-lg font-bold">Nagad Deposit</h2>
-                       </div>
-                   </div>
-                   <div className="w-full bg-[#EC5300] text-white text-center py-2 text-sm font-medium">
-                      Remaining Time: <span className="font-mono">00:09:51</span>
-                   </div>
-                  
-                  <div className="p-4 w-full max-w-sm">
-                      <div className="bg-white rounded-xl p-6 shadow-sm mb-4">
-                          <div className="text-3xl font-bold text-[#EC5300] text-center mb-1">{formatWithCurrency(convertToBase(1250, 'BDT'), userCurrency)}</div>
-                          <div className="text-[10px] text-gray-500 text-center bg-gray-100 p-1 rounded">Please do not change the amount</div>
-                      </div>
- 
-                      <div className="bg-white rounded-xl shadow-sm mb-4">
-                          <div className="p-4 border-b flex items-center gap-3">
-                              <span className="bg-orange-100 text-orange-600 font-bold px-2 py-0.5 rounded text-xs">1</span>
-                              <span className="font-bold text-sm">Copy Account Number</span>
-                          </div>
-                          <div className="p-4">
-                              <p className="text-xs text-gray-600 mb-2">This Nagad number only accepts Cash Out.</p>
-                              <div className="bg-gray-50 border rounded-lg p-3 flex items-center justify-between">
-                                  <span className="font-mono font-bold text-lg">01833264202</span>
-                                  <Icons.Copy size={18} className="text-gray-400" />
-                              </div>
-                          </div>
-                      </div>
-                      
-                      <div className="bg-white rounded-xl shadow-sm mb-4">
-                          <div className="p-4 border-b flex items-center gap-3">
-                              <span className="bg-orange-100 text-orange-600 font-bold px-2 py-0.5 rounded text-xs">2</span>
-                              <span className="font-bold text-sm">Enter Transaction ID</span>
-                          </div>
-                          <div className="p-4">
-                              <input 
-                                type="text"
-                                placeholder="Transaction ID (Ex.73V36DXK)"
-                                className="w-full border rounded-lg p-3 text-sm mb-3"
-                              />
-                              <button className="w-full bg-[#EC5300] text-white font-bold py-3 rounded-lg">
-                                  Submit
-                              </button>
-                          </div>
-                      </div>
-                  </div>
-                </div>
-                )}
-            </div>
-         ) : null}
-            </div>
-            
-            {/* Multi-step Footer Buttons */}
-            {depositStep !== "payment" && (
-              <div className="fixed bottom-0 left-0 right-0 p-4 bg-[#1e1f24] border-t border-white/5 pointer-events-none z-[310]">
-                 <div className="px-2 pb-2 text-center pointer-events-auto">
-                    {depositStep === "amount" && (
-                      <div className="flex justify-start mb-[14px]">
-                          <p className="text-[#a4a4a4] text-[13px] font-medium flex items-center justify-start gap-1">
-                            Bivaax Coins <span className="text-cyan-400 tracking-wide">+126</span>
-                            <span className="w-3.5 h-3.5 rounded-full border border-cyan-400/50 flex items-center justify-center text-[8px] font-black text-cyan-400 ml-[1px]">X</span>
-                          </p>
-                      </div>
-                    )}
-                    { (selectedMethod || userTransactions.filter(t => t.type === "Deposit" && t.status === "Completed").length > 0 || depositStep !== "methods") && (
-                      <button 
-                        onClick={() => {
-                          if (depositStep === "methods") {
-                            const completedDeposits = userTransactions.filter(t => t.type === "Deposit" && t.status === "Completed");
-                            const lastDeposit = completedDeposits.length > 0 ? completedDeposits[completedDeposits.length - 1] : null;
-                            
-                            if (selectedMethod) {
-                              setDepositStep("amount");
-                            } else if (lastDeposit) {
-                              const lastMethod = depositMethods.find(m => m.name === lastDeposit.method);
-                              if (lastMethod) {
-                                  setSelectedMethod(lastMethod);
-                                  setDepositStep("amount");
-                              } else {
-                                  toast.error("Previous deposit method not found.");
-                              }
-                            } else {
-                              toast.error("Please select a deposit method.");
-                            }
-                          } else if (depositStep === "amount") {
-                            const amountNum = Number(depositAmount);
-                            // Admin sets minDeposit & maxDeposit in USD
-                            const isCrypto = isCryptoDeposit;
-                            const depositSymbol = selectedMethod?.currency ? getCurrencySymbol(selectedMethod.currency) : (isCryptoDeposit ? '$' : userCurrency);
-                            const min = selectedMethod?.minDeposit || (isCryptoDeposit ? 1 : convertFromBase(500, userCurrency));
-                            const max = selectedMethod?.maxDeposit || (isCryptoDeposit ? 10000 : convertFromBase(1000000, userCurrency));
-
-                            if (amountNum < min) {
-                              toast.error(`Minimum deposit for ${selectedMethod?.name} is ${depositSymbol}${min.toLocaleString()}`);
-                              return;
-                            }
-                            if (amountNum > max) {
-                              toast.error(`Maximum deposit for ${selectedMethod?.name} is ${depositSymbol}${max.toLocaleString()}`);
-                              return;
-                            }
-                            
-                            const methodName = (selectedMethod?.name || "").toLowerCase();
-                            const isMFS = ["bkash", "nagad", "rocket", "upay"].some(n => methodName.includes(n));
-                            
-                            if (!isMFS && (methodName.includes("binance") || selectedMethod?.category === "Crypto" || selectedMethod?.category === "Binance Pay")) {
-                              const orderId = Math.floor(Math.random() * 100000000).toString();
-                              const isBinancePay = methodName.includes("binance") || selectedMethod?.category === "Binance Pay";
-                              const isUsdtTrc20 = methodName.includes("trc-20") || methodName.includes("trc20");
-                              
-                              let url = `/crypto-deposit?amount=${depositAmount}&currency=${selectedMethod?.currency || (isCrypto ? 'USDT' : userCurrency)}&orderId=${orderId}&methodId=${selectedMethod?.id}`;
-                              
-                              if (isBinancePay) {
-                                url = `/Bivaaxpay?amount=${depositAmount}&currency=${selectedMethod?.currency || 'USDT'}&orderId=${orderId}&methodId=${selectedMethod?.id}`;
-                              } else if (isUsdtTrc20) {
-                                const bdtAmount = userCurrency === 'BDT' ? Number(depositAmount) : Math.round(convertFromBase(Number(depositAmount), 'BDT'));
-                                const bdtFormatted = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2 }).format(bdtAmount);
-                                url = `/deposit/usdt-trc20?amount=${depositAmount}&currency=USDT (TRC-20)&amountBdt=${bdtFormatted}&orderId=${orderId}&methodId=${selectedMethod?.id}`;
-                              }
-                              
-                              // Redirect cleanly to destination payment page without phantom duplicates
-
-                              setIsPaymentPageLoading(true);
-                              setTimeout(() => {
-                                setIsPaymentPageLoading(false);
-                                setShowDeposit(false);
-                                setDepositStep("methods");
-                                const win = window.open(url, '_blank');
-                                if (!win || win.closed || typeof win.closed === 'undefined') {
-                                  window.location.href = url;
-                                }
-                              }, 800);
-                            } else if (["bkash", "nagad", "rocket", "upay"].some(n => (methodName).toLowerCase().includes(n))) {
-                              const orderId = Math.floor(Math.random() * 100000000).toString();
-                              const bdtAmount = userCurrency === 'BDT' ? Number(depositAmount) : Math.round(convertFromBase(Number(depositAmount), 'BDT'));
-                              
-                              let url = `/mfs-deposit?amount=${bdtAmount}&currency=BDT&orderId=${orderId}&methodId=${selectedMethod?.id}`;
-                              if (methodName.includes("bkash")) url = `/deposit/bkash?amount=${bdtAmount}&orderId=${orderId}&methodId=${selectedMethod?.id}`;
-                              else if (methodName.includes("nagad")) url = `/deposit/nagad?amount=${bdtAmount}&orderId=${orderId}&methodId=${selectedMethod?.id}`;
-                              else if (methodName.includes("rocket")) url = `/deposit/rocket?amount=${bdtAmount}&orderId=${orderId}&methodId=${selectedMethod?.id}`;
-                              
-                              setIsPaymentPageLoading(true);
-                              setTimeout(() => {
-                                setIsPaymentPageLoading(false);
-                                setShowDeposit(false);
-                                setDepositStep("methods");
-                                const win = window.open(url, '_blank');
-                                if (!win || win.closed || typeof win.closed === 'undefined') {
-                                  window.location.href = url;
-                                }
-                              }, 800);
-                            } else {
-                              setIsPaymentPageLoading(true);
-                              setDepositStep("payment");
-                              setTimeout(() => {
-                                setIsPaymentPageLoading(false);
-                              }, 1500);
-                            }
-                          }
-                        }}
-                        className="w-full bg-[#FFE24C] hover:bg-[#F0D544] text-black font-extrabold text-[16px] py-[13px] rounded-[10px] shadow-sm transition-all active:scale-[0.98]"
-                      >
-                        <div className="flex flex-col items-center leading-tight">
-                            <span>{depositStep === "methods" ? (selectedMethod ? "Proceed to amount" : "Repeat last deposit") : "Deposit"}</span>
-                            {depositStep === "amount" && (
-                              <span className="text-[13px] font-medium opacity-90 tracking-tight">
-                                {getCurrencySymbol(userCurrency)}{Number(depositAmount).toLocaleString()}.00 
-                                {selectedMethod?.currency === "BDT" && ` (~${convertToBase(Number(depositAmount), 'BDT').toFixed(2)} USDT)`}
-                              </span>
-                            )}
-                       </div>
-                      </button>
-                    )}
-                    {depositStep === "amount" && (
-                      <button 
-                        onClick={() => { setShowDeposit(false); setShowSidebar(false); }}
-                        className="w-full mt-4 text-[#3269FF] font-medium text-[14px] hover:text-[#4c84ff] underline underline-offset-2 decoration-[#3269FF]/50 transition-colors">
-                        Contact support
-                      </button>
-                    )}
-                 </div>
-              </div>
-            )}
-           
-           {/* Dropdown Overlay */}
-           {showDepositCategoryDropdown && (
-              <div className="fixed inset-0 z-[400] flex flex-col justify-end">
-                 <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px]" onClick={() => setShowDepositCategoryDropdown(false)}></div>
-                 <div className="bg-[#2A2B31] rounded-t-[24px] pb-8 pt-6 px-4 z-10 shadow-[0_-10px_40px_rgba(0,0,0,0.5)] animate-in slide-in-from-bottom-10 duration-200">
-                    <div className="flex justify-between items-center mb-6 px-2">
-                       <h2 className="text-white font-bold text-xl">Methods</h2>
-                       <button onClick={() => setShowDepositCategoryDropdown(false)} className="text-gray-400 hover:text-white p-1 bg-[#323338] rounded-full transition-colors">
-                          <X size={20} strokeWidth={2} />
-                       </button>
-                    </div>
-                    <div className="flex flex-col gap-1.5 px-2 max-h-[50vh] overflow-y-auto">
-                       {["All", "Popular", "Crypto", "E-wallets", "Other"].map(cat => (
-                         <div 
-                           key={`cashier-cat-drop-${cat}`}
-                           className={`px-4 py-3.5 rounded-xl cursor-pointer transition-colors ${depositCategory === cat ? 'bg-white/10 text-white shadow-sm' : 'hover:bg-white/5 text-gray-300'} font-medium text-[16px]`}
-                           onClick={() => { setDepositCategory(cat); setShowDepositCategoryDropdown(false); }}
-                         >
-                           {cat}
-                         </div>
-                       ))}
-                   </div>
-                 </div>
-              </div>
-           )}
-          </>
-        )}
-
-          {cashierTab === 'withdrawals' && (
-             <div className="flex-1 overflow-y-auto px-4 pb-[80px] custom-scrollbar flex flex-col pt-2">
-               {withdrawStep === 'methods' && (() => { const hasCompletedDeposits = userTransactions.filter(t => t.type === 'Deposit' && t.status === 'Completed').length > 0; const activeMethods = depositMethods.filter(m => m.isActive !== false); if (!hasCompletedDeposits) { return ( <div className="flex flex-col">
-                                       {/* Banner Carousel */}
-                                       <div className="relative mb-4 h-[140px] overflow-hidden rounded-[16px]">
-                                         <AnimatePresence mode="wait">
-                                           <motion.div
-                                             key={currentWithdrawStory}
-                                             initial={{ opacity: 0, x: 20 }}
-                                             animate={{ opacity: 1, x: 0 }}
-                                             exit={{ opacity: 0, x: -20 }}
-                                             transition={{ duration: 0.3 }}
-                                             className="bg-[#24252a] rounded-[16px] p-5 relative overflow-hidden h-full flex items-center justify-between border border-white/5"
-                                           >
-                                             <div className="relative z-10 w-[60%]">
-                                               <h2 className="text-white text-[19px] font-black leading-tight tracking-tight mt-2">
-                                                 {[
-                                                   "Fee starts from 0%",
-                                                   "Available from $10",
-                                                   "Fast withdrawals 24/7",
-                                                   "Support available 24/7"
-                                                 ][currentWithdrawStory]}
-                                               </h2>
-                                             </div>
-                                             
-                                             <div className="relative z-10 w-[100px] h-[100px] opacity-90 right-2 flex items-center justify-center pointer-events-none">
-                                               <div className="absolute inset-0 bg-[#24252a]/10 rounded-full"></div>
-                                               {currentWithdrawStory === 0 && <span className="text-[70px] font-black text-white/10 shadow-inner">%</span>}
-                                               {currentWithdrawStory === 1 && (
-                                                 <div className="relative w-full h-full flex items-center justify-center">
-                                                   <video 
-                                                     src="/assets/withdraw_coin.mp4" 
-                                                     autoPlay 
-                                                     loop 
-                                                     muted 
-                                                     playsInline 
-                                                     className="w-[110px] h-[110px] object-contain drop-shadow-[0_0_20px_rgba(255,255,255,0.1)]"
-                                                     onError={(e) => {
-                                                       // Fallback if video fails to load
-                                                       const target = e.currentTarget;
-                                                       target.style.display = 'none';
-                                                       const parent = target.parentElement;
-                                                       if (parent) {
-                                                         const fallback = document.createElement('span');
-                                                         fallback.className = "text-[70px] font-black text-white/10 shadow-inner";
-                                                         fallback.innerText = '$';
-                                                         parent.appendChild(fallback);
-                                                       }
-                                                     }}
-                                                   />
-                                                 </div>
-                                               )}
-                                               {currentWithdrawStory === 2 && <Icons.Clock size={70} className="text-white/10" strokeWidth={3} />}
-                                               {currentWithdrawStory === 3 && <Icons.Headphones size={70} className="text-white/10" strokeWidth={3} />}
-                                             </div>
-                                           </motion.div>
-                                         </AnimatePresence>
-                                       </div>
-
-                                       {/* Slim Indicators */}
-                                       <div className="flex justify-center gap-1.5 mb-8 mt-2">
-                                         {[0, 1, 2, 3].map((idx) => (
-                                           <div 
-                                             key={idx}
-                                             className={`h-[3px] rounded-full transition-all duration-300 ${
-                                               currentWithdrawStory === idx 
-                                               ? "w-6 bg-white" 
-                                               : "w-2 bg-[#3a3b41]"
-                                             }`}
-                                           ></div>
-                                         ))}
-                                       </div>
- <div className="mb-6"> <h2 className="text-white text-[22px] font-black mb-1">Your withdrawals will be here</h2> <p className="text-gray-400 text-[14px]">Choose convenient deposit method</p> </div> <button onClick={() => setCashierTab('deposits')} className="w-full bg-[#FFE24C] hover:bg-[#F0D544] text-black font-extrabold text-[16px] py-[13px] rounded-[10px] shadow-sm transition-all mb-10 active:scale-[0.98]"> Deposit </button> <h3 className="text-white text-[20px] font-black mb-4 tracking-tight">Deposit to unlock</h3> <div className="flex flex-col gap-2 relative z-10 mb-8"> {activeMethods.map((method, idx) => ( <div key={`withdraw-locked-${idx}-${method.name}`} className="bg-[#24252a] hover:bg-[#2c2d33] transition-colors rounded-[16px] flex items-center cursor-pointer border-none relative min-h-[64px] px-4" onClick={() => { setSelectedMethod(method); setWithdrawStep('locked_method'); }}> <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-sm z-10 overflow-hidden" style={{ backgroundColor: method.bgColor || '#1e1e1e' }}> {method.logoType === 'image' || !method.logoType ? ( method.logo ? ( <img src={method.logo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer"  loading="lazy" /> ) : ( <div className="text-white font-bold">{method.name?.[0] || '?'}</div> ) ) : ( <span className="text-white font-bold">{method.logo}</span> )} </div> <div className="ml-3 flex flex-col justify-center z-10 py-2"> <span className="text-white text-[15px] font-bold leading-tight tracking-wide">{method.name}</span> <div className="flex items-center gap-1 mt-0.5"> <Icons.Zap size={12} className="text-[#FFE24C]" fill="currentColor" /> <span className="text-[#FFE24C] text-[11px] font-bold uppercase">instant</span> <span className="text-gray-500 text-[11px] font-medium tracking-wide"> â€¢ from {['crypto', 'other'].includes(method.category?.toLowerCase() || '') ? `$${method.minDeposit || 10}` : formatRawCurrency(method.minDeposit || 10, userCurrency)}</span> </div> </div> </div> ))} </div> </div> ); } return ( <>  {/* Promo Banner */} <div className="bg-gradient-to-br from-[#0B0D23] via-[#0E1545] to-[#0A2665] rounded-[16px] p-5 relative overflow-hidden mb-8 shadow-sm"> <div className="relative z-10 w-[65%]"> <h2 className="text-white text-[17px] font-bold leading-tight mb-2 tracking-tight">Want bigger profit?</h2> <p className="text-white/80 text-[13px] leading-[1.3] mb-4">Looks like recent news brings good profit to traders. Hurry up and make some trades!</p> <button className="w-full bg-[#FFE24C] hover:bg-[#F0D544] text-black font-semibold text-[15px] py-2.5 rounded-[12px] transition-colors shadow-sm"> Check the news </button> </div>  {/* Abstract globe shape */} <div className="absolute right-[-40px] top-1/2 -translate-y-[45%] w-[180px] h-[180px] rounded-full border border-[#0d45a9]/50 bg-gradient-to-br from-[#1b62f1] to-[#012f91] opacity-60 shadow-inner flex items-center justify-center overflow-hidden pointer-events-none"> <div className="w-[120px] h-[120px] rounded-full border border-[#4d8eff]/30 rotate-45 flex items-center justify-center pointer-events-none"> <div className="w-[60px] h-[60px] rounded-full border border-[#7aaaff]/20 pointer-events-none"></div> </div> </div> </div> <h3 className="text-white text-xl font-bold mb-4 tracking-tight">Withdrawal Methods</h3> {activeMethods.length > 0 ? ( <div className="flex flex-col gap-2 relative z-10 mb-8"> {activeMethods.map((method, idx) => ( <div key={`withdraw-${idx}-${method.name}`} className="bg-[#24252a] hover:bg-[#2c2d33] transition-colors rounded-[16px] flex items-center cursor-pointer border-none relative min-h-[64px] px-4" onClick={() => { setSelectedMethod(method); setWithdrawStep('form'); }}> <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-sm z-10 overflow-hidden" style={{ backgroundColor: method.bgColor || '#1e1e1e' }}> {method.logoType === 'image' || !method.logoType ? ( method.logo ? ( <img src={method.logo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer"  loading="lazy" /> ) : ( <div className="text-white font-bold">{method.name?.[0] || '?'}</div> ) ) : ( <span className="text-white font-bold">{method.logo}</span> )} </div> <div className="ml-3 flex flex-col justify-center z-10 py-2"> <span className="text-white text-[15px] font-bold leading-tight tracking-wide">{method.name}</span> <div className="flex items-center gap-1 mt-0.5"> <Icons.Zap size={12} className="text-[#00C980]" fill="currentColor" /> <span className="text-[#00C980] text-[11px] font-bold uppercase">Available</span> <span className="text-gray-500 text-[11px] font-medium tracking-wide"> â€¢ Min: {formatWithCurrency(currentMinWithdrawal, userCurrency)}</span> </div> </div> <div className="ml-auto"> <Icons.ChevronRight size={18} className="text-gray-600 group-hover:text-white transition-colors" /> </div> </div> ))} </div> ) : ( <div className="bg-[#2A2B31]/40 rounded-[16px] p-8 text-center border border-dashed border-white/5 mb-8"> <p className="text-gray-500 text-sm">No withdrawal methods available. Please contact support.</p> </div> )} </> ); })()} {withdrawStep === 'locked_method' && selectedMethod && ( <div className="animate-in fade-in slide-in-from-right-4 duration-300 relative z-10 w-full mb-10 pb-8 flex flex-col min-h-[500px]"> <div className="flex items-center gap-2 mb-10 mt-2"> <button onClick={() => setWithdrawStep('methods')} className="text-gray-400 hover:text-white transition-colors p-1 -ml-1 shrink-0"> <Icons.ArrowLeft size={24} /> </button> <div className="flex items-center gap-2 bg-[#24252a] px-3 py-1.5 rounded-full border border-white/5"> <div className="w-5 h-5 rounded-full overflow-hidden flex items-center justify-center shrink-0 shadow-sm" style={{ backgroundColor: selectedMethod.bgColor || '#1e1e1e' }}> {selectedMethod.logoType === 'image' || !selectedMethod.logoType ? ( selectedMethod.logo ? ( <img src={selectedMethod.logo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer" loading="lazy" /> ) : ( <div className="text-white font-bold text-[10px]">{selectedMethod.name?.[0] || '?'}</div> ) ) : ( <span className="text-white font-bold text-[10px]">{selectedMethod.logo}</span> )} </div> <span className="text-white text-[14px] font-bold tracking-tight">{selectedMethod.name}</span> <span className="text-gray-500 text-[12px] font-medium px-0.5">â€¢</span> <div className="flex items-center"> <Icons.Zap size={12} className="text-[#FFE24C]" fill="currentColor" /> <span className="text-[#FFE24C] text-[12px] font-bold tracking-wide">instant</span> </div> </div> </div> <div className="flex-1 flex flex-col items-center justify-center pt-8"> <div className="w-[100px] h-[100px] rounded-full flex items-center justify-center shadow-md mb-8 overflow-hidden bg-[#24252a] border-4 border-[#1e1e1e]" style={{ backgroundColor: selectedMethod.bgColor || '#1e1e1e' }}> {selectedMethod.logoType === 'image' || !selectedMethod.logoType ? ( selectedMethod.logo ? ( <img src={selectedMethod.logo} alt="" className="w-2/3 h-2/3 object-contain" referrerPolicy="no-referrer" loading="lazy" /> ) : ( <div className="text-white font-bold text-4xl">{selectedMethod.name?.[0] || '?'}</div> ) ) : ( <span className="text-white font-bold text-4xl">{selectedMethod.logo}</span> )} </div> <h2 className="text-white text-[28px] font-black tracking-tight mb-12 text-center leading-tight">Want to unlock<br/>{selectedMethod.name}?</h2> <button onClick={() => { setCashierTab('deposits'); }} className="w-full max-w-[300px] bg-[#FFE24C] hover:bg-[#F0D544] text-black font-extrabold text-[16px] py-[13px] rounded-[10px] shadow-sm transition-all active:scale-[0.98]"> Deposit </button> </div> </div> )} {withdrawStep === 'form' && (
-                 <div className="animate-in fade-in slide-in-from-right-4 duration-300 relative z-10 w-full mb-10 pb-8">
-                   <div className="flex items-center gap-3 mb-6">
-                     <button onClick={() => { setWithdrawStep("methods"); setWithdrawSubmitAttempted(false); }} className="text-gray-400 hover:text-white transition-colors p-1 -ml-1">
-                       <Icons.ArrowLeft size={24} />
-                     </button>
-                     <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center p-0.5 shadow-sm overflow-hidden" style={{ backgroundColor: selectedMethod?.bgColor || '#EC2A24' }}>
-                          {selectedMethod?.logoType === 'image' || !selectedMethod?.logoType ? (
-                            selectedMethod?.logo ? (
-                              <img src={selectedMethod.logo} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer"  loading="lazy" />
-                            ) : (
-                              <div className="text-white font-bold text-[10px]">{selectedMethod?.name?.[0] || '?'}</div>
-                            )
-                          ) : (
-                            <span className="text-white font-bold text-xs">{selectedMethod.logo}</span>
-                          )}
-                        </div>
-                        <h2 className="text-white text-xl font-bold tracking-tight">{selectedMethod?.name || 'Withdrawal'}</h2>
-                       <span className="text-gray-500 text-xl font-bold">â€¢</span>
-                       <div className="flex items-center">
-                         <Icons.Zap size={14} className="text-[#FFE24C] mr-1" fill="currentColor" />
-                         <span className="text-[#FFE24C] font-semibold text-sm">instant</span>
-                       </div>
-                     </div>
-                   </div>
-
-                   <h3 className="text-white text-[15px] font-black mb-1 tracking-tight">Withdraw amount from {formatWithCurrency(currentMinWithdrawal, userCurrency)} to {formatWithCurrency(20000, userCurrency)}</h3>
-                   <div className="flex items-center gap-2 mb-4">
-                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                      <span className="text-[11px] font-black text-gray-400 uppercase tracking-widest leading-none">Status: <span className="text-emerald-400">Withdrawal Open</span> â€¢ Balance: <span className="text-white">{formatWithCurrency(balance, userCurrency)}</span></span>
-                   </div>
-                   
-                   <div className="relative mb-6">
-                     <input 
-                       type="number"
-                       value={withdrawAmount}
-                       onChange={(e) => setWithdrawAmount(e.target.value)}
-                       placeholder="Enter amount"
-                       className="w-full bg-[#2A2B31] border border-[#4a4a50] rounded-[12px] pl-4 pr-10 py-5 text-white placeholder-gray-500 font-medium text-[15px] focus:outline-none focus:border-white transition-colors"
-                     />
-                     <div className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">{userCurrency}</div>
-                   </div>
-
-                   <h3 className="text-white text-xl font-bold mb-4 tracking-tight">Your withdrawal details</h3>
-
-                    {showWithdrawOtp ? (
-                      <div className="animate-in fade-in zoom-in-95 duration-200 bg-[#23242A] border border-[#3b3b3f]/50 rounded-[16px] p-6 text-center mb-8">
-                        <div className="w-16 h-16 bg-[#FFE24C]/10 rounded-full flex items-center justify-center mx-auto mb-4 border border-[#FFE24C]/20">
-                          <Icons.ShieldAlert className="text-[#FFE24C]" size={30} />
-                        </div>
-                        <h2 className="text-white text-xl font-bold mb-2">Verify OTP Code</h2>
-                        <p className="text-gray-400 text-sm max-w-xs mx-auto mb-6">
-                          We have sent a 6-digit OTP code to your email (<span className="text-white font-medium">{auth?.currentUser?.email || withdrawEmail}</span>). Please enter the code below.
-                        </p>
-
-                        <div className="relative mb-6 max-w-xs mx-auto">
-                          <input 
-                            type="text"
-                            maxLength={6}
-                            value={withdrawOtpValue}
-                            onChange={(e) => setWithdrawOtpValue(e.target.value.replace(/[^0-9]/g, ''))}
-                            placeholder="000000"
-                            className="w-full bg-[#1e1f24] border border-[#4a4a50] rounded-[12px] py-4 text-center text-[#FFE24C] placeholder-gray-600 font-black text-2xl tracking-[10px] focus:outline-none focus:border-[#FFE24C] transition-colors"
-                          />
-                        </div>
-
-                        <div className="flex flex-col gap-2 max-w-xs mx-auto text-xs mt-4">
-                           <button 
-                             onClick={() => {
-                               setShowWithdrawOtp(false);
-                               setWithdrawOtpValue("");
-                             }}
-                             className="text-gray-400 hover:text-white transition-colors"
-                           >
-                             Back
-                           </button>
-                           
-                           <button 
-                             onClick={async () => {
-                                setIsRequestingOtp(true);
-                                setWithdrawalLoadingText("Sending new OTP...");
-                                try {
-                                   const amount = Number(withdrawAmount);
-                                   const baseWithdrawAmount = convertToBase(amount, userCurrency);
-                                   const numAmount = Number(baseWithdrawAmount);
-                                   
-                                   const token = await auth.currentUser.getIdToken();
-                                   const res = await fetch('/api/wallet/withdraw/send-otp', {
-                                       method: 'POST',
-                                       headers: {
-                                           'Content-Type': 'application/json',
-                                           'Authorization': `Bearer ${token}`
-                                       },
-                                       body: JSON.stringify({ amount: numAmount })
-                                   });
-                                   const data = await res.json();
-                                   if (!res.ok) {
-                                       throw new Error(data.error || 'Failed to resend OTP');
-                                   }
-                                   toast.success('New OTP sent successfully!');
-                                   setIsRequestingOtp(false);
-                                   setWithdrawalLoadingText("");
-                                } catch (e: any) {
-                                   toast.error(e.message || 'Failed to resend OTP');
-                                   setIsRequestingOtp(false);
-                                   setWithdrawalLoadingText("");
-                                }
-                             }}
-                             disabled={isRequestingOtp}
-                             className="text-[#FFE24C] hover:underline"
-                           >
-                             Didn't receive code? Resend
-                           </button>
-                        </div>
-                      </div>
-                    ): (
-                       <div className="space-y-6 mb-8">
-                     <div>
-                       <div className="relative">
-                         <input 
-                           type="text"
-                           value={withdrawAccountHolder}
-                           onChange={(e) => {
-                             setWithdrawAccountHolder(e.target.value);
-                             if (e.target.value) setWithdrawSubmitAttempted(false);
-                           }}
-                           placeholder={(selectedMethod?.name || "").toLowerCase().includes("binance") ? "Full Name (on Binance)" : "Bank account holder"}
-                           className={`w-full bg-[#2A2B31] border ${withdrawSubmitAttempted && !withdrawAccountHolder ? 'border-[#ff4d4f]' : 'border-[#4a4a50]'} rounded-[12px] px-4 py-4 text-white placeholder-gray-500 font-medium text-[15px] focus:outline-none focus:border-white transition-colors`}
-                         />
-                         {withdrawSubmitAttempted && !withdrawAccountHolder && (
-                           <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[#ff4d4f]">
-                             <Icons.AlertTriangle size={18} strokeWidth={2.5} />
-                           </div>
-                         )}
-                       </div>
-                       {withdrawSubmitAttempted && !withdrawAccountHolder && (
-                         <p className="text-[#ff4d4f] text-[13px] font-semibold mt-2 px-1">Please specify the required information</p>
-                       )}
-                     </div>
-
-                     <div className="relative bg-[#2A2B31] border border-[#4a4a50] rounded-[12px] px-4 py-2.5">
-                       <label className="text-gray-500 text-xs font-medium block">Verification Email</label>
-                       <input 
-                         type="email"
-                         value={withdrawEmail}
-                         readOnly
-                         className="w-full bg-transparent border-none p-0 text-white font-medium text-[15px] focus:outline-none focus:ring-0 mt-0.5"
-                       />
-                     </div>
-
-                     <div>
-                       <div className="relative">
-                         <input 
-                           type="text"
-                           value={withdrawAccountNumber}
-                           onChange={(e) => {
-                             setWithdrawAccountNumber(e.target.value);
-                             if (e.target.value) setWithdrawSubmitAttempted(false);
-                           }}
-                           placeholder={(selectedMethod?.name || "").toLowerCase().includes("binance") ? "Binance ID or Email" : (selectedMethod?.name === "Nagad" ? "Nagad Number" : "Bank account number")}
-                           className={`w-full bg-[#2A2B31] border ${withdrawSubmitAttempted && !withdrawAccountNumber ? 'border-[#ff4d4f]' : 'border-[#4a4a50]'} rounded-[12px] px-4 py-4 text-white placeholder-gray-500 font-medium text-[15px] focus:outline-none focus:border-white transition-colors`}
-                         />
-                         {withdrawSubmitAttempted && !withdrawAccountNumber && (
-                           <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[#ff4d4f]">
-                             <Icons.AlertTriangle size={18} strokeWidth={2.5} />
-                           </div>
-                         )}
-                       </div>
-                       {withdrawSubmitAttempted && !withdrawAccountNumber && (
-                         <p className="text-[#ff4d4f] text-[13px] font-semibold mt-2 px-1">Please specify the required information</p>
-                       )}
-                     </div>
-                   </div>
-                    )}
-                    <button 
-                      onClick={() => {
-                         if (showWithdrawOtp) {
-                            if (!withdrawOtpValue || withdrawOtpValue.length !== 6) {
-                                toast.error('Please enter a valid 6-digit OTP code');
-                                return;
-                            }
-                            setIsRequestingOtp(true);
-                            setWithdrawalLoadingText("Verifying OTP code...");
-                            setTimeout(async () => {
-                                if (auth?.currentUser) {
-                                    try {
-                                        const amount = Number(withdrawAmount);
-                                        const baseWithdrawAmount = convertToBase(amount, userCurrency);
-                                        const numAmount = Number(baseWithdrawAmount);
-                                        
-                                        const token = await auth.currentUser.getIdToken();
-                                        const res = await fetch('/api/wallet/withdraw', {
-                                            method: 'POST',
-                                            headers: {
-                                                'Content-Type': 'application/json',
-                                                'Authorization': `Bearer ${token}`
-                                            },
-                                            body: JSON.stringify({
-                                                amount: numAmount,
-                                                method: selectedMethod?.name || 'Local Bank',
-                                                walletNumber: withdrawAccountNumber,
-                                                accountHolder: withdrawAccountHolder,
-                                                currency: userCurrency || 'USD',
-                                                otp: withdrawOtpValue
-                                            })
-                                        });
-                                        const data = await res.json();
-                                        if (!res.ok) {
-                                            throw new Error(data.error || 'Withdrawal failed');
-                                        }
-                                        toast.success('Withdrawal requested successfully!');
-                                        setWithdrawStep("methods");
-                                        setWithdrawAmount("");
-                                        setWithdrawAccountHolder("");
-                                        setWithdrawAccountNumber("");
-                                        setWithdrawSubmitAttempted(false);
-                                        setIsRequestingOtp(false);
-                                        setShowWithdrawOtp(false);
-                                        setWithdrawOtpValue("");
-                                        setWithdrawalLoadingText("");
-                                    } catch (e: any) {
-                                        toast.error(e.message || 'Processing failed');
-                                        setIsRequestingOtp(false);
-                                        setWithdrawalLoadingText("");
-                                    }
-                                }
-                            }, 500);
-                            return;
-                         }
-
-                         setWithdrawSubmitAttempted(true);
-                         if (withdrawAccountHolder && withdrawAccountNumber) {
-                            const amount = Number(withdrawAmount);
-                            if (isNaN(amount) || amount <= 0) {
-                               toast.error('Invalid amount');
-                               return;
-                            }
-                            const minWithdrawalInUserCurrency = convertFromBase(10, userCurrency);
-                            if (amount < minWithdrawalInUserCurrency) {
-                               toast.error(`Minimum withdrawal is ${formatWithCurrency(10, userCurrency)}`);
-                               return;
-                            }
-                            const convertedRealBalance = convertFromBase(realBalance, userCurrency);
-                            if (amount > convertedRealBalance) {
-                               toast.error('Insufficient live balance');
-                               return;
-                            }
-
-                            setIsRequestingOtp(true);
-                            setWithdrawalLoadingText("Sending OTP code...");
-                            
-                            setTimeout(async () => {
-                                if (auth?.currentUser) {
-                                    try {
-                                        const baseWithdrawAmount = convertToBase(amount, userCurrency);
-                                        const numAmount = Number(baseWithdrawAmount);
-                                        
-                                        const token = await auth.currentUser.getIdToken();
-                                        const res = await fetch('/api/wallet/withdraw/send-otp', {
-                                            method: 'POST',
-                                            headers: {
-                                                'Content-Type': 'application/json',
-                                                'Authorization': `Bearer ${token}`
-                                            },
-                                            body: JSON.stringify({ amount: numAmount })
-                                        });
-                                        const data = await res.json();
-                                        if (!res.ok) {
-                                            throw new Error(data.error || 'Failed to send OTP');
-                                        }
-                                        
-                                        toast.success('Verification OTP code sent to your email!');
-                                        setShowWithdrawOtp(true);
-                                        setIsRequestingOtp(false);
-                                        setWithdrawalLoadingText("");
-                                    } catch (e: any) {
-                                        toast.error(e.message || 'Processing failed');
-                                        setIsRequestingOtp(false);
-                                        setWithdrawalLoadingText("");
-                                    }
-                                }
-                            }, 500);
-                         }
-                      }}
-                      className="w-full bg-[#FFE24C] hover:bg-[#F0D544] text-black font-semibold text-[16px] py-[18px] rounded-[12px] shadow-sm transition-all active:scale-[0.98] mt-4"
-                     disabled={isRequestingOtp}
-                   >
-                     {isRequestingOtp ? (withdrawalLoadingText || 'Processing...') : showWithdrawOtp ? 'Confirm withdrawal' : 'Request withdrawal'}
-                    </button>
-                 </div>
-               )}
-
-             </div>
-           )}
-
-           {cashierTab === 'history' && (
-             <div className="flex-1 overflow-y-auto px-4 pb-[80px] custom-scrollbar flex flex-col pt-2">
-                 <div className="flex items-center justify-between mt-4 mb-4">
-                    <span className="text-white font-bold text-lg">Transaction History</span>
-                    <button className="text-gray-300 hover:text-white transition-colors">
-                       <Icons.SlidersHorizontal size={20} />
-                    </button>
-                 </div>
-
-                 {/* Transactions List */}
-                 <div className="flex flex-col">
-                    {userTransactions.length === 0 ? (
-                       <div className="p-12 text-center">
-                          <Icons.Clock size={48} className="text-gray-700 mx-auto mb-4" />
-                          <p className="text-gray-500 font-medium">No history recorded yet</p>
-                       </div>
-                    ) : (
-                       userTransactions.map((tx, idx) => {
-                       const splitDate = tx.dateStr?.split(' ') || [];
-                       const month = splitDate[0] || "";
-                       const day = splitDate[1] || "";
-                       const year = splitDate[2] || "";
-                      
-                      return (
-                      <div key={`tx-b-${idx}-${tx.id || tx.timestamp || `unknown-b-${idx}`}`} className="border-b border-white/5">
-                         <div 
-                           className="px-6 py-4 flex flex-col gap-2 cursor-pointer hover:bg-white/5 transition-colors"
-                           onClick={() => setExpandedTx(expandedTx === tx.id ? null : tx.id)}
-                         >
-                            <div className="flex items-center justify-between transition-all">
-                               <span className="text-gray-500 text-[13px]">{tx.dateStr}</span>
-                               <div className="flex items-center gap-2">
-                                  <span className={`text-[13px] font-medium ${tx.status === 'Completed' ? 'text-[#00C980]' : tx.status === 'Rejected' ? 'text-[#ff4d4f]' : 'text-gray-400'}`}>
-                                     {tx.status}
-                                  </span>
-                                  {tx.status === 'Completed' && <Icons.CheckCircle size={14} className="text-[#00C980]" />}
-                                  {tx.status === 'Rejected' && <Icons.XCircle size={14} className="text-[#ff4d4f]" />}
-                                  {tx.status === 'Pending' && <Icons.Clock size={14} className="text-gray-400" />}
-                                  {expandedTx === tx.id ? (
-                                     <Icons.ChevronUp size={18} className="text-gray-400 ml-1" />
-                                  ) : (
-                                     <Icons.ChevronDown size={18} className="text-gray-400 ml-1" />
-                                  )}
-                               </div>
-                            </div>
-                            
-                            <div className="flex items-center justify-between">
-                               <div className="flex flex-col">
-                                  <span className="text-white font-bold text-[15px]">{tx.type}</span>
-                                  <span className="text-gray-500 text-[13px]">{tx.method}</span>
-                               </div>
-                               <div className="flex flex-col items-end">
-                                 <span className="text-white font-bold text-[15px] tracking-tight">
-                                    {tx.type === 'Deposit' ? '+' : '-'} {formatRawCurrency(tx.amount, tx.currency || userCurrency)}
-                                 </span>
-                                 {tx.bonusAmount && (
-                                   <span className="text-gray-500 text-[12px]">+ {formatRawCurrency(tx.bonusAmount, tx.currency || userCurrency)}</span>
-                                 )}
-                               </div>
-                            </div>
-                         </div>
-
-                         {/* Expanded Details */}
-                         {expandedTx === tx.id && (
-                            <div className="px-6 py-6 bg-[#212124] flex flex-col items-center border-t border-white/5 relative animate-in slide-in-from-top-2 duration-200">
-                               <div className="flex justify-center items-center mb-3 mt-2">
-                                  {tx.methodIcon === 'usdt' && (
-                                     <div className="w-10 h-10 rounded-full bg-[#26A17B] flex items-center justify-center">
-                                         <span className="font-bold text-white text-[20px]">$</span>
-                                     </div>
-                                  )}
-                                  {tx.methodIcon === 'nagad' && (
-                                     <div className="w-12 h-12 bg-[#2A2B31] rounded-full flex items-center justify-center">
-                                        <div className="w-6 h-6 bg-white overflow-hidden rounded-full flex items-center justify-center p-0.5">
-                                            <div className="w-full h-full bg-[#EC2A24] rounded-full flex items-center justify-center text-white text-[6px] font-black italic">
-                                               Nagad
-                                            </div>
-                                        </div>
-                                     </div>
-                                  )}
-                               </div>
-                               <span className="text-white font-medium text-[17px] mb-1">{tx.method}</span>
-                               <span className="text-gray-500 font-medium text-[14px] mb-8">{tx.type} Wallet</span>
-                               
-                               {/* Progress Bar */}
-                               <div className="w-full mb-8">
-                                  <div className="flex justify-between mb-3 px-1">
-                                     <span className="text-white font-bold text-[14px] w-1/3 text-left">Created</span>
-                                     <span className="text-white font-bold text-[14px] w-1/3 text-center">Pending</span>
-                                     <span className={`font-bold text-[14px] w-1/3 text-right ${tx.status === 'Completed' ? 'text-[#00C980]' : tx.status === 'Rejected' ? 'text-[#ff4d4f]' : 'text-gray-500'}`}>
-                                        {tx.status === 'Completed' ? 'Completed' : tx.status === 'Rejected' ? 'Rejected' : 'Completed'}
-                                     </span>
-                                  </div>
-                                  
-                                  <div className="flex items-center relative h-4 mb-3">
-                                     {/* Lines between nodes */}
-                                     {/* Line 1 (Created -> Pending) */}
-                                     <div className="absolute left-[16.66%] right-[50%] top-1/2 -translate-y-[1px] h-[2px] bg-[#00C980] z-0"></div>
-                                     
-                                     {/* Line 2 (Pending -> Result) - color depends on status */}
-                                     <div className={`absolute left-[50%] right-[16.66%] top-1/2 -translate-y-[1px] h-[2px] z-0 
-                                         ${tx.status === 'Completed' ? 'bg-[#00C980]' : tx.status === 'Rejected' ? 'bg-gradient-to-r from-[#00C980] to-[#ff4d4f]' : 'bg-[#3b3b3f]'}`}></div>
-
-                                     <div className="flex-1 flex justify-center z-10">
-                                       <div className="w-3.5 h-3.5 rounded-full bg-[#00C980] flex items-center justify-center shadow-[0_0_0_4px_#212124]">
-                                          <Icons.Check size={10} className="text-[#212124] stroke-[4]" />
-                                       </div>
-                                     </div>
-                                     
-                                     <div className="flex-1 flex justify-center z-10">
-                                       <div className="w-3.5 h-3.5 rounded-full bg-[#00C980] flex items-center justify-center shadow-[0_0_0_4px_#212124]">
-                                          <Icons.Check size={10} className="text-[#212124] stroke-[4]" />
-                                       </div>
-                                     </div>
-                                     
-                                     <div className="flex-1 flex justify-center z-10">
-                                       <div className={`w-3.5 h-3.5 rounded-full flex items-center justify-center shadow-[0_0_0_4px_#212124]
-                                          ${tx.status === 'Completed' ? 'bg-[#00C980]' : tx.status === 'Rejected' ? 'bg-[#ff4d4f]' : 'bg-[#3b3b3f]'}`}>
-                                          {tx.status === 'Completed' && <Icons.Check size={10} className="text-[#212124] stroke-[4]" />}
-                                          {tx.status === 'Rejected' && <Icons.AlertTriangle size={8} className="text-[#212124] stroke-[4]" strokeWidth={4} />}
-                                       </div>
-                                     </div>
-                                  </div>
-
-                                  <div className="flex justify-between px-2 text-gray-500 text-[13px] font-medium opacity-80 mt-4">
-                                     <div className="flex flex-col text-center w-1/3">
-                                        <span>{month} {day}</span>
-                                        <span>{year}</span>
-                                        <span>{tx.timeStr}</span>
-                                     </div>
-                                     <div className="flex flex-col text-center w-1/3"></div>
-                                     <div className="flex flex-col text-center w-1/3">
-                                        {tx.endTimeStr ? (
-                                           <>
-                                             <span>{month} {day}</span>
-                                             <span>{year}</span>
-                                             <span>{tx.endTimeStr}</span>
-                                           </>
-                                        ) : (
-                                          <span className="text-[#3b3b3f]">-</span>
-                                        )}
-                                     </div>
-                                  </div>
-                               </div>
-
-                               {/* Amounts */}
-                               <div className="w-full space-y-3 mb-6 px-1">
-                                  <div className="flex justify-between items-center text-[15px]">
-                                     <span className="text-gray-500 font-medium">Transaction ID</span>
-                                     <span className="text-gray-400 font-mono text-[12px]">{tx.id}</span>
-                                  </div>
-                                  <div className="flex justify-between items-center text-[15px]">
-                                     <span className="text-gray-500 font-medium">{tx.type}</span>
-                                     <span className="text-gray-400 font-medium tracking-tight">{formatRawCurrency(tx.amount, tx.currency || userCurrency)}</span>
-                                  </div>
-                                  <div className="flex justify-between items-center font-bold text-[15px]">
-                                     <span className="text-white">Total</span>
-                                     <span className="text-white tracking-tight">{formatRawCurrency(tx.amount, tx.currency || userCurrency)}</span>
-                                  </div>
-                               </div>
-
-                               {/* Messages */}
-                               {tx.status === 'Rejected' && tx.errorMsg && (
-                                  <div className="w-full bg-[#351e22] border-none rounded-[8px] p-5 mb-6 relative overflow-hidden flex items-center justify-center">
-                                     <p className="text-[#ff4d4f] text-[14px] leading-relaxed relative z-10 font-medium text-left">{tx.errorMsg}</p>
-                                  </div>
-                               )}
-                               
-                               {tx.status === 'Completed' && tx.successMsg && (
-                                  <div className="w-full bg-[#1b2d26] border-none rounded-[8px] p-5 mb-6 relative overflow-hidden flex items-center justify-center">
-                                     <p className="text-[#00C980] text-[14px] leading-relaxed relative z-10 font-medium text-left">{tx.successMsg}</p>
-                                  </div>
-                               )}
-
-                               {/* Buttons */}
-                               <div className="w-full space-y-3 mt-2">
-                                  <button 
-                                     onClick={() => {
-                                        if (tx.id) {
-                                           navigator.clipboard.writeText(tx.id);
-                                           toast.success("Transaction ID copied!");
-                                        }
-                                     }}
-                                     className="w-full bg-[#313134] hover:bg-[#3b3b3f]/70 border-none text-white font-bold py-4 rounded-[12px] transition-colors flex items-center justify-center gap-2 text-[15px]"
-                                  >
-                                     <Icons.Copy size={18} /> Copy ID
-                                  </button>
-                                  <button 
-                                     onClick={() => {
-                                        navigate("/support");
-                                        setShowDeposit(false);
-                                     }}
-                                     className="w-full bg-[#313134] hover:bg-[#3b3b3f]/70 border-none text-white font-bold py-4 rounded-[12px] transition-colors flex items-center justify-center gap-2 text-[15px]"
-                                  >
-                                     <Icons.Headphones size={18} /> Contact Support
-                                  </button>
-                               </div>
-                            </div>
-                         )}
-                      </div>
-                      );
-                   })
-                )}
-                </div>
-             </div>
-           )}
-          </>
-        )}
-        </div>
-        </div>
-        );
-      })()}
-
-
-
-
-
-      {/* Cashier Mobile Bottom Menu */}
-      {showCashierMenu && (
-        <div className="absolute inset-0 z-[500] flex flex-col justify-end">
-           {/* Backdrop */}
-           <div 
-             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-             onClick={() => setShowCashierMenu(false)}
-           ></div>
-           
-           {/* Bottom Sheet */}
-           <div className="bg-[#212124] w-full rounded-t-[16px] relative z-10 animate-in slide-in-from-bottom-full duration-300 pb-8 rounded-b-[16px] overflow-hidden mb-[-16px]">
-              {/* Header */}
-              <div className="flex items-center justify-between px-6 py-5">
-                 <h2 className="text-white font-bold text-lg">Cashier</h2>
-                 <button 
-                   onClick={() => setShowCashierMenu(false)}
-                   className="text-gray-400 hover:text-white transition-colors p-1"
-                 >
-                   <Icons.X size={20} />
-                 </button>
-              </div>
-
-              {/* Buttons */}
-              <div className="px-5 flex flex-col gap-3 pb-4">
-                 <button 
-                   onClick={() => {
-                     setShowCashierMenu(false);
-                     navigate("/deposit");
-                   }}
-                   className="w-full bg-[#FFE24C] hover:bg-[#ffe770] text-[15px] font-bold py-4 rounded-[12px] flex items-center justify-center gap-2 transition-colors text-black"
-                 >
-                   <Icons.ArrowUp size={18} strokeWidth={2.5} /> Deposit
-                 </button>
-                 
-                 <button 
-                   onClick={() => {
-                     setShowCashierMenu(false);
-                     navigate("/withdraw");
-                   }}
-                   className="w-full bg-[#36373c]/80 hover:bg-[#3b3c42] text-[15px] font-bold py-4 rounded-[12px] flex items-center justify-center gap-2 transition-colors text-white"
-                 >
-                   <Icons.ArrowDown size={18} strokeWidth={2.5} /> Withdraw
-                 </button>
-
-                 <button 
-                   onClick={() => {
-                     setShowCashierMenu(false);
-                     navigate("/transactions");
-                   }}
-                   className="w-full bg-[#36373c]/80 hover:bg-[#3b3c42] text-[15px] font-bold py-4 rounded-[12px] flex items-center justify-center gap-2 transition-colors text-white"
-                 >
-                   <History size={18} strokeWidth={2.5} /> Transaction history
-                 </button>
-              </div>
-           </div>
-        </div>
-      )}
-
-      {/* Alerts Overlay Dialog */}
-      {showAlertDialog && (
-        <div className="absolute inset-0 z-[500] bg-black/60 flex items-center justify-center backdrop-blur-sm">
-          <div className="bg-[#2D2D2D] p-5 rounded-xl border border-[#444] w-80 shadow-2xl animate-in zoom-in-95 duration-200">
-            <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-              <Bell size={18} /> Set Price Alert
-            </h3>
-            <p className="text-sm text-gray-400 mb-2">
-              Current Price: {userCurrency}{Number(currentPriceLabel).toFixed(4)}
-            </p>
-            <input
-              type="number"
-              value={alertInput}
-              onChange={(e) => setAlertInput(e.target.value)}
-              placeholder="Enter target price..."
-              className="w-full bg-[#1C1C1C] border border-[#555] rounded p-3 mb-4 text-white placeholder-gray-500 focus:outline-none focus:border-[#00C980] focus:ring-1 focus:ring-[#00C980] transition-shadow"
-            />
-            <div className="flex gap-2">
-              <button
-                onClick={() => setShowAlertDialog(false)}
-                className="flex-1 p-2 bg-[#444] rounded hover:bg-[#555] transition-colors font-medium"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={async () => {
-                  const targetPrice = parseFloat(alertInput);
-                  if (alertInput && !isNaN(targetPrice) && auth.currentUser) {
-                    try {
-                        const condition = targetPrice > Number(currentPriceLabel) ? 'above' : 'below';
-                        const alertPayload = {
-                            userId: auth.currentUser.uid,
-                            asset: activeAsset,
-                            targetPrice,
-                            condition,
-                            status: 'active',
-                            createdAt: Date.now()
-                        };
-                        const alertRes = await fetch('/api/alerts', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ userId: auth.currentUser.uid, alertData: alertPayload })
-                        });
-                        if (!alertRes.ok) throw new Error('Alert creation failed');
-                        
-                        setAlertInput("");
-                        setShowAlertDialog(false);
-                    } catch (e) {
-                        console.error("Error adding alert:", e);
-                    }
-                  }
-                }}
-                className="flex-1 p-2 bg-[#00C980] text-black font-bold rounded hover:bg-[#00B070] transition-colors"
-              >
-                Save Alert
-              </button>
-            </div>
-
-            {alerts.length > 0 && (
-              <div className="mt-4 border-t border-[#444] pt-4">
-                <h4 className="text-xs text-gray-500 uppercase font-bold mb-2 tracking-wider">
-                  Active Alerts
-                </h4>
-                <div className="max-h-32 overflow-y-auto space-y-1 pr-1">
-                  {alerts.map((a, i) => (
-                    <div
-                      key={`alert-list-item-${a.id || i}`}
-                      className="flex justify-between items-center bg-[#1C1C1C] p-2 rounded border border-[#333]"
-                    >
-                      <div className="flex flex-col">
-                        <span className="text-[10px] text-gray-500 uppercase font-bold">{a.asset}</span>
-                        <span className="font-mono text-xs">
-                          {a.condition === 'above' ? 'â‰¥' : 'â‰¤'} {a.targetPrice.toFixed(5)}
-                        </span>
-                      </div>
-                      <button
-                        onClick={async () => {
-                           if (auth.currentUser) {
-                               try {
-                                   const { doc, deleteDoc } = await import('../firebase.ts');
-                                   await deleteDoc(doc(db, 'users', auth.currentUser.uid, 'priceAlerts', a.id));
-                               } catch (e) { console.error(e); }
-                           }
-                        }}
-                        className="text-[#FF4757] hover:text-red-400 p-1 rounded hover:bg-[#333] transition-colors"
-                      >
-                        <Minus size={14} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      <AnimatePresence>
-      {showTimeframeModal && (
-        <>
-          <motion.div 
-             initial={{ opacity: 0 }}
-             animate={{ opacity: 1 }}
-             exit={{ opacity: 0 }}
-             onClick={() => setShowTimeframeModal(false)}
-             className="fixed md:absolute inset-0 bg-black/50 md:bg-transparent z-[140] md:pointer-events-none"
-          />
-          <motion.div 
-            initial={{ x: "-100%" }}
-            animate={{ x: 0 }}
-            exit={{ x: "-100%" }}
-            transition={{ type: "tween", duration: 0.2, ease: "easeOut" }}
-            className="fixed md:absolute left-0 md:left-[76px] top-0 bottom-0 w-full md:w-[360px] z-[150] flex flex-col bg-[#222329] border-r border-[#2C2D33] shadow-2xl overflow-hidden pointer-events-auto"
-          >
-            {/* Top Header */}
-            <div className="pt-[18px] pb-4 px-5 flex items-center justify-between border-b border-[#2C2D33]/40">
-              <h2 className="text-[15px] font-medium tracking-wide text-white mb-0">
-                Timeframe
-              </h2>
-              <button
-                onClick={() => setShowTimeframeModal(false)}
-                className="text-[#888] hover:text-white transition-colors p-1 -mr-1"
-              >
-                <X size={18} strokeWidth={2} />
-              </button>
-            </div>
-
-            {/* Content Area */}
-            <div className="flex-1 overflow-y-auto px-5 pt-5 pb-20 custom-scrollbar">
-              <div className="grid grid-cols-2 gap-2.5">
-                {(is5STActive ? ["1 second", "5 seconds"] : [
-                  "5 seconds", "10 seconds", "15 seconds", "30 seconds", "1 minute", 
-                  "5 minutes", "15 minutes", "30 minutes", "1 hour", 
-                  "3 hours", "1 day"
-                ]).map((tf) => (
-                  <button
-                    key={tf}
-                    onClick={() => {
-                      setChartLoading(true);
-                      setTimeframe(tf);
-                      setShowTimeframeModal(false);
-                      if (socketRef.current) {
-                        socketRef.current.emit('request_initial_data', { asset: activeAssetRef.current, timeframe: tf, accountType: accountTypeRef.current, userId: auth.currentUser?.uid });
-                      }
-                      // We now rely on socket response to clear loading, but keep a safety timeout
-                      setTimeout(() => setChartLoading(false), 3000);
-                    }}
-                    className={`py-3.5 rounded-[10px] text-[13px] font-bold transition-all border outline-none ${
-                     timeframe === tf
-                        ? "bg-transparent border-[#FFE24C]/20 border-opacity-30 shadow-[inset_0_0_0_1px_rgba(255,226,76,0.3)] text-white relative after:content-[''] after:absolute after:inset-0 after:border-[2px] after:border-[#222329] after:rounded-[10px]" // Not exactly true to screenshot but good
-                        : "bg-[#2c2d33]/50 border-transparent text-[#e4e4e4] hover:bg-[#2c2d33]"
-                    }`}
-                    style={timeframe === tf ? { borderColor: '#555', backgroundColor: '#383a42' } : {}}
-                  >
-                    {tf}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </motion.div>
-        </>
-      )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-      {showIndicatorsModal && (
-        <>
-          <motion.div 
-             initial={{ opacity: 0 }}
-             animate={{ opacity: 1 }}
-             exit={{ opacity: 0 }}
-             onClick={() => setShowIndicatorsModal(false)}
-             className="fixed md:absolute inset-0 bg-black/50 md:bg-transparent z-[140] md:pointer-events-none"
-          />
-          <motion.div 
-            initial={{ x: "-100%" }}
-            animate={{ x: 0 }}
-            exit={{ x: "-100%" }}
-            transition={{ type: "tween", duration: 0.2, ease: "easeOut" }}
-            className="fixed md:absolute left-0 md:left-[76px] top-0 bottom-0 w-full md:w-[50vw] z-[150] flex flex-col bg-[#222329] border-r border-[#2C2D33] shadow-2xl overflow-hidden pointer-events-auto"
-          >
-            {/* Top Header */}
-            <div className="pt-6 pb-2 px-6 flex items-center justify-between border-b border-[#2C2D33]/40">
-              <h2 className="text-[17px] font-medium tracking-wide text-white">
-                Trading tools
-              </h2>
-              <button
-                onClick={() => setShowIndicatorsModal(false)}
-                className="text-[#a6aeb9] hover:text-white transition-colors p-1"
-              >
-                <X size={20} strokeWidth={1.5} />
-              </button>
-            </div>
-
-            {/* Tabs */}
-            <div className="flex bg-[#222329] border-b border-[#2C2D33]/40 px-2 overflow-x-auto no-scrollbar">
-              <button 
-                onClick={() => setIndicatorTab('indicators')}
-                className={`flex-1 py-4 px-4 text-[13px] font-bold tracking-wide transition-all relative min-w-fit ${indicatorTab === 'indicators' ? 'text-white' : 'text-[#a6aeb9] hover:text-white'}`}
-              >
-                Indicators
-                {indicatorTab === 'indicators' && (
-                   <motion.div layoutId="indTabUnderline" className="absolute bottom-0 left-0 right-0 h-[2px] bg-white" />
-                )}
-              </button>
-              <button 
-                onClick={() => setIndicatorTab('drawings')}
-                className={`flex-1 py-4 px-4 text-[13px] font-bold tracking-wide transition-all relative min-w-fit ${indicatorTab === 'drawings' ? 'text-white' : 'text-[#a6aeb9] hover:text-white'}`}
-              >
-                Drawings
-                {indicatorTab === 'drawings' && (
-                   <motion.div layoutId="indTabUnderline" className="absolute bottom-0 left-0 right-0 h-[2px] bg-white" />
-                )}
-              </button>
-              <button 
-                onClick={() => setIndicatorTab('strategies')}
-                className={`flex-1 py-4 px-4 text-[13px] font-bold tracking-wide transition-all relative min-w-fit ${indicatorTab === 'strategies' ? 'text-white' : 'text-[#a6aeb9] hover:text-white'}`}
-              >
-                Strategies
-                {indicatorTab === 'strategies' && (
-                   <motion.div layoutId="indTabUnderline" className="absolute bottom-0 left-0 right-0 h-[2px] bg-white" />
-                )}
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto px-0 pt-0 pb-20 custom-scrollbar">
-              {configuringIndicator ? (
-                 <div className="flex flex-col h-full bg-[#1a1b1f] animate-in slide-in-from-right duration-200">
-                    <div className="px-6 py-4 border-b border-[#2C2D33]/40 flex items-center justify-between sticky top-0 bg-[#1a1b1f] z-10">
-                       <div className="flex items-center gap-3">
-                          <button 
-                             onClick={() => setConfiguringIndicator(null)}
-                             className="text-[#a6aeb9] hover:text-white transition-colors"
-                          >
-                             <ChevronLeft size={22} />
-                          </button>
-                          <span className="text-[17px] font-bold text-white tracking-wide">{configuringIndicator}</span>
-                       </div>
-                       <button onClick={() => setConfiguringIndicator(null)} className="p-1.5 bg-[#FFE24C] text-black rounded-lg text-[11px] font-black uppercase tracking-tighter hover:opacity-90">
-                          Apply
-                       </button>
-                    </div>
-
-                    <div className="px-6 py-8 flex-1 space-y-8">
-                       {/* Common Settings Renderer */}
-                       <div className="space-y-6">
-                          {configuringIndicator === "RSI" && (
-                             <>
-                               <div className="space-y-3">
-                                 <div className="flex justify-between items-center px-1">
-                                    <label className="text-[14px] font-medium text-[#a6aeb9]">Period</label>
-                                    <span className="text-[14px] font-bold text-white">{indicatorSettings["RSI"].period}</span>
-                                 </div>
-                                 <input 
-                                    type="range" min="2" max="50" 
-                                    value={indicatorSettings["RSI"].period} 
-                                    onChange={(e) => updateIndicatorSetting("RSI", "period", e.target.value)} 
-                                    className="w-full h-1.5 bg-[#2C2D33] rounded-lg appearance-none cursor-pointer accent-[#FFE24C]" 
-                                 />
-                               </div>
-                               <div className="flex items-center justify-between bg-[#2C2D33]/30 p-4 rounded-xl border border-white/5">
-                                 <span className="text-[14px] font-medium text-gray-200">Indicator Line Color</span>
-                                 <div className="relative">
-                                    <input type="color" 
-                                           value={indicatorSettings["RSI"].color} 
-                                           onChange={(e) => updateIndicatorSetting("RSI", "color", e.target.value)} 
-                                           className="opacity-0 absolute inset-0 w-full h-full cursor-pointer" />
-                                    <div className="w-8 h-8 rounded-lg border-2 border-[#2C2D33]" style={{ backgroundColor: indicatorSettings["RSI"].color }} />
-                                 </div>
-                               </div>
-                             </>
-                          )}
-
-                          {configuringIndicator === "MACD" && (
-                             <>
-                               {["fast", "slow", "signal"].map(key => (
-                                 <div key={key} className="space-y-3">
-                                    <div className="flex justify-between items-center px-1">
-                                       <label className="text-[14px] font-medium text-[#a6aeb9] capitalize">{key} Period</label>
-                                       <input 
-                                          type="number"
-                                          value={indicatorSettings["MACD"][key]} 
-                                          onChange={(e) => updateIndicatorSetting("MACD", key, e.target.value)} 
-                                          className="bg-[#2C2D33] text-white text-[13px] font-bold w-16 py-1 text-center rounded-md border border-transparent focus:border-[#4B4C53] outline-none"
-                                       />
-                                    </div>
-                                    <input 
-                                       type="range" min="2" max="100" 
-                                       value={indicatorSettings["MACD"][key]} 
-                                       onChange={(e) => updateIndicatorSetting("MACD", key, e.target.value)} 
-                                       className="w-full h-1.5 bg-[#2C2D33] rounded-lg appearance-none cursor-pointer accent-[#FFE24C]" 
-                                    />
-                                 </div>
-                               ))}
-                             </>
-                          )}
-
-                          {configuringIndicator === "MFI" && (
-                             <>
-                               <div className="space-y-3">
-                                 <div className="flex justify-between items-center px-1">
-                                    <label className="text-[14px] font-medium text-[#a6aeb9]">Period</label>
-                                    <span className="text-[14px] font-bold text-white">{indicatorSettings["MFI"].period}</span>
-                                 </div>
-                                 <input 
-                                    type="range" min="2" max="50" 
-                                    value={indicatorSettings["MFI"].period} 
-                                    onChange={(e) => updateIndicatorSetting("MFI", "period", e.target.value)} 
-                                    className="w-full h-1.5 bg-[#2C2D33] rounded-lg appearance-none cursor-pointer accent-[#FFE24C]" 
-                                 />
-                               </div>
-                               <div className="space-y-3">
-                                 <div className="flex justify-between items-center px-1">
-                                    <label className="text-[14px] font-medium text-[#a6aeb9]">Line Width</label>
-                                    <span className="text-[14px] font-bold text-white">{indicatorSettings["MFI"].strokeWidth}</span>
-                                 </div>
-                                 <input 
-                                    type="range" min="1" max="5" 
-                                    value={indicatorSettings["MFI"].strokeWidth} 
-                                    onChange={(e) => updateIndicatorSetting("MFI", "strokeWidth", parseInt(e.target.value))} 
-                                    className="w-full h-1.5 bg-[#2C2D33] rounded-lg appearance-none cursor-pointer accent-[#FFE24C]" 
-                                 />
-                               </div>
-                               <div className="flex items-center justify-between bg-[#2C2D33]/30 p-4 rounded-xl border border-white/5">
-                                 <span className="text-[14px] font-medium text-gray-200">Indicator Line Color</span>
-                                 <div className="relative">
-                                    <input type="color" 
-                                           value={indicatorSettings["MFI"].color} 
-                                           onChange={(e) => updateIndicatorSetting("MFI", "color", e.target.value)} 
-                                           className="opacity-0 absolute inset-0 w-full h-full cursor-pointer" />
-                                    <div className="w-8 h-8 rounded-lg border-2 border-[#2C2D33]" style={{ backgroundColor: indicatorSettings["MFI"].color }} />
-                                 </div>
-                               </div>
-                             </>
-                          )}
-
-                          {configuringIndicator === "Moving Average" && (
-                             <div className="space-y-6">
-                               <div className="space-y-3">
-                                 <div className="flex justify-between items-center px-1">
-                                    <label className="text-[14px] font-medium text-[#a6aeb9]">Period</label>
-                                    <span className="text-[14px] font-bold text-white">{indicatorSettings["Moving Average"]?.period || 14}</span>
-                                 </div>
-                                 <input 
-                                    type="range" min="2" max="200" 
-                                    value={indicatorSettings["Moving Average"]?.period || 14} 
-                                    onChange={(e) => updateIndicatorSetting("Moving Average", "period", e.target.value)} 
-                                    className="w-full h-1.5 bg-[#2C2D33] rounded-lg appearance-none cursor-pointer accent-[#FFE24C]" 
-                                 />
-                               </div>
-                               <div className="space-y-3">
-                                 <label className="text-[12px] font-bold text-[#a6aeb9] uppercase tracking-wider block px-1">MA Type</label>
-                                 <div className="grid grid-cols-2 gap-2">
-                                    {["SMA", "EMA", "WMA", "WEMA"].map(type => (
-                                       <button 
-                                          key={type}
-                                          onClick={() => updateIndicatorSetting("Moving Average", "type", type)}
-                                          className={`py-2.5 rounded-lg text-[13px] font-bold border transition-all ${indicatorSettings["Moving Average"]?.type === type ? 'bg-white text-black border-white' : 'bg-[#2C2D33] text-gray-400 border-transparent hover:border-white/20'}`}
-                                       >
-                                          {type}
-                                       </button>
-                                    ))}
-                                 </div>
-                               </div>
-                             </div>
-                          )}
-
-                          {/* Fallback for other indicators */}
-                          {configuringIndicator === "Bollinger Bands" && (
-                             <div className="space-y-6">
-                                <div className="space-y-3">
-                                   <div className="flex justify-between items-center px-1">
-                                      <label className="text-[14px] font-medium text-[#a6aeb9]">Period</label>
-                                      <span className="text-[14px] font-bold text-white">{indicatorSettings["Bollinger Bands"].period}</span>
-                                   </div>
-                                   <input 
-                                      type="range" min="5" max="50" 
-                                      value={indicatorSettings["Bollinger Bands"].period} 
-                                      onChange={(e) => updateIndicatorSetting("Bollinger Bands", "period", e.target.value)} 
-                                      className="w-full h-1.5 bg-[#2C2D33] rounded-lg appearance-none cursor-pointer accent-[#FFE24C]" 
-                                   />
-                                </div>
-                                <div className="space-y-3">
-                                   <div className="flex justify-between items-center px-1">
-                                      <label className="text-[14px] font-medium text-[#a6aeb9]">Deviation</label>
-                                      <span className="text-[14px] font-bold text-white">{indicatorSettings["Bollinger Bands"].stdDev}</span>
-                                   </div>
-                                   <input 
-                                      type="range" min="1" max="5" step="0.1"
-                                      value={indicatorSettings["Bollinger Bands"].stdDev} 
-                                      onChange={(e) => updateIndicatorSetting("Bollinger Bands", "stdDev", e.target.value)} 
-                                      className="w-full h-1.5 bg-[#2C2D33] rounded-lg appearance-none cursor-pointer accent-[#FFE24C]" 
-                                   />
-                                </div>
-                             </div>
-                          )}
-
-                          {configuringIndicator === "Stochastic" && (
-                             <div className="space-y-6">
-                                <div className="space-y-3">
-                                   <div className="flex justify-between items-center px-1">
-                                      <label className="text-[14px] font-medium text-[#a6aeb9]">K Period</label>
-                                      <span className="text-[14px] font-bold text-white">{indicatorSettings["Stochastic"].period}</span>
-                                   </div>
-                                   <input 
-                                      type="range" min="2" max="50" 
-                                      value={indicatorSettings["Stochastic"].period} 
-                                      onChange={(e) => updateIndicatorSetting("Stochastic", "period", e.target.value)} 
-                                      className="w-full h-1.5 bg-[#2C2D33] rounded-lg appearance-none cursor-pointer accent-[#FFE24C]" 
-                                   />
-                                </div>
-                                <div className="space-y-3">
-                                   <div className="flex justify-between items-center px-1">
-                                      <label className="text-[14px] font-medium text-[#a6aeb9]">D Period (Signal)</label>
-                                      <span className="text-[14px] font-bold text-white">{indicatorSettings["Stochastic"].signalPeriod}</span>
-                                   </div>
-                                   <input 
-                                      type="range" min="2" max="20" 
-                                      value={indicatorSettings["Stochastic"].signalPeriod} 
-                                      onChange={(e) => updateIndicatorSetting("Stochastic", "signalPeriod", e.target.value)} 
-                                      className="w-full h-1.5 bg-[#2C2D33] rounded-lg appearance-none cursor-pointer accent-[#FFE24C]" 
-                                   />
-                                </div>
-                             </div>
-                          )}
-
-                          {!["RSI", "MACD", "MFI", "Moving Average", "Bollinger Bands", "Stochastic"].includes(configuringIndicator) && (
-                             <div className="py-20 text-center opacity-40">
-                                <Activity size={40} className="mx-auto mb-4 text-[#a6aeb9]" />
-                                <p className="text-[13px] font-medium text-[#a6aeb9]">Advanced settings for<br/>{configuringIndicator}<br/>coming soon.</p>
-                             </div>
-                          )}
-                       </div>
-
-                       <div className="pt-10">
-                          <button 
-                             onClick={() => {
-                                toggleIndicator(configuringIndicator);
-                                setConfiguringIndicator(null);
-                             }}
-                             className={`w-full py-4 rounded-2xl font-black text-[15px] uppercase tracking-tight transition-all active:scale-[0.98] ${indicatorSettings[configuringIndicator]?.enabled ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-[#FFE24C] text-black'}`}
-                          >
-                             {indicatorSettings[configuringIndicator]?.enabled ? "Disable Indicator" : "Enable and Apply"}
-                          </button>
-                       </div>
-                    </div>
-                 </div>
-              ) : indicatorTab === 'indicators' ? (
-                <>
-                  {indicatorPresets.length > 0 && (
-                    <div className="px-6 py-5 border-b border-[#2C2D33]/30">
-                      <div className="flex items-center justify-between mb-4">
-                        <p className="text-[#a6aeb9] text-[11px] font-bold tracking-widest uppercase m-0">Presets</p>
-                        <button onClick={() => setShowPresetInput(!showPresetInput)} className="text-[11px] font-black text-[#FFE24C] hover:opacity-80 transition-opacity uppercase tracking-tighter">
-                           {showPresetInput ? "Cancel" : "+ Save current"}
-                        </button>
-                      </div>
-                      {showPresetInput && (
-                        <div className="flex gap-2 mb-4">
-                          <input type="text" value={newPresetName} onChange={(e) => setNewPresetName(e.target.value)} placeholder="Preset name" className="flex-1 bg-[#1a1b1f] border border-[#2C2D33] text-white text-[13px] px-4 py-2 rounded-lg outline-none focus:border-[#4B4C53]" />
-                          <button onClick={() => saveIndicatorPreset(newPresetName)} className="bg-[#FFE24C] text-black text-[12px] font-black px-4 py-2 rounded-lg uppercase tracking-tight">Save</button>
-                        </div>
-                      )}
-                      <div className="space-y-2">
-                         {indicatorPresets.map(preset => (
-                           <div key={preset.id} className="flex items-center justify-between bg-[#1a1b1f] p-4 rounded-xl border border-white/5 group hover:border-white/10 transition-all">
-                              <span className="text-[14px] font-bold text-gray-200">{preset.name}</span>
-                              <div className="flex items-center gap-2">
-                                <button onClick={() => loadIndicatorPreset(preset.data)} className="text-[11px] font-black bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-lg uppercase transition-all">Load</button>
-                                {preset.id !== 'default' && (
-                                  <button onClick={() => deleteIndicatorPreset(preset.id)} className="text-gray-500 hover:text-red-400 p-2 transition-colors"><Trash size={14} /></button>
-                                )}
-                              </div>
-                           </div>
-                         ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="px-6 py-4 flex items-center justify-between border-b border-[#2C2D33]/30">
-                    <span className="text-[#a6aeb9] text-[13px] font-medium opacity-50 uppercase tracking-widest">Available Indicators</span>
-                    <button 
-                      onClick={() => {
-                        setIndicatorSettings((prev: any) => {
-                          const next = { ...prev };
-                          Object.keys(next).forEach(key => {
-                            if (next[key]) next[key].enabled = false;
-                          });
-                          return next;
-                        });
-                        setActiveStrategy(null);
-                        toast.success("All indicators cleared");
-                      }}
-                      className="text-[11px] font-black text-red-400 hover:text-red-300 uppercase tracking-tighter"
-                    >
-                      Clear All
-                    </button>
-                  </div>
-
-                  <div className="flex flex-col">
-                    {[
-                      { name: "SMA", icon: TrendingUp, description: "Simple Moving Average" },
-                      { name: "EMA", icon: TrendingUp, description: "Exponential Moving Average" },
-                      { name: "WMA", icon: TrendingUp, description: "Weighted Moving Average" },
-                      { name: "WEMA", icon: TrendingUp, description: "Wilder's Smoothing Moving Average" },
-                      { name: "ZigZag", icon: Activity, description: "Price trend filtering" },
-                      { name: "Standard Deviation", icon: Activity, description: "Volatility measurement" },
-                      { name: "VWAP", icon: Waves, description: "Volume Weighted Average Price" },
-                      { name: "OBV", icon: Activity, description: "On Balance Volume" },
-                      { name: "ForceIndex", icon: Activity, description: "Alexander Elder's Force Index" },
-                      { name: "Social Trading", icon: Users, hasDot: true, description: "Follow successful trades" },
-                      { name: "Ichimoku Cloud", icon: Cloud, description: "Support & resistance assessment" },
-                      { name: "ADX", icon: BarChart2, description: "Average Directional Index" },
-                      { name: "Momentum", icon: Zap, description: "Rate of price change" },
-                      { name: "MFI", icon: Waves, description: "Money Flow Index" },
-                      { name: "CCI", icon: LineChart, description: "Commodity Channel Index" },
-                      { name: "Awesome Oscillator", icon: BarChart3, description: "Market momentum measurement" },
-                      { name: "RSI", icon: Activity, description: "Relative Strength Index" },
-                      { name: "Fractals", icon: Triangle, description: "Identifying local peaks/troughs" },
-                      { name: "Parabolic SAR", icon: Signal, description: "Stop and Reverse tracking" },
-                      { name: "Moving Average", icon: TrendingUp, description: "SMA, EMA, WMA variants" },
-                      { name: "MACD", icon: BarChart, description: "Moving Average Conv./Div." },
-                      { name: "Bollinger Bands", icon: Layers, description: "Volatility & trend strength" },
-                      { name: "Alligator", icon: Share2, description: "Bill Williams' Alligator" },
-                      { name: "ATR", icon: Ruler, description: "Average True Range" },
-                      { name: "Stochastic", icon: Repeat, description: "Momentum oscillator" }
-                    ].map((ind, idx) => (
-                      <div 
-                        key={ind.name} 
-                        className={`flex items-center gap-4 px-6 py-[18px] group transition-all cursor-pointer border-b border-[#2C2D33]/20 last:border-0 hover:bg-white/5 ${indicatorSettings[ind.name]?.enabled ? 'bg-white/[0.03]' : ''}`}
-                        onClick={() => setConfiguringIndicator(configuringIndicator === ind.name ? null : ind.name)}
-                      >
-                         <div className="relative shrink-0">
-                            <ind.icon 
-                               size={24} 
-                               className={`transition-colors ${indicatorSettings[ind.name]?.enabled ? 'text-white' : 'text-[#a6aeb9] group-hover:text-white'}`} 
-                               strokeWidth={1.5} 
-                            />
-                            {ind.hasDot && (
-                               <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-[#FF4757] rounded-full border-2 border-[#222329]" />
-                            )}
-                         </div>
-                         <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                               <span className={`text-[15px] font-bold transition-colors truncate ${indicatorSettings[ind.name]?.enabled ? 'text-white' : 'text-gray-300 group-hover:text-white'}`}>
-                                  {ind.name}
-                               </span>
-                            </div>
-                            <div className="text-[11px] text-white/40 mt-0.5 line-clamp-1">{ind.description}</div>
-                         </div>
-                         <div className="flex items-center gap-3">
-                            <button 
-                               onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleIndicator(ind.name);
-                               }}
-                               className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors focus:outline-none ${indicatorSettings[ind.name]?.enabled ? 'bg-[#FFE24C]' : 'bg-[#383a42]'}`}
-                            >
-                               <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${indicatorSettings[ind.name]?.enabled ? 'translate-x-5' : 'translate-x-1'}`} />
-                            </button>
-                            <button 
-                               className="p-1.5 hover:bg-white/5 rounded-lg text-[#a6aeb9] hover:text-[#FFE24C] transition-all"
-                               onClick={(e) => {
-                                  e.stopPropagation();
-                                  setConfiguringIndicator(configuringIndicator === ind.name ? null : ind.name);
-                               }}
-                            >
-                               <Settings size={16} strokeWidth={2} />
-                            </button>
-                         </div>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              ) : indicatorTab === 'drawings' ? (
-                <div className="flex flex-col h-full bg-[#222329] px-6 py-6 pb-24 overflow-y-auto">
-                  <p className="text-[#a6aeb9] text-[11px] font-bold tracking-widest uppercase mb-5">
-                    Drawing Tools
-                  </p>
-                  <div className="grid grid-cols-2 gap-4 mb-8">
-                    {[
-                      { id: 'trend', name: 'Trend Line', icon: MoveHorizontal },
-                      { id: 'horizontal', name: 'Horizontal', icon: MinusCircle },
-                      { id: 'vertical', name: 'Vertical', icon: MinusCircle, rotate: 90 },
-                      { id: 'rectangle', name: 'Rectangle', icon: Square },
-                      { id: 'fibo', name: 'Fibonacci', icon: MenuSquare },
-                      { id: 'ray', name: 'Price Ray', icon: ArrowUpRight }
-                    ].map((tool) => (
-                      <button
-                        key={tool.id}
-                        onClick={() => {
-                            setSelectedTool(tool.id);
-                            setShowIndicatorsModal(false);
-                            toast.success(`${tool.name} tool active`);
-                        }}
-                        className="flex flex-col items-center justify-center p-5 bg-[#1a1b1f] hover:bg-[#2C2D33] rounded-2xl border border-white/5 transition-all group active:scale-95 shadow-sm"
-                      >
-                        <tool.icon 
-                           size={28} 
-                           className={`text-[#a6aeb9] group-hover:text-white mb-3 transition-colors ${tool.rotate ? 'rotate-90' : ''}`} 
-                           strokeWidth={1.5}
-                        />
-                        <span className="text-[13px] font-bold text-gray-300 group-hover:text-white">{tool.name}</span>
-                      </button>
-                    ))}
-                  </div>
-
-                  {drawings.filter(d => !d.assetId || d.assetId === activeAsset).length > 0 && (
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between">
-                        <p className="text-[#a6aeb9] text-[11px] font-bold tracking-widest uppercase">
-                          Active ({drawings.filter(d => !d.assetId || d.assetId === activeAsset).length})
-                        </p>
-                        <button 
-                          onClick={() => setDrawings(drawings.filter(d => d.assetId && d.assetId !== activeAsset))}
-                          className="text-[11px] text-red-400 hover:text-red-300 font-bold uppercase tracking-tighter transition-colors"
-                        >
-                          Clear All
-                        </button>
-                      </div>
-                      <div className="space-y-2">
-                        {drawings.filter(d => !d.assetId || d.assetId === activeAsset).map((d, i) => (
-                          <div key={d.id} className="flex items-center justify-between p-4 bg-[#1a1b1f]/80 rounded-xl border border-white/5 group hover:border-white/10 transition-all">
-                            <div className="flex items-center gap-3">
-                              <div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: d.color || '#FFE24C' }} />
-                              <span className="text-[13px] font-bold text-gray-200 capitalize">{d.type} {i + 1}</span>
-                            </div>
-                            <button 
-                              onClick={() => setDrawings(drawings.filter(item => item.id !== d.id))}
-                              className="text-[#a6aeb9] hover:text-red-400 p-1.5 transition-colors"
-                            >
-                              <X size={16} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="flex flex-col h-full bg-[#222329] px-0 py-0 pb-24 overflow-y-auto">
-                   <div className="py-4 text-center">
-                    <span className="text-[#a6aeb9] text-[13px] font-medium opacity-50">Proven Methods</span>
-                  </div>
-
-                  <div className="flex flex-col">
-                    {[
-                      { name: "Exponential Ribbon", difficulty: "Beginner", icon: TrendingUp, color: "#0091ff" },
-                      { name: "Golden Cross", difficulty: "Intermediate", icon: Star, color: "#FFE24C" },
-                      { name: "Bollinger Rebound", difficulty: "Advanced", icon: Layers, color: "#ff4757" },
-                      { name: "RSI Divergence", difficulty: "Intermediate", icon: Activity, color: "#00C980" },
-                      { name: "Fractal Chaos", difficulty: "Advanced", icon: Triangle, color: "#a55eea" },
-                      { name: "Volume Spike", difficulty: "Beginner", icon: BarChart3, color: "#45aaf2" }
-                    ].map((strategy, idx) => (
-                      <div 
-                        key={strategy.name} 
-                        className={`flex items-center gap-4 px-6 py-[22px] group transition-all cursor-pointer border-b border-[#2C2D33]/20 last:border-0 ${activeStrategy === strategy.name ? 'bg-white/[0.08]' : 'hover:bg-white/5 active:bg-white/10'}`}
-                        onClick={() => handleApplyStrategy(strategy.name)}
-                      >
-                         <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border transition-all ${activeStrategy === strategy.name ? 'bg-[#FFE24C]/10 border-[#FFE24C]/30' : 'bg-[#1a1b1f] border-white/5 group-hover:border-white/10'}`}>
-                            <strategy.icon 
-                               size={26} 
-                               className={`${activeStrategy === strategy.name ? 'opacity-100' : 'opacity-80'}`}
-                               strokeWidth={1.5}
-                               style={{ color: activeStrategy === strategy.name ? '#FFE24C' : strategy.color }}
-                            />
-                         </div>
-                         <div className="flex-1 min-w-0">
-                            <h4 className={`text-[15.5px] font-bold transition-colors truncate ${activeStrategy === strategy.name ? 'text-[#FFE24C]' : 'text-white group-hover:text-[#FFE24C]'}`}>
-                               {strategy.name}
-                            </h4>
-                            <div className="flex items-center gap-2 mt-1">
-                               <span className="text-[10px] font-black uppercase tracking-widest text-[#a6aeb9]">{strategy.difficulty}</span>
-                               <span className="w-1 h-1 rounded-full bg-white/20" />
-                               <span className="text-[10px] font-bold text-[#00C980]">74% Success Rate</span>
-                            </div>
-                         </div>
-                         <div className={`${activeStrategy === strategy.name ? 'text-[#FFE24C]' : 'text-[#a6aeb9] group-hover:text-white'} transition-colors`}>
-                            {activeStrategy === strategy.name ? (
-                              <div className="text-[10px] font-black uppercase bg-[#FFE24C]/20 text-[#FFE24C] px-2 py-1 rounded-md">Active</div>
-                            ) : (
-                              <ChevronRight size={18} strokeWidth={2.5} />
-                            )}
-                         </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="px-6 py-10 mt-4 border-t border-[#2C2D33]/40">
-                     <div className="bg-gradient-to-br from-[#FFE24C]/10 to-transparent p-5 rounded-2xl border border-[#FFE24C]/20">
-                        <h5 className="text-[14px] font-black text-[#FFE24C] uppercase tracking-wide mb-2">Pro Trading Tip</h5>
-                        <p className="text-[12px] text-gray-400 leading-relaxed font-medium">
-                           Combining multiple indicators like MACD and RSI can significantly increase your forecast accuracy.
-                        </p>
-                     </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          </motion.div>
-        </>
-      )}
-      </AnimatePresence>
-
-      {showSignalsModal && (
-        <div className="fixed inset-0 z-[1000] bg-[#1a1b1e] flex flex-col font-sans animate-in fade-in zoom-in duration-250 ring-inset">
-          {/* Header */}
-          <div className="h-16 flex items-center justify-between px-6 border-b border-white/5 shrink-0">
-            <h2 className="text-white text-lg font-bold">Trading Signals</h2>
-            <button 
-              onClick={() => setShowSignalsModal(false)}
-              className="text-gray-400 hover:text-white transition-colors"
-            >
-              <X size={24} />
-            </button>
-          </div>
-          {/* Content */}
-          <div className="flex-1 overflow-y-auto px-6 py-8 flex flex-col items-center">
-            {/* Illustration */}
-            <div className="w-full max-w-md aspect-video mb-8 relative shrink-0 rounded-2xl bg-gradient-to-br from-blue-500/10 via-purple-500/10 to-transparent border border-white/5 flex items-center justify-center overflow-hidden">
-              <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMSIgY3k9IjEiIHI9IjEiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC4wNSkiLz48L3N2Zz4=')] [mask-image:linear-gradient(to_bottom,white,transparent)]" />
-              <div className="relative z-10 flex items-center gap-6">
-                <div className="w-16 h-16 rounded-2xl bg-red-500/20 flex items-center justify-center border border-red-500/30">
-                   <Icons.TrendingDown className="text-red-400" size={32} />
-                </div>
-                <div className="w-20 h-20 rounded-2xl bg-blue-500/20 flex items-center justify-center border border-blue-500/30 shadow-[0_0_40px_rgba(59,130,246,0.3)] ring-1 ring-white/10">
-                   <Icons.Activity className="text-blue-400" size={40} />
-                </div>
-                <div className="w-16 h-16 rounded-2xl bg-green-500/20 flex items-center justify-center border border-green-500/30">
-                   <Icons.TrendingUp className="text-green-400" size={32} />
-                </div>
-              </div>
-            </div>
-            <div className="max-w-md w-full space-y-6">
-              <p className="text-gray-300 text-[15px] leading-relaxed">
-                Trading Signals is a new tool that provides you with price forecasts. You'll see when and in which direction a price will move.
-              </p>
-              <ol className="space-y-6 list-none pb-8">
-                <li className="flex gap-4">
-                  <span className="text-white font-bold shrink-0">1.</span>
-                  <p className="text-gray-300 text-[15px] leading-relaxed">
-                    Signals have various expiration times: 1, 3, or 5 minutes. E.g., 1 min DOWN means that an asset price will decrease in a minute
-                  </p>
-                </li>
-                <li className="flex gap-4">
-                  <span className="text-white font-bold shrink-0">2.</span>
-                  <p className="text-gray-300 text-[15px] leading-relaxed">
-                    Signals are generated for all the FTT assets on the real account. If a signal isn't found, choose another asset and resume trading
-                  </p>
-                </li>
-                <li className="flex gap-4">
-                  <span className="text-white font-bold shrink-0">3.</span>
-                  <p className="text-gray-300 text-[15px] leading-relaxed">
-                    You have 30 seconds to use a trading signal. Set the trade amount and press UP or DOWN. That's it!
-                  </p>
-                </li>
-              </ol>
-            </div>
-          </div>
-          {/* Footer - "Try it" Button */}
-          <div className="p-6 pb-12 md:pb-8 flex justify-center bg-[#1a1b1e] border-t border-white/5 shrink-0">
-            <button 
-              onClick={() => setShowSignalsModal(false)}
-              className="w-full max-w-md bg-[#ffdd00] hover:bg-[#ffea00] py-4 rounded-xl text-black font-bold text-lg transition-all active:scale-95 shadow-[0_4px_15px_rgba(255,221,0,0.2)]"
-            >
-              Try it
-            </button>
-          </div>
-        </div>
-      )}
-      {activeTab === "support" && (
-        <div className="fixed inset-0 md:inset-auto md:left-[84px] md:bottom-10 md:w-[380px] md:h-[620px] z-[500] flex flex-col bg-[#1a1b1e] rounded-t-[24px] md:rounded-[24px] shadow-[0_30px_90px_rgba(0,0,0,0.6)] overflow-hidden border border-white/10 animate-in fade-in zoom-in duration-250">
-          {/* Header */}
-          {/* Body */}
-          <div className="flex-1 overflow-y-auto bg-[#1a1b1e]">
-            <div className="py-2">
-               {userTickets.length === 0 ? (
-                 <div className="p-10 text-center flex flex-col items-center justify-center">
-                    <MessageSquare size={48} className="text-gray-800 mb-4" />
-                    <p className="text-gray-500 font-medium tracking-wide">No active conversations found</p>
-                 </div>
-               ) : userTickets.map((session, idx) => (
-                 <div 
-                   key={`session-${idx}-${session.id || 'session-' + idx}`}
-                   onClick={() => {
-                     setSelectedTicket(session);
-                     setActiveTab("support-detail");
-                   }}
-                   className="px-6 py-5 border-b border-white/5 hover:bg-white/5 transition-all cursor-pointer group"
-                 >
-                    <div className="flex gap-4">
-                       <div className="bg-[#FFE24C] w-11 h-11 rounded-xl flex items-center justify-center shrink-0 shadow-sm group-hover:scale-105 transition-transform">
-                          <div className="w-7 h-7 border-2 border-black rounded-lg flex flex-col items-center justify-center gap-0.5 relative pt-0.5">
-                             <div className="flex gap-1">
-                                <div className="w-1.5 h-1.5 bg-black rounded-full"></div>
-                                <div className="w-1.5 h-1.5 bg-black rounded-full"></div>
-                             </div>
-                             <div className="w-3 h-0.5 bg-black rounded-full mt-1"></div>
-                          </div>
-                       </div>
-                       <div className="flex-1 min-w-0 pr-2">
-                          <div className="flex items-center justify-between mb-1">
-                              <span className="text-[15px] font-bold text-white truncate">{session.subject}</span>
-                              <span className="text-[12px] text-gray-400 font-medium whitespace-nowrap">
-                                {new Date(session.updatedAt || session.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}
-                              </span>
-                           </div>
-                           <p className="text-[13px] text-gray-400 leading-[1.4] line-clamp-2 mb-3 font-medium">
-                              {session.lastMessage || "Your conversation with Support"}
-                           </p>
-                           <div className="inline-flex">
-                              <span className={`px-3 py-0.5 rounded-full text-[11px] font-black uppercase border tracking-wider ${
-                                session.status === 'open' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 
-                                session.status === 'pending' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
-                                'bg-white/5 text-gray-500 border-white/10'
-                              }`}>
-                                 {session.status}
-                              </span>
-                           </div>
-                        </div>
-                     </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-          {/* Footer */}
-          <div className="p-6 bg-[#1a1b1e] border-t border-white/5 shrink-0">
-             <button 
-               onClick={() => setIsCreatingTicket(true)}
-               className="w-full h-[54px] bg-[#FFE24C] hover:bg-[#E5CB44] text-black rounded-[18px] font-black text-[15px] transition-all transform active:scale-[0.98] shadow-[0_10px_30px_rgba(255,226,76,0.15)] flex items-center justify-center gap-2">
-                <Plus size={18} strokeWidth={3} />
-                START NEW CHAT
-             </button>
-          </div>
-        </div>
-      )}
-
-
-
-
-
-      {activeTab === "support-detail" && (
-        <div className="fixed inset-0 md:inset-auto md:left-[84px] md:bottom-10 md:w-[420px] md:h-[680px] z-[500] flex flex-col bg-[#f0f2f5] rounded-t-[28px] md:rounded-[28px] shadow-[0_30px_90px_rgba(0,0,0,0.6)] overflow-hidden animate-in fade-in zoom-in duration-300">
-          {/* Header - Screenshot Matched */}
-          <div className="bg-[#2d2d2d] px-5 py-4 flex items-center gap-4 shrink-0 shadow-sm relative z-10">
-            <button onClick={() => { setActiveTab("support"); setSelectedTicket(null); }} className="text-white/80 hover:text-white transition-colors">
-               <ArrowLeft size={22} strokeWidth={2.5} />
-            </button>
-            <div className="bg-[#ffd700] w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-md">
-               <div className="bg-black w-7 h-7 rounded-full flex flex-col items-center justify-center pt-0.5">
-                  <div className="flex gap-0.5">
-                     <div className="w-1 h-3 bg-[#ffd700] rounded-full transform -rotate-12"></div>
-                     <div className="w-1 h-3 bg-[#ffd700] rounded-full transform rotate-12"></div>
-                  </div>
-               </div>
-            </div>
-            <div className="flex flex-col flex-1 min-w-0">
-               <h2 className="text-white text-[15px] font-black tracking-tight leading-tight truncate">
-                  Started {new Date(selectedTicket?.createdAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at {new Date(selectedTicket?.createdAt || Date.now()).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
-               </h2>
-               <div className="flex items-center gap-1.5 mt-0.5">
-                  <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]"></div>
-                  <span className="text-white/60 text-[11px] font-bold tracking-wide">Bot is active</span>
-               </div>
-            </div>
-            <button onClick={() => { setActiveTab("trade"); setSelectedTicket(null); }} className="w-8 h-8 rounded-full flex items-center justify-center text-white/40 hover:text-white hover:bg-white/5 transition-all">
-               <ChevronDown size={24} />
-            </button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6 bg-white custom-scrollbar">
-             {/* Mocking the specific conversation from the screenshot for a professional feel */}
-             <div className="flex justify-start">
-                <div className="bg-[#f3f4f6] text-[#333] rounded-2xl rounded-tl-none p-4 max-w-[85%] shadow-sm border border-gray-100">
-                   <p className="text-[14px] font-medium leading-relaxed">Thank you for your feedback :)</p>
-                </div>
-             </div>
-
-             <div className="flex justify-end">
-                <div className="bg-[#333] text-white rounded-2xl rounded-tr-none p-4 max-w-[85%] shadow-md">
-                   <p className="text-[14px] font-medium leading-relaxed">à¦¹à¦¾à¦‡</p>
-                </div>
-             </div>
-
-             <div className="flex justify-start">
-                <div className="bg-[#f3f4f6] text-[#333] rounded-2xl rounded-tl-none p-4 max-w-[85%] shadow-sm border border-gray-100">
-                   <div className="space-y-3">
-                      <p className="text-[14px] font-medium leading-relaxed">
-                         Seems like you're speaking a foreign language which I don't currently understand.
-                      </p>
-                      <p className="text-[14px] font-medium leading-relaxed">
-                         Choose your preferred language from the list. Try using English for the best experience with this bot.
-                      </p>
-                   </div>
-                </div>
-             </div>
-
-             {/* Language Options Grid - Screenshot Matched */}
-             <div className="flex flex-wrap gap-2.5 pl-4 pr-10">
-                {["English", "à¤¹à¤¿à¤¨à¥à¤¦à¥€, à¤¹à¤¿à¤‚à¤¦à¥€", "PortuguÃªs", "EspaÃ±ol", "Tiáº¿ng Viá»‡t", "Bahasa Indonesia", "TÃ¼rkÃ§e"].map((lang) => (
-                   <button 
-                     key={lang}
-                     className="px-5 py-2.5 bg-white border border-gray-200 rounded-full text-[14px] font-bold text-gray-700 hover:border-gray-400 hover:bg-gray-50 active:scale-95 transition-all shadow-sm"
-                   >
-                      {lang}
-                   </button>
-                ))}
-             </div>
-
-             {ticketMessages.length > 0 && ticketMessages.map((msg, idx) => {
-               const isStaff = msg.senderType === 'support';
-               return (
-                 <div key={`msg-${idx}`} className={`flex ${isStaff ? 'justify-start' : 'justify-end'}`}>
-                    <div className={`${isStaff ? 'bg-[#f3f4f6] text-[#333] rounded-tl-none border border-gray-100' : 'bg-[#333] text-white rounded-tr-none shadow-md'} rounded-2xl p-4 max-w-[85%]`}>
-                       <p className="text-[14px] font-medium leading-relaxed whitespace-pre-wrap">{msg.text}</p>
-                       {msg.attachments && msg.attachments.length > 0 && (
-                         <div className="mt-2 flex flex-wrap gap-2">
-                            {msg.attachments.map((att: string, aIdx: number) => (
-                              <img key={aIdx} src={att} alt="attachment" className="w-24 h-24 object-cover rounded-lg border border-white/20" />
-                            ))}
-                         </div>
-                       )}
-                       <div className={`mt-2 flex items-center gap-2 ${isStaff ? 'text-gray-400' : 'text-white/40'}`}>
-                          <span className="text-[9px] font-black uppercase tracking-widest">{isStaff ? 'Bot' : 'You'}</span>
-                          <span className="text-[9px] font-bold">{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                       </div>
-                    </div>
-                 </div>
-               );
-             })}
-             <div ref={messagesEndRef} />
-             
-             {isBotTyping && (
-                 <div className="flex justify-start">
-                    <div className="bg-[#f3f4f6] text-[#333] rounded-2xl rounded-tl-none p-4 max-w-[85%] shadow-sm border border-gray-100 flex items-center gap-1.5">
-                       <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                       <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                       <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div>
-                    </div>
-                 </div>
-              )}
-          </div>
-
-          {/* Attached Files Preview */}
-          {ticketAttachedFiles.length > 0 && (
-            <div className="bg-white px-4 pt-2 flex items-center gap-2 overflow-x-auto">
-              {ticketAttachedFiles.map((file, i) => (
-                <div key={i} className="relative group shrink-0">
-                  <img src={file} alt="preview" className="w-12 h-12 rounded-xl object-cover border border-gray-200" />
-                  <button
-                    onClick={() => setTicketAttachedFiles((prev) => prev.filter((_, idx) => idx !== i))}
-                    className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]"
-                  >
-                    Ã—
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="p-4 bg-white border-t border-gray-100 flex items-center gap-3">
-             <input
-                type="file"
-                ref={ticketFileInputRef}
-                onChange={handleTicketFileUpload}
-                accept="image/*,.pdf"
-                className="hidden"
-             />
-             <button 
-                onClick={() => ticketFileInputRef.current?.click()}
-                className="text-gray-400 hover:text-gray-600 transition-colors p-2"
-                title="Attach Document or Screenshot"
-             >
-                <Paperclip size={22} strokeWidth={2.5} />
-             </button>
-             <div className="flex-1 relative">
-                <input 
-                  value={ticketReply}
-                  onChange={(e) => setTicketReply(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && sendTicketMessage()}
-                  placeholder="Type a message" 
-                  className="w-full bg-[#f3f4f6] text-[#333] text-[15px] py-3 px-5 pr-10 rounded-full outline-none placeholder:text-gray-400 font-medium" 
-                />
-             </div>
-             <button 
-                onClick={sendTicketMessage}
-                disabled={!ticketReply.trim() && ticketAttachedFiles.length === 0}
-                className={`p-2 transition-all ${(ticketReply.trim() || ticketAttachedFiles.length > 0) ? 'text-[#0091ff] scale-110' : 'text-gray-300'}`}
-             >
-                <Send size={22} strokeWidth={2.5} />
-             </button>
-          </div>
-        </div>
-      )}
-
-
-      {isCreatingTicket && (
-        <div className="fixed inset-0 z-[600] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-250">
-           <motion.div 
-             initial={{ scale: 0.9, opacity: 0, y: 20 }}
-             animate={{ scale: 1, opacity: 1, y: 0 }}
-             className="w-full max-w-[420px] bg-[#1a1b1e] rounded-[32px] shadow-[0_40px_100px_rgba(0,0,0,0.8)] overflow-hidden flex flex-col border border-white/10"
-           >
-              <div className="bg-[#1e1f21] px-8 py-7 flex items-center justify-between border-b border-white/5">
-                 <div>
-                    <h2 className="text-white text-[22px] font-black tracking-tight leading-none mb-1">New Support Ticket</h2>
-                    <p className="text-gray-500 text-xs font-bold uppercase tracking-widest">Support Core</p>
-                 </div>
-                 <button onClick={() => setIsCreatingTicket(false)} className="w-10 h-10 rounded-full flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/5 transition-all">
-                    <X size={24} />
-                 </button>
-              </div>
-
-              <div className="p-8 space-y-6">
-                 <div className="space-y-2">
-                    <label className="block text-gray-500 text-[11px] font-black uppercase tracking-[0.2em] ml-1">Subject of Inquiry</label>
-                    <div className="bg-[#2a2b30] border border-white/5 rounded-2xl px-5 py-4 focus-within:border-emerald-500/40 transition-all shadow-inner">
-                       <input 
-                         type="text" 
-                         value={ticketSubject}
-                         onChange={(e) => setTicketSubject(e.target.value)}
-                         placeholder="e.g., Deposit verification"
-                         className="w-full bg-transparent text-white text-[15px] outline-none placeholder:text-gray-600 font-medium"
-                       />
-                    </div>
-                 </div>
-
-                 <div className="space-y-2">
-                    <label className="block text-gray-500 text-[11px] font-black uppercase tracking-[0.2em] ml-1">Detailed Message</label>
-                    <div className="bg-[#2a2b30] border border-white/5 rounded-2xl px-5 py-4 focus-within:border-emerald-500/40 transition-all shadow-inner">
-                       <textarea 
-                         rows={4}
-                         value={ticketMessage}
-                         onChange={(e) => setTicketMessage(e.target.value)}
-                         placeholder="Explain your situation clearly..."
-                         className="w-full bg-transparent text-white text-[15px] outline-none placeholder:text-gray-600 font-medium resize-none"
-                       />
-                    </div>
-                 </div>
-
-                 <button 
-                   onClick={async () => {
-                     if (!ticketSubject.trim() || !ticketMessage.trim()) {
-                       toast.error("Please fill all fields");
-                       return;
-                     }
-                     const ticketId = await createSupportTicket(ticketSubject, ticketMessage);
-                     if (ticketId) {
-                       setIsCreatingTicket(false);
-                       setTicketSubject("");
-                       setTicketMessage("");
-                     }
-                   }}
-                   disabled={!ticketSubject.trim() || !ticketMessage.trim()}
-                   className="w-full py-5 bg-white text-black rounded-2xl font-black text-[16px] transition-all transform active:scale-[0.98] shadow-lg disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-widest">
-                    Submit to Core
-                 </button>
-              </div>
-           </motion.div>
-        </div>
-      )}
-
-
-      {/* OVERLAY PROMOTIONS VIEW */}
-      {activeTab === "promotions" && (
-        <div className="fixed inset-0 z-[600] flex flex-col bg-[#0b0c0e] text-white overflow-y-auto pb-safe">
-          {/* Header */}
-          <div className="h-16 flex items-center px-4 md:px-8 border-b border-white/5 shrink-0 sticky top-0 bg-[#0b0c0e]/80 backdrop-blur-md z-[210]">
-             <button 
-                onClick={() => setActiveTab("trade")} 
-                className="p-2 -ml-2 text-gray-500 hover:text-white transition-all active:scale-95 flex items-center gap-2"
-             >
-                <ArrowLeft size={24} />
-             </button>
-             <h2 className="text-xl font-black ml-4 tracking-tight uppercase">Special Offers</h2>
-          </div>
-
-          {/* Main Content */}
-          <div className="flex-1 flex flex-col items-center py-20 px-6 bg-[#0b0c0e]">
-             <div className="max-w-[1200px] w-full text-center">
-                <h2 className="text-[56px] md:text-[84px] font-black tracking-tighter mb-4 text-white leading-none uppercase">Promotions</h2>
-                <p className="text-gray-500 text-lg md:text-xl font-medium tracking-wide mb-12">Exclusive bonuses and rewards for our trading community</p>
-                
-                {promotionsData.length === 0 ? (
-                  <div className="mt-20 flex flex-col items-center">
-                    <div className="w-24 h-24 bg-white/5 rounded-full flex items-center justify-center mb-6">
-                       <Gift size={40} className="text-gray-700" />
-                    </div>
-                    <p className="text-[22px] font-bold text-gray-400 mb-2">No promotions currently available</p>
-                    <p className="text-gray-500 max-w-sm">
-                      Sorry, there are no active events at the moment. Please check back later or contact our support team.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 mt-12">
-                    {promotionsData.map((promo, promoIdx) => (
-                      <div key={`promo-card-${promo.id}-${promoIdx}`} className="bg-[#1a1b1e] rounded-[32px] overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.3)] border border-white/5 flex flex-col group hover:-translate-y-2 hover:border-yellow-500/30 transition-all duration-500">
-                        <div className="relative h-[240px] overflow-hidden bg-[#121316]">
-                          {promo.image || promo.imageUrl ? (
-                            <img 
-                              src={promo.image || promo.imageUrl} 
-                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-1000 opacity-90 group-hover:opacity-100" 
-                              alt={promo.title} 
-                             loading="lazy" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-[#1a1b1e] to-[#121316]">
-                              <Gift size={48} className="text-gray-800" />
-                            </div>
-                          )}
-                          <div className="absolute top-6 right-6 flex gap-2">
-                            {!readPromotionsIds.includes(promo.id) && (
-                              <div className="px-4 py-1.5 bg-[#ff4757] text-white text-[11px] font-black uppercase rounded-full shadow-lg animate-pulse">New</div>
-                            )}
-                            <div className="px-4 py-1.5 bg-yellow-500 text-black text-[11px] font-black uppercase rounded-full shadow-lg">Active</div>
-                          </div>
-                        </div>
-                        <div className="p-8 flex flex-col flex-1 text-left">
-                          <h3 className="text-[24px] font-black tracking-tight mb-3 text-white leading-tight">{promo.title}</h3>
-                          <p className="text-gray-400 text-[15px] font-medium leading-relaxed mb-8 grow line-clamp-3">
-                            {promo.description}
-                          </p>
-                          <button 
-                             onClick={() => {
-                               setSelectedPromotion(promo);
-                               markPromotionAsRead(promo.id);
-                             }}
-                             className="w-full py-4 bg-white hover:bg-gray-200 text-black rounded-2xl font-black text-sm transition-all uppercase tracking-widest shadow-xl active:scale-[0.98]"
-                          >
-                             View Details
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-             </div>
-          </div>
-        </div>
-      )}
-      
-
-          {/* Promotion Detail Overlay */}
-          <AnimatePresence>
-            {selectedPromotion && (
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="fixed inset-0 z-[500] bg-black/60 backdrop-blur-xl flex items-center justify-center p-6"
-              >
-                 <motion.div 
-                    initial={{ scale: 0.9, y: 20 }}
-                    animate={{ scale: 1, y: 0 }}
-                    exit={{ scale: 0.9, y: 20 }}
-                    className="bg-[#1a1b1e] w-full w-full rounded-[40px] overflow-hidden shadow-[0_40px_100px_rgba(0,0,0,0.8)] relative max-h-[90vh] flex flex-col border border-white/10"
-                 >
-                    <button 
-                      onClick={() => setSelectedPromotion(null)}
-                      className="absolute top-6 right-6 w-12 h-12 bg-white/5 hover:bg-white/10 rounded-full flex items-center justify-center text-white transition-colors z-20"
-                    >
-                      <X size={24} />
-                    </button>
-
-                    <div className="overflow-y-auto">
-                       <div className="h-[300px] bg-[#121316] relative">
-                          {(selectedPromotion.image || selectedPromotion.imageUrl) ? (
-                            <img 
-                              src={selectedPromotion.image || selectedPromotion.imageUrl} 
-                              className="w-full h-full object-cover" 
-                              alt={selectedPromotion.title} 
-                             loading="lazy" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center bg-gray-100">
-                              <Gift size={64} className="text-gray-200" />
-                            </div>
-                          )}
-                       </div>
-                       <div className="p-10 text-left">
-                          <h2 className="text-[36px] font-black tracking-tighter text-gray-900 mb-6 leading-none">
-                            {selectedPromotion.title}
-                          </h2>
-                          <div className="prose prose-lg max-w-none text-gray-600 font-medium leading-relaxed">
-                             {selectedPromotion.content || selectedPromotion.description}
-                          </div>
-                          
-                          <div className="mt-12">
-                             <button 
-                               onClick={() => setSelectedPromotion(null)}
-                               className="bg-black text-white font-black h-14 px-10 rounded-2xl hover:scale-105 active:scale-95 transition-transform text-[16px] uppercase tracking-widest"
-                             >
-                               Got it
-                             </button>
-                          </div>
-                       </div>
-                    </div>
-                 </motion.div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-      {/* CHART TYPE MODAL */}
-      {showChartTypeModal && (
-        <AnimatePresence>
-            <motion.div
-               initial={{ opacity: 0 }}
-               animate={{ opacity: 1 }}
-               exit={{ opacity: 0 }}
-               onClick={() => setShowChartTypeModal(false)}
-               className="fixed md:absolute inset-0 bg-black/50 md:bg-transparent z-[140] md:pointer-events-none"
-            />
-            <motion.div
-              initial={{ x: "-100%" }}
-              animate={{ x: 0 }}
-              exit={{ x: "-100%" }}
-              transition={{ type: "tween", duration: 0.2, ease: "easeOut" }}
-              className="fixed md:absolute left-0 md:left-[76px] top-0 bottom-0 w-full md:w-[360px] z-[150] flex flex-col bg-[#222329] border-r border-[#2C2D33] shadow-2xl overflow-hidden pointer-events-auto"
-            >
-              {/* Top Header */}
-              <div className="pt-[18px] pb-4 px-5 flex items-center justify-between border-b border-[#2C2D33]/40">
-                <h2 className="text-[15px] font-medium tracking-wide text-white mb-0">
-                  Chart type
-                </h2>
-                <button
-                  onClick={() => setShowChartTypeModal(false)}
-                  className="text-[#888] hover:text-white transition-colors p-1 -mr-1"
-                >
-                  <X size={18} strokeWidth={2} />
-                </button>
-              </div>
-
-              <div className="flex-1 overflow-y-auto px-5 pt-5 pb-20 custom-scrollbar space-y-3">
-                {chartTypeOptions.map((type, idx) => (
-                  <button
-                    key={`ctype-${type.id}-${idx}`}
-                    onClick={() => {
-                      setChartLoading(true);
-                      setChartType(type.id);
-                      setShowChartTypeModal(false);
-                      setTimeout(() => setChartLoading(false), 250);
-                    }}
-                    className={`w-full py-4 px-5 rounded-[12px] text-[13px] font-bold transition-all flex items-center justify-between overflow-hidden shadow-sm outline-none group border ${
-                      chartType === type.id
-                          ? "bg-transparent border-[#FFE24C]/20 shadow-[inset_0_0_0_1px_rgba(255,226,76,0.3)] text-white relative after:content-[''] after:absolute after:inset-0 after:border-[2px] after:border-[#222329] after:rounded-[12px]"
-                          : "bg-[#2c2d33]/50 border-transparent text-[#e4e4e4] hover:bg-[#2c2d33]"
-                    }`}
-                    style={chartType === type.id ? { borderColor: '#555', backgroundColor: '#383a42' } : {}}
-                  >
-                    <div className="flex items-center gap-4 relative z-10">
-                      <type.Icon size={20} className={chartType === type.id ? "text-white" : "text-gray-400 group-hover:text-white"} />
-                      <span className="tracking-wide text-[14px]">{type.label}</span>
-                    </div>
-                    <div className={`transition-opacity relative z-10 ${chartType === type.id ? "opacity-100" : "opacity-60 saturate-50 group-hover:opacity-100 group-hover:saturate-100"}`}>
-                      {type.preview}
-                    </div>
-                  </button>
-                ))}
-
-                <div className="mt-8 pt-6 space-y-4">
-                    <label className="flex items-center gap-3 cursor-pointer group">
-                        <input type="checkbox" className="hidden" checked={showQuoteDetails} onChange={(e) => setShowQuoteDetails(e.target.checked)} />
-                        <div className={`w-5 h-5 rounded-[4px] border transition-colors flex items-center justify-center ${showQuoteDetails ? 'border-[#FFE24C] bg-[#FFE24C]/20' : 'border-[#4A4A4F] bg-transparent group-hover:border-[#6C6C75]'}`}>
-                            {showQuoteDetails && <Icons.Check size={14} className="text-[#FFE24C]" strokeWidth={3} />}
-                        </div>
-                        <span className="text-[#e4e4e4] text-[13px] font-bold tracking-wide group-hover:text-white transition-colors">View quote details</span>
-                    </label>
-                    <label className="flex items-center gap-3 cursor-pointer group">
-                        <input type="checkbox" className="hidden" checked={showTimer} onChange={(e) => setShowTimer(e.target.checked)} />
-                        <div className={`w-5 h-5 rounded-[4px] border transition-colors flex items-center justify-center ${showTimer ? 'border-[#FFE24C] bg-[#FFE24C]/20' : 'border-[#4A4A4F] bg-transparent group-hover:border-[#6C6C75]'}`}>
-                            {showTimer && <Icons.Check size={14} className="text-[#FFE24C]" strokeWidth={3} />}
-                        </div>
-                        <span className="text-[#e4e4e4] text-[13px] font-bold tracking-wide group-hover:text-white transition-colors">View timer until next quote</span>
-                    </label>
-                </div>
-              </div>
-            </motion.div>
-        </AnimatePresence>
-      )}
-
-      {/* OVERLAY PASSWORD MODAL */}
-      {showPasswordModal && (
-        <div className="fixed inset-0 z-[210] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-[#1C1C1E] border border-[#2C2C2E] w-full max-md rounded-2xl overflow-hidden shadow-2xl p-6">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-white">Change Password</h3>
-              <button
-                onClick={() => setShowPasswordModal(false)}
-                className="text-gray-400 hover:text-white"
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-gray-400 text-xs font-bold uppercase mb-2">Current Password</label>
-                <input
-                  type="password"
-                  value={passwords.current}
-                  onChange={(e) => setPasswords({...passwords, current: e.target.value})}
-                  className="w-full bg-[#2A2B31] border border-[#3b3b3f] rounded-xl px-4 py-3 text-white focus:outline-none focus:border-yellow-500"
-                  placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
-                />
-              </div>
-              <div>
-                <label className="block text-gray-400 text-xs font-bold uppercase mb-2">New Password</label>
-                <input
-                  type="password"
-                  value={passwords.new}
-                  onChange={(e) => setPasswords({...passwords, new: e.target.value})}
-                  className="w-full bg-[#2A2B31] border border-[#3b3b3f] rounded-xl px-4 py-3 text-white focus:outline-none focus:border-yellow-500"
-                  placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
-                />
-              </div>
-              <div>
-                <label className="block text-gray-400 text-xs font-bold uppercase mb-2">Confirm New Password</label>
-                <input
-                  type="password"
-                  value={passwords.confirm}
-                  onChange={(e) => setPasswords({...passwords, confirm: e.target.value})}
-                  className="w-full bg-[#2A2B31] border border-[#3b3b3f] rounded-xl px-4 py-3 text-white focus:outline-none focus:border-yellow-500"
-                  placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-3 mt-8">
-              <button
-                onClick={async () => {
-                  if (!passwords.current || !passwords.new || !passwords.confirm) {
-                    toast.error("Please fill all fields");
-                    return;
-                  }
-                  if (passwords.new !== passwords.confirm) {
-                    toast.error("New passwords do not match");
-                    return;
-                  }
-                  if (passwords.new.length < 6) {
-                    toast.error("Password must be at least 6 characters");
-                    return;
-                  }
-
-                  try {
-                    if (!currentUser || !currentUser.email) return;
-                    const credential = EmailAuthProvider.credential(currentUser.email, passwords.current);
-                    await reauthenticateWithCredential(currentUser, credential);
-                    await updatePassword(currentUser, passwords.new);
-
-                    // Keep SQL database in sync
-                    try {
-                      const token = localStorage.getItem('bivax_token');
-                      await fetch('/api/auth/change-password', {
-                        method: 'POST',
-                        headers: { 
-                          'Content-Type': 'application/json',
-                          'Authorization': `Bearer ${token}`
-                        },
-                        body: JSON.stringify({ password: passwords.new })
-                      });
-                    } catch (syncErr) {
-                      console.error("SQL password sync failed:", syncErr);
-                    }
-
-                    toast.success("Password updated successfully!");
-                    setShowPasswordModal(false);
-                    setPasswords({ current: "", new: "", confirm: "" });
-                  } catch (e: any) {
-                    console.error("Password update error:", e);
-                    toast.error(e.message || "Failed to update password");
-                  }
-                }}
-                className="w-full py-3.5 bg-[#FFD700] hover:bg-[#F0C800] text-black font-bold rounded-xl transition-all shadow-lg active:scale-[0.98]"
-              >
-                Update Password
-              </button>
-              <button
-                onClick={() => setShowPasswordModal(false)}
-                className="w-full py-3.5 bg-transparent border border-gray-600 text-gray-300 hover:bg-white/5 rounded-xl transition-all"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showTradeHistoryModal && <TradeHistoryModal onClose={() => setShowTradeHistoryModal(false)} />}
-      {/* OVERLAY VIDEO PLAYER */}
-      {activeVideoUrl && (
-        <div className="fixed inset-0 z-[600] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-[#1C1C1E] border border-[#2C2C2E] w-full w-full rounded-2xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="flex justify-between items-center p-4 border-b border-[#2C2C2E]">
-              <h3 className="font-bold text-white text-lg truncate pr-4">{activeVideoTitle}</h3>
-              <button
-                onClick={() => { setActiveVideoUrl(null); setActiveVideoTitle(null); }}
-                className="text-gray-400 hover:text-white transition-colors bg-[#2C2C2E] rounded-full p-1.5 focus:outline-none"
-              >
-                <Icons.X size={20} />
-              </button>
-            </div>
-            <div className="relative w-full aspect-video bg-black flex items-center justify-center">
-               <iframe
-                 src={activeVideoUrl.includes('watch?v=') ? activeVideoUrl.replace('watch?v=', 'embed/').split('&')[0] : activeVideoUrl.includes('youtu.be/') ? activeVideoUrl.replace('youtu.be/', 'youtube.com/embed/').split('?')[0] : activeVideoUrl}
-                 title={activeVideoTitle || "Video player"}
-                 className="absolute inset-0 w-full h-full border-0"
-                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                 allowFullScreen
-               ></iframe>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* CLIENT AGREEMENT MODAL */}
-      {showClientAgreement && (
-        <div className="fixed inset-0 z-[500] bg-[#1C1C1E] w-full h-full overflow-y-auto">
-          <div className="w-full h-full text-white relative">
-            <div className="sticky top-0 bg-[#1C1C1E] border-b border-[#2C2C2E] p-6 z-10 flex items-center justify-between">
-              <h2 className="text-3xl font-black w-full text-center">{clientAgreementData?.title}</h2>
-              <button
-                onClick={() => setShowClientAgreement(false)}
-                className="absolute right-4 text-gray-400 hover:text-white transition-colors bg-[#2C2C2E] rounded-full p-2 focus:outline-none"
-              >
-                <Icons.X size={24} />
-              </button>
-            </div>
-            <div className="max-w-3xl mx-auto p-8 md:p-12 space-y-6">
-               <div className="text-gray-300 whitespace-pre-line leading-relaxed text-[15px] md:text-[17px]">
-                  {clientAgreementData?.content}
-               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TIME PICKER MODAL */}
-      {showTimePicker && (
-        <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 pointer-events-auto">
-           <div className="absolute inset-0 bg-black/20" onClick={() => setShowTimePicker(false)}></div>
-           <div className="bg-[#2A2C31] w-full max-w-[280px] rounded-2xl p-1 relative shadow-2xl border border-white/5 z-10 animate-in fade-in zoom-in-95 duration-200">
-              <div className="grid grid-cols-2">
-                {/* Left Column: 15-minute intervals */}
-                <div className="flex flex-col border-r border-white/5 py-2">
-                   {(() => {
-                      const options = [];
-                      let base = new Date(nowMs);
-                      base.setSeconds(0);
-                      base.setMilliseconds(0);
-                      
-                      // Find next 15-min mark
-                      let minutes = base.getMinutes();
-                      let next15 = Math.ceil((minutes + 1) / 15) * 15;
-                      base.setMinutes(next15);
-                      
-                      for(let i=0; i<4; i++) {
-                        const d = new Date(base.getTime() + i * 15 * 60000);
-                        options.push(d);
-                      }
-                      return options.map(d => (
-                        <button 
-                          key={`15m-${d.getTime()}`} 
-                          onClick={() => { setTargetExpiration(d); setShowTimePicker(false); }}
-                          className="w-full py-3.5 text-[#9ea0a5] hover:text-white text-[15px] font-medium transition-colors hover:bg-white/5 rounded-lg"
-                        >
-                          {d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
-                        </button>
-                      ));
-                   })()}
-                </div>
-                {/* Right Column: 1-minute intervals */}
-                <div className="flex flex-col py-2">
-                   {(() => {
-                      const options = [];
-                      let base = new Date(defaultExpiration.getTime());
-                      for(let i=0; i<5; i++) {
-                        const d = new Date(base.getTime() + i * 60000);
-                        options.push(d);
-                      }
-                      return options.map(d => (
-                        <button 
-                          key={`1m-${d.getTime()}`} 
-                          onClick={() => { setTargetExpiration(d); setShowTimePicker(false); }}
-                          className="w-full py-3.5 text-[#9ea0a5] hover:text-white text-[15px] font-medium transition-colors hover:bg-white/5 rounded-lg"
-                        >
-                          {d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
-                        </button>
-                      ));
-                   })()}
-                </div>
-              </div>
-           </div>
-        </div>
-      )}
-      {/* REGULATIONS MODAL */}
-      {showRegulations && (
-        <div className="fixed inset-0 z-[500] bg-[#131313] w-full h-full overflow-y-auto scrollbar-hide">
-          <div className="w-full min-h-screen text-white relative bg-gradient-to-b from-[#1a1a1a] to-[#131313]">
-            {/* Header */}
-            <div className="sticky top-0 bg-[#131313]/80 backdrop-blur-md border-b border-white/5 p-4 md:p-6 z-50 flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 rounded-xl bg-yellow-500/10 flex items-center justify-center border border-yellow-500/20">
-                  <Icons.ShieldCheck className="text-yellow-500" size={24} />
-                </div>
-                <div>
-                  <h2 className="text-xl md:text-2xl font-bold">Regulation</h2>
-                  <p className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold">Compliance & Security</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowRegulations(false)}
-                className="text-gray-400 hover:text-white transition-all bg-white/5 hover:bg-white/10 rounded-full p-2.5 focus:outline-none border border-white/5"
-              >
-                <Icons.X size={20} />
-              </button>
-            </div>
-            
-            <div className="max-w-4xl mx-auto px-6 py-12 space-y-20">
-              {/* Introduction Section */}
-              <div className="space-y-8 text-center md:text-left">
-                <div className="space-y-4">
-                  <h3 className="text-3xl md:text-5xl font-black tracking-tight leading-tight">
-                    {regulationsData?.title || "The Financial Commission"}
-                  </h3>
-                  <div className="h-1.5 w-20 bg-yellow-500 rounded-full mx-auto md:mx-0"></div>
-                </div>
-                
-                <div className="grid md:grid-cols-2 gap-10 items-start">
-                  <div className="space-y-6">
-                    {regulationsData?.introParas?.map((p: string, i: number) => (
-                      <p key={`intro-${i}`} className="text-gray-400 text-[16px] leading-relaxed font-medium">
-                        {p}
-                      </p>
-                    ))}
-                  </div>
-                  <div className="bg-[#1c1c1e] border border-white/5 rounded-3xl p-8 flex flex-col items-center justify-center text-center space-y-6 shadow-2xl">
-                    <div className="w-20 h-20 bg-yellow-500/10 rounded-2xl flex items-center justify-center border border-yellow-500/20">
-                      <Icons.Award size={40} className="text-yellow-500" />
-                    </div>
-                    <div className="space-y-2">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">Official Membership</p>
-                      <h4 className="text-xl font-bold">Category "A" Member</h4>
-                    </div>
-                    <button className="bg-yellow-500 hover:bg-yellow-400 text-black font-black py-4 px-10 rounded-2xl w-full shadow-[0_10px_20px_rgba(234,179,8,0.2)] transition-all transform hover:-translate-y-1">
-                      View Certificate
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Compensation Fund Bento Card */}
-              <div className="relative group">
-                <div className="absolute inset-0 bg-green-500/10 blur-[80px] rounded-full opacity-30 group-hover:opacity-50 transition-opacity"></div>
-                <div className="relative bg-[#1c1c1e] border border-white/5 rounded-[40px] p-8 md:p-12 overflow-hidden">
-                  <div className="grid md:grid-cols-[200px_1fr] gap-12 items-center">
-                    <div className="flex flex-col items-center justify-center">
-                      <div className="relative w-40 h-40">
-                         <div className="absolute inset-0 bg-green-500/20 rounded-full animate-pulse"></div>
-                         <div className="absolute inset-2 bg-[#131313] rounded-full border border-green-500/30 flex flex-col items-center justify-center z-10">
-                            <Icons.Building2 size={44} className="text-green-500 mb-1" />
-                            <span className="text-2xl font-black text-white">â‚¬20.000</span>
-                            <span className="text-[8px] font-black uppercase tracking-tighter text-green-500/80">Per Claim</span>
-                         </div>
-                      </div>
-                    </div>
-                    <div className="space-y-4">
-                      <h4 className="text-2xl md:text-3xl font-black">Compensation Fund</h4>
-                      <p className="text-gray-400 text-[15px] md:text-17px leading-relaxed font-medium">
-                        {regulationsData?.compensationFundText || "The Compensation Fund is a service included with membership, providing protection up to â‚¬20,000 per case."}
-                      </p>
-                      <div className="flex flex-wrap gap-3 pt-2">
-                         {["Independent Resolution", "Fast Processing", "Legal Protection"].map(tag => (
-                           <span key={tag} className="px-3 py-1 rounded-lg bg-green-500/5 border border-green-500/10 text-[10px] font-black text-green-500 uppercase tracking-widest">{tag}</span>
-                         ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* VMT Section */}
-              {regulationsData?.vmtSection && (
-                <div className="space-y-10">
-                  <div className="flex flex-col md:flex-row gap-6 items-center border-l-4 border-yellow-500 pl-8">
-                    <h3 className="text-2xl md:text-3xl font-black max-w-2xl leading-tight">
-                      {regulationsData.vmtSection.title}
-                    </h3>
-                  </div>
-                  <div className="grid md:grid-cols-2 gap-8">
-                    {regulationsData.vmtSection.paras?.map((p: string, i: number) => (
-                      <div key={`vmt-${i}`} className="bg-white/5 border border-white/5 p-8 rounded-3xl">
-                        <p className="text-gray-400 text-[15px] leading-relaxed font-medium">
-                          {p}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Commission Steps */}
-              <div className="space-y-12">
-                <div className="text-center space-y-4">
-                  <h4 className="text-3xl md:text-4xl font-black">The Commission Process</h4>
-                  <p className="text-gray-500 font-medium">How to resolve disputes effectively</p>
-                </div>
-                
-                <div className="grid md:grid-cols-3 gap-8 relative">
-                  {regulationsData?.appealSteps?.map((step: string, i: number) => (
-                    <div key={`step-${i}`} className="relative bg-[#1c1c1e] border border-white/5 rounded-3xl p-8 space-y-6 group hover:border-yellow-500/30 transition-all">
-                      <div className="w-12 h-12 rounded-2xl bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 flex items-center justify-center font-black text-xl">
-                        0{i + 1}
-                      </div>
-                      <p className="text-gray-400 text-[14px] leading-relaxed font-medium">
-                        {step}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-
-                {regulationsData?.appealNote && (
-                  <div className="flex items-center gap-4 bg-yellow-500/5 border border-yellow-500/10 rounded-2xl p-6">
-                    <Icons.Info className="text-yellow-500 flex-shrink-0" size={20} />
-                    <p className="text-yellow-500/80 font-bold text-[13px] italic leading-relaxed">
-                      {regulationsData.appealNote}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* Trader Benefits Grid */}
-              <div className="space-y-12 pt-10 border-t border-white/5">
-                <h4 className="text-3xl font-black text-center">Benefits for the Trader</h4>
-                <div className="grid md:grid-cols-3 gap-6">
-                  {regulationsData?.traderFeatures?.map((feature: any, i: number) => (
-                    <div key={`feat-${i}`} className="flex flex-col items-center text-center p-8 bg-white/5 border border-white/5 rounded-[32px] space-y-6 group hover:bg-white/10 transition-all">
-                      <div className="w-16 h-16 bg-yellow-500 rounded-2xl flex items-center justify-center text-black shadow-lg transform group-hover:rotate-6 transition-transform">
-                        {feature.icon === 'shield' ? <Icons.ShieldCheck size={32} /> : 
-                         feature.icon === 'scales' ? <Icons.Scale size={32} /> : 
-                         <Icons.FileText size={32} />}
-                      </div>
-                      <h5 className="text-[15px] font-bold text-gray-200 leading-snug">
-                        {feature.title}
-                      </h5>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Footer Note */}
-              <div className="py-20 text-center space-y-4">
-                <Icons.Building2 className="mx-auto text-gray-700" size={40} />
-                <p className="text-gray-600 text-xs font-bold uppercase tracking-[0.3em]">
-                  Bivaax Compliance Division
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* COPY TRADING HOW IT WORKS MODAL */}
-      {showCopyTradingHowItWorks && (
-        <div className="fixed inset-0 z-[600] bg-[#1C1C1E] flex flex-col">
-          <div className="sticky top-0 bg-[#1C1C1E] border-b border-[#2C2C2E] p-4 flex items-center justify-between z-10">
-            <h2 className="text-xl font-bold">How Copy Trading works</h2>
-            <button
-              onClick={() => setShowCopyTradingHowItWorks(false)}
-              className="p-2 bg-[#2C2C2E] rounded-full text-gray-400 hover:text-white"
-            >
-              <Icons.X size={20} />
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-6 space-y-8 bg-[#1C1C1E]">
-            <div className="space-y-4">
-              <div className="w-12 h-12 bg-[#FFE24C]/10 rounded-full flex items-center justify-center text-[#FFE24C]">
-                <Icons.Search size={24} />
-              </div>
-              <h3 className="text-lg font-bold">1. Choose a master trader</h3>
-              <p className="text-gray-400 text-sm leading-relaxed">
-                Browse through our list of expert traders. Look at their win rates, strategies, and performance history to find the one that matches your goals.
-              </p>
-            </div>
-
-            <div className="space-y-4">
-              <div className="w-12 h-12 bg-blue-500/10 rounded-full flex items-center justify-center text-blue-500">
-                <Icons.Settings size={24} />
-              </div>
-              <h3 className="text-lg font-bold">2. Set your budget</h3>
-              <p className="text-gray-400 text-sm leading-relaxed">
-                Decide how much of your balance you want to allocate to this trader. You can also set a maximum trade amount and trade limit for extra safety.
-              </p>
-            </div>
-
-            <div className="space-y-4">
-              <div className="w-12 h-12 bg-green-500/10 rounded-full flex items-center justify-center text-green-500">
-                <Icons.RefreshCw size={24} />
-              </div>
-              <h3 className="text-lg font-bold">3. Automatic synchronization</h3>
-              <p className="text-gray-400 text-sm leading-relaxed">
-                Once you start copying, every trade the master trader makes will be automatically copied to your account in real-time, proportional to your allocated budget.
-              </p>
-            </div>
-
-            <div className="space-y-4">
-              <div className="w-12 h-12 bg-purple-500/10 rounded-full flex items-center justify-center text-purple-500">
-                <Icons.Wallet size={24} />
-              </div>
-              <h3 className="text-lg font-bold">4. Track and grow</h3>
-              <p className="text-gray-400 text-sm leading-relaxed">
-                Monitor your earnings in the "My card" tab. You can stop copying at any time, and your remaining allocated funds plus profits will be returned to your main wallet.
-              </p>
-            </div>
-
-            <div className="mt-8 pt-6 border-t border-white/5 pb-10">
-              <button
-                onClick={() => setShowCopyTradingHowItWorks(false)}
-                className="w-full py-4 bg-[#FFE24C] text-black font-bold rounded-xl"
-              >
-                Got it!
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ABOUT US MODAL */}
-      {showAboutUs && (
-        <div className="fixed inset-0 z-[500] bg-[#1C1C1E] w-full h-full overflow-y-auto">
-          <div className="w-full h-full text-white relative">
-            <div className="sticky top-0 bg-[#1C1C1E] border-b border-[#2C2C2E] p-6 z-10 flex items-center justify-between">
-              <h2 className="text-3xl font-black w-full text-center">About us</h2>
-              <button
-                onClick={() => setShowAboutUs(false)}
-                className="absolute right-4 text-gray-400 hover:text-white transition-colors bg-[#2C2C2E] rounded-full p-2 focus:outline-none"
-              >
-                <Icons.X size={24} />
-              </button>
-            </div>
-            
-            <div className="max-w-3xl mx-auto p-8 md:p-12 space-y-10">
-              {/* Title & Paragraphs */}
-              <div className="space-y-6">
-                {aboutUsData?.title && (
-                  <h3 className="text-xl md:text-2xl font-bold leading-relaxed">{aboutUsData?.title}</h3>
-                )}
-                {aboutUsData?.paragraphs && aboutUsData?.paragraphs?.map((p: string, i: number) => (
-                  <p key={`para-${i}`} className="text-gray-400 text-[15px] md:text-[17px] leading-relaxed">
-                    {p}
-                  </p>
-                ))}
-              </div>
-
-              {/* Advantages List */}
-              {aboutUsData?.advantages && aboutUsData?.advantages.length > 0 && (
-                <div className="space-y-6 pt-6 border-t border-white/5">
-                  <h3 className="text-2xl font-bold mb-8">Our advantage:</h3>
-                  <div className="space-y-6">
-                    {aboutUsData?.advantages.map((adv: string, i: number) => (
-                      <div key={`adv-${i}`} className="flex items-start gap-4">
-                        <div className="flex-shrink-0 mt-1">
-                          <div className="w-8 h-8 rounded-full border-2 border-yellow-500 flex items-center justify-center text-yellow-500">
-                            <Icons.Check size={18} strokeWidth={3} />
-                          </div>
-                        </div>
-                        <p className="text-gray-300 text-lg leading-relaxed pt-1.5">{adv}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Credit Cards Accepted */}
-              <div className="pt-10 pb-4 text-center space-y-6">
-                <h4 className="text-xl font-bold">Credit Cards accepted</h4>
-                <div className="flex items-center justify-center gap-6">
-                  {/* Master Card Icon */}
-                  <svg width="48" height="32" viewBox="0 0 36 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <rect width="36" height="24" rx="4" fill="#1C1C1E"/>
-                    <circle cx="12" cy="12" r="7.5" fill="#EB001B"/>
-                    <circle cx="24" cy="12" r="7.5" fill="#F79E1B"/>
-                    <path d="M18 17.5C16.8 16 16 14.1 16 12C16 9.9 16.8 8 18 6.5C19.2 8 20 9.9 20 12C20 14.1 19.2 16 18 17.5Z" fill="#FF5F00"/>
-                  </svg>
-                  {/* Visa Icon */}
-                  <svg width="64" height="32" viewBox="0 0 48 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M19.1 15.6L22.5 0.500002H27.5L24 15.6H19.1ZM35.3 11C35.3 7 41.2 6.7 41.2 4.7C41.2 4.1 40.7 3.4 39 3.2C38 3 35.5 3.5 34 4.3L33.3 0.800001C34.7 0.200001 37.1 0 39.4 0C44.7 0 48.3 2.5 48.3 7C48.3 11.2 42.4 11.6 42.4 13.6C42.4 14.3 43.1 15 44.8 15.1C46 15.2 47.3 14.8 48.6 14.1L47.9 17.8C46.6 18.4 44.4 18.7 42.5 18.7C37.3 18.7 35.3 15.8 35.3 11ZM12.7 15.6H8.20001L5.30001 4.2C5.00001 3.2 4.80001 2.8 4.00001 2.3C2.80001 1.7 1.20001 1.2 0 0.900002L0.100006 0.500002H6.90001C8.20001 0.500002 9.20001 1.3 9.50001 2.6L11.3 10.7L16.2 0.500002H21.2L12.7 15.6ZM28.9 15.6H33.5L36.2 0.500002H31.6L28.9 15.6Z" fill="#1434CB"/>
-                  </svg>
-                  {/* JCB Icon */}
-                  <div className="font-bold text-blue-500 text-2xl italic tracking-tighter">JCB</div>
-                </div>
-              </div>
-
-              {/* Contacts */}
-              {aboutUsData?.contacts && (
-                <div className="pt-10 border-t border-white/5 space-y-10 pb-8">
-                  <h3 className="text-3xl font-bold text-center">Contacts</h3>
-                  
-                  <div className="space-y-6 max-w-xl mx-auto">
-                    <div className="flex items-start gap-4">
-                      <div className="flex-shrink-0">
-                        <div className="w-12 h-12 bg-yellow-500 rounded-full flex items-center justify-center text-black">
-                          <Icons.Home size={22} strokeWidth={2.5} />
-                        </div>
-                      </div>
-                      <div>
-                        <h4 className="text-xl font-bold">{aboutUsData?.contacts?.companyName}</h4>
-                        <p className="text-gray-400 mt-1">{aboutUsData?.contacts?.address}</p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-4">
-                      <div className="flex-shrink-0">
-                        <div className="w-12 h-12 bg-yellow-500 rounded-full flex items-center justify-center text-black">
-                          <Icons.Mail size={22} strokeWidth={2.5} />
-                        </div>
-                      </div>
-                      <h4 className="text-xl font-bold">{aboutUsData?.contacts?.email}</h4>
-                    </div>
-                  </div>
-                  
-                  <div className="flex justify-center gap-4 pt-4">
-                    <div className="w-12 h-12 bg-[#2C2C2E] rounded-full flex items-center justify-center text-white hover:bg-white hover:text-black cursor-pointer transition-colors">
-                      <Icons.Youtube size={20} />
-                    </div>
-                    <div className="w-12 h-12 bg-[#2C2C2E] rounded-full flex items-center justify-center text-white hover:bg-white hover:text-black cursor-pointer transition-colors">
-                      <Icons.Instagram size={20} />
-                    </div>
-                    <div className="w-12 h-12 bg-[#2C2C2E] rounded-full flex items-center justify-center text-white hover:bg-white hover:text-black cursor-pointer transition-colors">
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69.01-.03.01-.14-.07-.19-.08-.05-.19-.02-.27 0-.11.03-1.9 1.2-5.36 3.51-.51.35-.97.53-1.39.52-.46-.01-1.34-.26-2-.48-.81-.27-1.46-.42-1.4-.88.03-.24.36-.49 1-.76 3.91-1.7 6.52-2.79 7.84-3.34 3.73-1.55 4.51-1.81 5.01-1.82.11 0 .36.03.49.14.11.09.14.22.15.31-.01.07-.01.2-.01.25z"/></svg>
-                    </div>
-                    <div className="w-12 h-12 bg-[#2C2C2E] rounded-full flex items-center justify-center text-white hover:bg-white hover:text-black cursor-pointer transition-colors">
-                      <Icons.Facebook size={20} />
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-      {/* STATUSES VIEW */}
-      {activeTab === "statuses" && (
-        <div className="fixed inset-0 z-[600] flex flex-col bg-[#fafafa] text-gray-900 overflow-y-auto pb-safe">
-          {/* Header */}
-          <div className="h-16 flex items-center justify-between px-4 md:px-8 border-b border-gray-200 shrink-0 sticky top-0 bg-white/90 backdrop-blur-md z-[210]">
-             <div className="flex items-center">
-                 <button 
-                    onClick={() => setActiveTab("trade")} 
-                    className="p-2 -ml-2 text-gray-500 hover:text-black transition-all active:scale-95 flex items-center gap-2"
-                 >
-                    <ArrowLeft size={24} />
-                 </button>
-             </div>
-             
-             <div className="flex items-center gap-4">
-               <div className="flex flex-col items-end hidden md:flex">
-                  <span className="text-xs text-gray-500 font-medium tracking-wide uppercase">Demo account</span>
-                  <span className="text-base font-black text-black leading-none">{formatWithCurrency(demoBalance, userCurrency)}</span>
-               </div>
-               <button onClick={() => setActiveTab("trade")} className="bg-[#fcd535] hover:bg-[#ebd04f] text-black px-6 py-2 rounded-lg font-bold transition-all text-sm uppercase tracking-wide ml-2 md:ml-0">
-                 Trading
-               </button>
-             </div>
-          </div>
-
-          {/* Main Content */}
-          <div className="flex-1 flex flex-col items-center py-6 md:py-12 px-4 md:px-6">
-             <div className="max-w-[1400px] w-full">
-                <h2 className="text-[32px] md:text-[42px] font-black tracking-tight mb-2 text-black leading-none text-center md:text-left">Statuses</h2>
-                <p className="text-gray-500 text-sm md:text-base font-medium mb-8 text-center md:text-left">More trading advantages and benefits with each status. Check in cards below</p>
-                
-                <div className="flex flex-col xl:flex-row items-stretch gap-4 md:gap-6 pb-10 xl:overflow-visible">
-                  {/* FREE CARD */}
-                  <div className="w-full xl:w-1/5 bg-white rounded-2xl flex flex-col shadow-sm border border-gray-200 relative overflow-hidden">
-                    <div className="absolute -top-4 -right-4 opacity-5">
-                       <Diamond size={100} fill="currentColor" className="text-gray-400" />
-                    </div>
-                    <div className="p-5 md:p-6 relative z-10 flex flex-col h-full">
-                       <h3 className="text-xl font-bold mb-4">Free</h3>
-                       <div className={`${activeUserStatus === 'Free' ? 'bg-[#00c980] text-white' : 'bg-gray-100 text-gray-500'} text-[10px] font-bold px-3 py-1.5 rounded inline-flex items-center uppercase tracking-wider mb-6 self-start`}>
-                         <Icons.Check size={12} className="mr-1" strokeWidth={3} /> {activeUserStatus === 'Free' ? 'Your status' : 'Unlocked'}
-                       </div>
-
-                       <div className="space-y-3 mb-6">
-                         <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-center h-20">
-                           <div className="font-black text-xl flex items-center justify-between">
-                              <span>30 trades</span>
-                              <Icons.Info size={16} className="text-gray-300" />
-                           </div>
-                           <div className="text-xs text-gray-500 mt-0.5">on demo account</div>
-                         </div>
-                         <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center justify-between h-20">
-                            <div>
-                               <div className="font-black text-xl flex items-center gap-2">
-                                 <LayoutGrid size={18} strokeWidth={2.5} /> 100+
-                               </div>
-                               <div className="text-xs text-gray-500 mt-0.5">assets</div>
-                            </div>
-                            <Icons.Info size={16} className="text-gray-300 self-start" />
-                         </div>
-                       </div>
-
-                       <div className="space-y-3 text-sm border-b border-gray-200 pb-4 mb-4">
-                         <div className="flex justify-between items-center"><span className="text-gray-600">Withdrawals</span><span className="font-bold text-gray-400">â€”</span></div>
-                         <div className="flex justify-between items-center"><span className="text-gray-600 border-b border-gray-300 border-dashed cursor-help leading-tight">Invite Friends</span><span className="font-bold text-gray-400">â€”</span></div>
-                         <div className="flex justify-between items-center"><span className="text-gray-600">Deposit bonuses</span><span className="font-bold text-gray-400">â€”</span></div>
-                       </div>
-
-                       <div className="space-y-3 text-[13px] text-gray-400 font-medium">
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Advanced payments if your deposit takes too long to process</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Risk-free trades to protect your investments from losses</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Free access to VIP tournaments</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Personal manager</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Insurance for your deposits if your balance reaches 0</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Multi-window trading</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Trading signals</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Crypto calendar</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">VIP mobile app</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Monthly Cashback Plus of 5% for unsuccessful trades</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">High priority support</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Deposit insurance</span></div>
-                       </div>
-                    </div>
-                  </div>
-
-                  {/* STANDARD CARD */}
-                  <div className="w-full xl:w-1/5 bg-white rounded-2xl flex flex-col shadow-sm border border-t-[4px] border-t-[#00c980] border-gray-200 relative overflow-hidden">
-                    <div className="absolute -top-4 -right-4 opacity-5">
-                       <Diamond size={100} fill="currentColor" className="text-[#00c980]" />
-                    </div>
-                    <div className="p-5 md:p-6 relative z-10 flex flex-col h-full">
-                       <h3 className="text-xl font-bold mb-4">Standard</h3>
-                       <div className={`${activeUserStatus === 'Standard' ? 'bg-[#00c980] text-white' : (completedDepositsBdt >= 1000 ? 'bg-gray-100 text-gray-500' : 'bg-gray-100 text-gray-400')} text-[10px] font-bold px-3 py-1.5 rounded inline-flex items-center uppercase tracking-wider mb-6 self-start`}>
-                         <Icons.Check size={12} className="mr-1" strokeWidth={3} /> {activeUserStatus === 'Standard' ? 'Your status' : (completedDepositsBdt >= 1000 ? 'Unlocked' : 'Locked')}
-                       </div>
-
-                       <div className="space-y-3 mb-6">
-                         <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-center h-20">
-                           <div className="text-gray-400 text-xs mb-0.5 font-medium"><Icons.ChevronUp size={14} className="inline text-gray-300" strokeWidth={3} /> profitability</div>
-                           <div className="font-black text-xl flex items-center justify-between">
-                             <span>up to 85%</span>
-                             <Icons.Info size={16} className="text-gray-300" />
-                           </div>
-                         </div>
-                         <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center justify-between h-20">
-                            <div>
-                               <div className="font-black text-xl flex items-center gap-2">
-                                 <LayoutGrid size={18} strokeWidth={2.5} /> 120+
-                               </div>
-                               <div className="text-xs text-gray-500 mt-0.5">assets</div>
-                            </div>
-                            <Icons.Info size={16} className="text-gray-300 self-start" />
-                         </div>
-                       </div>
-
-                       <div className="space-y-3 text-sm border-b border-gray-200 pb-4 mb-4">
-                         <div className="flex justify-between items-center"><span className="text-gray-600">Withdrawals</span><span className="font-bold text-gray-900">3 days</span></div>
-                         <div className="flex justify-between items-center"><span className="text-gray-600 border-b border-gray-300 border-dashed cursor-help leading-tight">Invite Friends</span><span className="font-bold text-gray-900">up to $50</span></div>
-                         <div className="flex justify-between items-center"><span className="text-gray-600">Deposit bonuses</span><span className="font-bold text-gray-900">up to 100%</span></div>
-                       </div>
-
-                       <div className="space-y-3 text-[13px] text-gray-400 font-medium">
-                         <div className="flex items-start gap-2 text-gray-700 font-semibold"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3} /> <span>Advanced payments if your deposit takes too long to process</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Risk-free trades to protect your investments from losses</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Free access to VIP tournaments</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Personal manager</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Insurance for your deposits if your balance reaches 0</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Multi-window trading</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Trading signals</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Crypto calendar</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">VIP mobile app</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Monthly Cashback Plus of 5% for unsuccessful trades</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">High priority support</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Deposit insurance</span></div>
-                       </div>
-                    </div>
-                  </div>
-
-                  {/* GOLD CARD */}
-                  <div className="w-full xl:w-1/5 bg-white rounded-2xl flex flex-col shadow-md border border-yellow-300 relative overflow-hidden">
-                    <div className="absolute -top-4 -right-4 opacity-20">
-                       <Diamond size={100} fill="currentColor" className="text-yellow-400" />
-                    </div>
-                    <div className="p-5 md:p-6 relative z-10 flex flex-col h-full">
-                       <h3 className="text-xl font-bold mb-4">Gold</h3>
-                       
-                       <div className="mb-6 w-full px-1">
-                          <div className="text-[12px] font-bold mb-2 flex justify-between">
-                            <span className="text-gray-900">{formatWithCurrency(convertToBase(4250, 'BDT'), userCurrency)}</span> <span className="text-gray-400">/ {formatWithCurrency(convertToBase(42000, 'BDT'), userCurrency)}</span>
-                          </div>
-                          <div className="h-1.5 bg-gray-100 rounded-full w-full overflow-hidden">
-                             <div className="h-full bg-yellow-400 w-[10%] rounded-full"></div>
-                          </div>
-                       </div>
-
-                       <div className="space-y-3 mb-6">
-                         <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-center h-20">
-                           <div className="text-gray-400 text-xs mb-0.5 font-medium"><Icons.ChevronUp size={14} className="inline text-gray-300" strokeWidth={3} /> profitability</div>
-                           <div className="font-black text-xl flex items-center justify-between">
-                             <span>up to 90%</span>
-                             <Icons.Info size={16} className="text-gray-300" />
-                           </div>
-                         </div>
-                         <div className="flex gap-3">
-                           <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-center h-20 flex-1 relative">
-                              <div className="font-black text-xl flex items-center gap-1.5">
-                                <LayoutGrid size={16} strokeWidth={2.5}/> 130+
-                              </div>
-                              <div className="text-xs text-gray-500 mt-0.5">assets</div>
-                              <Icons.Info size={14} className="absolute top-2 right-2 text-gray-300 hidden xl:block" />
-                           </div>
-                           <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-center h-20 flex-1 relative">
-                              <div className="font-black text-xl flex items-center gap-1.5">
-                                <Icons.RefreshCcw size={16} strokeWidth={3} className="text-gray-800" /> 5%
-                              </div>
-                              <div className="text-xs text-gray-500 mt-0.5">cashback</div>
-                              <Icons.Info size={14} className="absolute top-2 right-2 text-gray-300 hidden xl:block" />
-                           </div>
-                         </div>
-                       </div>
-
-                       <div className="space-y-3 text-sm border-b border-gray-200 pb-4 mb-4">
-                         <div className="flex justify-between items-center"><span className="text-gray-600">Withdrawals</span><span className="font-bold text-gray-900">24 hours</span></div>
-                         <div className="flex justify-between items-center"><span className="text-gray-600 border-b border-gray-300 border-dashed cursor-help leading-tight">Invite Friends</span><span className="font-bold text-gray-900">up to $50</span></div>
-                         <div className="flex justify-between items-center"><span className="text-gray-600">Deposit bonuses</span><span className="font-bold text-gray-900">up to 150%</span></div>
-                       </div>
-
-                       <div className="space-y-3 text-[13px] text-gray-400 font-medium mb-6">
-                         <div className="flex items-start gap-2 text-gray-700 font-semibold"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3} /> <span>Advanced payments if your deposit takes too long to process</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Risk-free trades to protect your investments from losses</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Free access to VIP tournaments</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Personal manager</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Insurance for your deposits if your balance reaches 0</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Multi-window trading</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Trading signals</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Crypto calendar</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">VIP mobile app</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Monthly Cashback Plus of 5% for unsuccessful trades</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">High priority support</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-gray-300" /> <span className="opacity-80">Deposit insurance</span></div>
-                       </div>
-                       
-                       <div className="mt-auto pt-4">
-                         <button 
-                           onClick={() => {
-                             setActiveTab('cashier');
-                             toast.success('Redirecting to cashier deposit to upgrade status!');
-                           }}
-                           className="w-full bg-[#fcd535] hover:bg-[#ebd04f] text-black font-bold py-3.5 rounded-xl transition-all shadow-[0_4px_10px_rgba(252,213,53,0.3)] active:scale-[0.98]"
-                         >
-                           Upgrade
-                         </button>
-                       </div>
-                    </div>
-                  </div>
-
-                  {/* VIP CARD */}
-                  <div className="w-full xl:w-1/5 bg-[#0066ff] bg-gradient-to-br from-[#0066ff] to-[#004dc2] rounded-2xl flex flex-col shadow-2xl relative overflow-hidden transform xl:-translate-y-4 xl:scale-105 z-20 border border-[#4092ff]/30">
-                    <div className="bg-[#111] text-[10px] font-black text-white px-5 py-2.5 uppercase tracking-widest flex justify-between items-center rounded-t-2xl">
-                      <span>MOST POPULAR</span>
-                      <div className="w-3.5 h-3.5 bg-blue-400 rotate-45 transform"></div>
-                    </div>
-                    <div className="absolute top-12 -right-8 opacity-20">
-                       <Diamond size={130} fill="currentColor" className="text-black" />
-                    </div>
-                    <div className="p-5 md:p-6 relative z-10 flex flex-col h-full text-white">
-                       <h3 className="text-[26px] font-black mb-4 flex items-center justify-between">VIP <Icons.Info size={18} className="text-white/40" /></h3>
-                       
-                       <div className="mb-6 w-full px-1">
-                          <div className="text-[12px] font-bold mb-2 flex justify-between">
-                            <span className="text-white">{formatWithCurrency(convertToBase(4250, 'BDT'), userCurrency)}</span> <span className="text-white/50">/ {formatWithCurrency(convertToBase(85000, 'BDT'), userCurrency)}</span>
-                          </div>
-                          <div className="h-1.5 bg-black/20 rounded-full w-full overflow-hidden">
-                             <div className="h-full bg-white w-[5%] rounded-full shadow-[0_0_10px_white]"></div>
-                          </div>
-                       </div>
-
-                       <div className="text-[10px] font-black tracking-widest text-white/50 uppercase mb-4 border-b border-white/10 pb-2">Top Features</div>
-                       
-                       <div className="space-y-4 mb-6 relative z-20">
-                          <div className="flex gap-3">
-                             <div className="mt-0.5"><Icons.Clock size={16} strokeWidth={2.5} className="text-white" /></div>
-                             <div>
-                               <div className="font-bold text-[14px]">Fast withdraw</div>
-                               <div className="text-white/70 text-xs mt-0.5 leading-tight">Get your funds in 4 hours or less</div>
-                             </div>
-                          </div>
-                          <div className="flex gap-3">
-                             <div className="mt-0.5"><Icons.ShieldCheck size={16} strokeWidth={2.5} className="text-white" /></div>
-                             <div>
-                               <div className="font-bold text-[14px]">Risk-free trades</div>
-                               <div className="text-white/70 text-xs mt-0.5 leading-tight">Profit from successful trades and forget the unsuccessful.</div>
-                             </div>
-                          </div>
-                       </div>
-
-                       <div className="space-y-3 mb-6">
-                         <div className="bg-black/10 p-4 rounded-xl border border-white/10 backdrop-blur-sm flex flex-col justify-center h-20">
-                           <div className="text-white/60 text-xs mb-0.5 font-medium"><Icons.ChevronUp size={14} className="inline text-white/40" strokeWidth={3} /> profitability</div>
-                           <div className="font-black text-xl flex items-center justify-between">
-                             <span>up to 90%</span>
-                           </div>
-                         </div>
-                         <div className="flex gap-3">
-                           <div className="bg-black/10 p-4 rounded-xl border border-white/10 flex-col justify-center h-20 flex-1 relative backdrop-blur-sm">
-                              <div className="font-black text-xl flex items-center gap-1.5">
-                                <LayoutGrid size={16} strokeWidth={2.5}/> 140+
-                              </div>
-                              <div className="text-xs text-white/60 mt-0.5">assets</div>
-                              <Icons.Info size={14} className="absolute top-2 right-2 text-white/40 hidden xl:block" />
-                           </div>
-                           <div className="bg-black/10 p-4 rounded-xl border border-white/10 flex-col justify-center h-20 flex-1 relative backdrop-blur-sm">
-                              <div className="font-black text-xl flex items-center gap-1.5">
-                                <Icons.RefreshCcw size={16} strokeWidth={3} className="text-white" /> 10%
-                              </div>
-                              <div className="text-xs text-white/60 mt-0.5">cashback</div>
-                              <Icons.Info size={14} className="absolute top-2 right-2 text-white/40 hidden xl:block" />
-                           </div>
-                         </div>
-                       </div>
-
-                       <div className="space-y-3 text-sm border-b border-white/10 pb-4 mb-4">
-                         <div className="flex justify-between items-center"><span className="text-white/80">Withdrawals</span><span className="font-bold text-white">4 hours</span></div>
-                         <div className="flex justify-between items-center"><span className="text-white/80 border-b border-white/30 border-dashed cursor-help leading-tight">Invite Friends</span><span className="font-bold text-white">up to $850</span></div>
-                         <div className="flex justify-between items-center"><span className="text-white/80">Deposit bonuses</span><span className="font-bold text-white">up to 200%</span></div>
-                       </div>
-
-                       <div className="space-y-3 text-[13px] text-white/90 font-medium mb-6">
-                         <div className="flex items-start gap-2"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3}/> <span>Advanced payments if your deposit takes too long to process</span></div>
-                         <div className="flex items-start gap-2"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3}/> <span>Risk-free trades to protect your investments from losses</span></div>
-                         <div className="flex items-start gap-2"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3}/> <span>Free access to VIP tournaments</span></div>
-                         <div className="flex items-start gap-2"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3}/> <span>Personal manager</span></div>
-                         <div className="flex items-start gap-2"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3}/> <span>Insurance for your deposits if your balance reaches 0</span></div>
-                         <div className="flex items-start gap-2"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3}/> <span>Multi-window trading</span></div>
-                         <div className="flex items-start gap-2"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3}/> <span>Trading signals</span></div>
-                         <div className="flex items-start gap-2"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3}/> <span>Crypto calendar</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-white/40" /> <span className="opacity-60 line-through">VIP mobile app</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-white/40" /> <span className="opacity-60 line-through">Monthly Cashback Plus of 5% for unsuccessful trades</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-white/40" /> <span className="opacity-60 line-through">High priority support</span></div>
-                         <div className="flex items-start gap-2"><X size={16} className="shrink-0 mt-0.5 text-white/40" /> <span className="opacity-60 line-through">Deposit insurance</span></div>
-                       </div>
-                       
-                       <div className="mt-auto pt-4 relative z-20">
-                         <button className="w-full bg-[#fcd535] hover:bg-[#ebd04f] text-black font-bold py-4 rounded-xl transition-all shadow-[0_8px_20px_rgba(0,0,0,0.3)] active:scale-[0.98] text-[15px]">
-                           Upgrade
-                         </button>
-                       </div>
-                    </div>
-                  </div>
-
-                  {/* PRESTIGE CARD */}
-                  <div className="w-full xl:w-1/5 bg-[#6b21a8] bg-gradient-to-b from-[#7e22ce] to-[#581c87] rounded-2xl flex flex-col shadow-xl relative overflow-hidden border border-[#9333ea]/50">
-                    <div className="absolute -top-4 -right-4 opacity-50 blur-[1px]">
-                       <Diamond size={130} fill="currentColor" className="text-[#a855f7]" />
-                    </div>
-                    <div className="p-5 md:p-6 relative z-10 flex flex-col h-full text-white">
-                       <h3 className="text-[26px] font-black mb-4 flex items-center justify-between">Prestige <Icons.Info size={18} className="text-purple-300" /></h3>
-                       
-                       <div className="mb-6 w-full px-1">
-                          <div className="text-[12px] font-bold mb-2 flex justify-between">
-                            <span className="text-white">{formatWithCurrency(convertToBase(4250, 'BDT'), userCurrency)}</span> <span className="text-purple-200/60">/ {formatWithCurrency(convertToBase(360000, 'BDT'), userCurrency)}</span>
-                          </div>
-                          <div className="h-1.5 bg-purple-950/50 rounded-full w-full overflow-hidden">
-                             <div className="h-full bg-purple-300 w-[2%] rounded-full shadow-[0_0_10px_#d8b4fe]"></div>
-                          </div>
-                       </div>
-
-                       <div className="text-[10px] font-black tracking-widest text-purple-300 uppercase mb-4 border-b border-purple-800 pb-2">Top Features</div>
-                       
-                       <div className="space-y-4 mb-6 relative z-20">
-                          <div className="flex gap-3">
-                             <div className="mt-0.5"><Icons.Plus size={16} strokeWidth={3} className="text-white" /></div>
-                             <div>
-                               <div className="font-bold text-[14px]">Cashback Plus</div>
-                               <div className="text-purple-200 text-xs mt-0.5 leading-tight">Additional 5% compensation for unsuccessful trades every month</div>
-                             </div>
-                          </div>
-                          <div className="flex gap-3">
-                             <div className="mt-0.5"><Icons.ShieldCheck size={16} strokeWidth={2.5} className="text-white" /></div>
-                             <div>
-                               <div className="font-bold text-[14px]">Deposit insurance</div>
-                               <div className="text-purple-200 text-xs mt-0.5 leading-tight">Use your money with more certainty. Increased deposit insurance can help</div>
-                             </div>
-                          </div>
-                       </div>
-
-                       <div className="space-y-3 mb-6">
-                         <div className="bg-black/15 p-4 rounded-xl border border-white/10 backdrop-blur-sm flex flex-col justify-center h-20">
-                           <div className="text-white/60 text-xs mb-0.5 font-medium"><Icons.ChevronUp size={14} className="inline text-white/40" strokeWidth={3} /> profitability</div>
-                           <div className="font-black text-xl flex items-center justify-between">
-                             <span>up to 90%</span>
-                           </div>
-                         </div>
-                         <div className="flex gap-3">
-                           <div className="bg-black/15 p-4 rounded-xl border border-white/10 flex-col justify-center h-20 flex-1 relative backdrop-blur-sm">
-                              <div className="font-black text-xl flex items-center gap-1.5">
-                                <LayoutGrid size={16} strokeWidth={2.5}/> 140+
-                              </div>
-                              <div className="text-xs text-white/60 mt-0.5">assets</div>
-                           </div>
-                           <div className="bg-black/15 p-4 rounded-xl border border-white/10 flex-col justify-center h-20 flex-1 relative backdrop-blur-sm">
-                              <div className="font-black text-xl flex items-center gap-1.5">
-                                <Icons.RefreshCcw size={16} strokeWidth={3} className="text-white" /> 10%
-                              </div>
-                              <div className="text-xs text-white/60 mt-0.5">cashback</div>
-                           </div>
-                         </div>
-                       </div>
-
-                       <div className="space-y-3 text-sm border-b border-purple-800 pb-4 mb-4">
-                         <div className="flex justify-between items-center"><span className="text-white/80">Withdrawals</span><span className="font-bold text-white">4 hours</span></div>
-                         <div className="flex justify-between items-center"><span className="text-white/80 border-b border-white/30 border-dashed cursor-help leading-tight">Invite Friends</span><span className="font-bold text-white">up to $850</span></div>
-                         <div className="flex justify-between items-center"><span className="text-white/80">Deposit bonuses</span><span className="font-bold text-white">up to 300%</span></div>
-                       </div>
-
-                       <div className="space-y-3 text-[13px] text-white/90 font-medium mb-6">
-                         <div className="flex items-start gap-2"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3}/> <span>Advanced payments if your deposit takes too long to process</span></div>
-                         <div className="flex items-start gap-2"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3}/> <span>Risk-free trades to protect your investments from losses</span></div>
-                         <div className="flex items-start gap-2"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3}/> <span>Free access to VIP tournaments</span></div>
-                         <div className="flex items-start gap-2"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3}/> <span>Personal manager</span></div>
-                         <div className="flex items-start gap-2"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3}/> <span>Insurance for your deposits if your balance reaches 0</span></div>
-                         <div className="flex items-start gap-2"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3}/> <span>Multi-window trading</span></div>
-                         <div className="flex items-start gap-2"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3}/> <span>Trading signals</span></div>
-                         <div className="flex items-start gap-2"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3}/> <span>Crypto calendar</span></div>
-                         <div className="flex items-start gap-2"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3}/> <span>VIP mobile app</span></div>
-                         <div className="flex items-start gap-2"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3}/> <span>Monthly Cashback Plus of 5% for unsuccessful trades</span></div>
-                         <div className="flex items-start gap-2"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3}/> <span>High priority support</span></div>
-                         <div className="flex items-start gap-2"><Icons.Check size={16} className="shrink-0 mt-0.5 text-[#00c980]" strokeWidth={3}/> <span>Deposit insurance</span></div>
-                       </div>
-                       
-                       <div className="mt-auto pt-4 relative z-20">
-                         <button className="w-full bg-[#fcd535] hover:bg-[#ebd04f] text-black font-bold py-4 rounded-xl transition-all shadow-[0_8px_20px_rgba(0,0,0,0.3)] active:scale-[0.98] text-[15px]">
-                           Upgrade
-                         </button>
-                       </div>
-                    </div>
-                  </div>
-
-                </div>
-             </div>
-          </div>
-        </div>
-      )}
-
-      <TimeZoneModal 
-        isOpen={showTimeZoneModal}
-        onClose={() => setShowTimeZoneModal(false)}
-        selectedTimeZone={timeZone}
-        onSelect={async (newTz) => {
-          setTimeZone(newTz);
-          if (currentUser) {
-            try {
-              await updateDoc(doc(db, "users", currentUser.uid), {
-                timeZone: newTz
-              });
-              toast.success(`Time zone updated to ${newTz.replace(/_/g, ' ')}`);
-            } catch (err) {
-              console.error("Failed to update timezone:", err);
-            }
-          }
-        }}
-      />
-
-      <AnimatePresence>
-        {showPromoAdModal && appConfig?.loginPromoAd_enabled && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 overflow-hidden"
-          >
-            <motion.div 
-              initial={{ scale: 0.95, y: 20, opacity: 0 }}
-              animate={{ scale: 1, y: 0, opacity: 1 }}
-              exit={{ scale: 0.95, y: 20, opacity: 0 }}
-              className="relative w-full max-w-[440px] rounded-[32px] overflow-hidden flex flex-col shadow-2xl"
-              style={{ backgroundColor: appConfig?.loginPromoAd_bgColor || '#cd6f23' }}
-            >
-              {/* Close Button */}
-              <button 
-                onClick={() => setShowPromoAdModal(false)}
-                className="absolute top-4 right-4 z-10 w-8 h-8 rounded-full bg-black/40 text-white flex items-center justify-center hover:bg-black/60 transition-colors backdrop-blur-md"
-              >
-                <Icons.X size={16} strokeWidth={2.5} />
-              </button>
-
-              {/* Image Area */}
-              {appConfig?.loginPromoAd_imageUrl && (
-                <div className="w-full aspect-[4/3] bg-[#1a1a24] relative">
-                  <img 
-                    src={appConfig.loginPromoAd_imageUrl} 
-                    alt="Promo" 
-                    className="w-full h-full object-cover"
-                   loading="lazy" />
-                </div>
-              )}
-
-              {/* Content Area */}
-              <div className="p-8 pt-6 flex flex-col items-start text-white">
-                {appConfig?.loginPromoAd_title && (
-                   <h2 className="text-[28px] font-bold leading-tight mb-4">{appConfig.loginPromoAd_title}</h2>
-                )}
-                {appConfig?.loginPromoAd_description && (
-                   <p className="text-[15px] opacity-90 leading-relaxed mb-8">{appConfig.loginPromoAd_description}</p>
-                )}
-                
-                {appConfig?.loginPromoAd_buttonText && (
-                   <button 
-                      onClick={() => {
-                          if (appConfig.loginPromoAd_buttonUrl) {
-                              window.open(appConfig.loginPromoAd_buttonUrl, '_blank');
-                          }
-                          setShowPromoAdModal(false);
-                      }}
-                      className="w-full bg-[#fcd535] hover:bg-[#ebd04f] text-black font-bold py-4 rounded-xl text-[16px] transition-all shadow-lg active:scale-[0.98]"
-                   >
-                     {appConfig.loginPromoAd_buttonText}
-                   </button>
-                )}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {showHallOfFameModal && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[9999] bg-black/90 backdrop-blur-md overflow-y-auto"
-          >
-            <div className="min-h-screen relative flex flex-col items-center py-12 px-4 pb-24">
-              <button 
-                onClick={() => setShowHallOfFameModal(false)}
-                className="absolute top-6 right-6 z-10 w-10 h-10 bg-white/5 rounded-full flex items-center justify-center hover:bg-white/10 transition-colors"
-                >
-                  <Icons.X size={24} className="text-white" />
-              </button>
-
-              <div className="w-full max-w-md flex flex-col items-center mt-8 relative">
-                  {/* Global overlay light effect */}
-                  <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[300px] h-[300px] bg-[#FFE24C]/10 blur-[100px] pointer-events-none rounded-full"></div>
-
-                  <div className="w-24 h-24 bg-gradient-to-br from-[#FFDE4D] to-[#FCA01F] rounded-full p-[2px] shadow-[0_0_40px_rgba(255,222,77,0.3)] mb-6 z-10">
-                      <div className="w-full h-full bg-gradient-to-b from-[#332b1a] to-[#121318] rounded-full flex items-center justify-center border-[6px] border-[#1c1d24]">
-                          <Icons.BadgePercent size={40} className="text-[#FFDE4D] drop-shadow-[0_0_10px_rgba(255,222,77,0.8)]" />
-                      </div>
-                  </div>
-                  <h2 className="text-[32px] font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 to-yellow-600 mb-2 z-10 drop-shadow-sm tracking-tight">Success Showcase</h2>
-                  <p className="text-gray-400 text-[16px] font-medium text-center mb-10 z-10">Celebrating the Top Traders</p>
-
-                  <div className="w-full bg-[#1e1e23]/60 backdrop-blur-xl rounded-[32px] p-8 shadow-[0_0_50px_rgba(0,0,0,0.5)] flex flex-col gap-8 z-10 border border-white/10">
-                      {[
-                        { flag: "ðŸ‡¨ðŸ‡´", account: "166803***", val: "90%", color: "from-yellow-400 to-yellow-600" },
-                        { flag: "ðŸ‡®ðŸ‡©", account: "177132***", val: "86%", color: "from-gray-300 to-gray-500" },
-                        { flag: "ðŸ‡®ðŸ‡©", account: "182629***", val: "83%", color: "from-orange-600 to-orange-800" }
-                      ].map((item, i) => (
-                          <div key={i} className="flex items-center justify-between group">
-                             <div className="flex items-center gap-5">
-                               <div className={`w-10 h-10 rounded-2xl bg-gradient-to-br ${item.color} text-white font-bold flex items-center justify-center text-[16px] shadow-lg`}>{i+1}</div>
-                               <span className="text-[28px] drop-shadow-md">{item.flag}</span>
-                               <span className="text-gray-200 font-semibold text-[17px] tracking-wider">{item.account}</span>
-                             </div>
-                             <span className="text-white font-black text-[20px] bg-white/5 px-4 py-2 rounded-full">{item.val}</span>
-                          </div>
-                      ))}
-                  </div>
-
-                  <div className="w-24 h-24 bg-gradient-to-br from-[#FFDE4D] to-[#FCA01F] rounded-full p-[2px] shadow-[0_0_40px_rgba(255,222,77,0.3)] mb-6 mt-16 z-10">
-                      <div className="w-full h-full bg-gradient-to-b from-[#332b1a] to-[#121318] rounded-full flex items-center justify-center border-[6px] border-[#1c1d24]">
-                          <Icons.Trophy size={40} className="text-[#FFDE4D] drop-shadow-[0_0_10px_rgba(255,222,77,0.8)]" />
-                      </div>
-                  </div>
-                  <h2 className="text-[26px] font-bold text-white mb-1 z-10 drop-shadow-lg">Profit Hunter</h2>
-                  <p className="text-[#a6aeb9] text-[15px] font-medium text-center mb-8 z-10">The biggest trading turnover</p>
-
-                  <div className="w-full bg-[#292A30]/80 backdrop-blur-md rounded-[24px] p-6 shadow-2xl flex flex-col gap-6 z-10 border border-white/5">
-                      {[
-                        { flag: "ðŸ‡»ðŸ‡³", account: "tienphong0203", val: "$714,677.00" },
-                        { flag: "ðŸ‡¿ðŸ‡¦", account: "Musongyesquare", val: "$602,823.24" },
-                        { flag: "ðŸ‡®ðŸ‡©", account: "Rama", val: "$428,469.24" }
-                      ].map((item, i) => (
-                          <div key={i} className="flex items-center justify-between">
-                             <div className="flex items-center gap-4">
-                               <div className="w-[24px] h-[24px] rounded-md bg-[#FFE24C] text-black font-black flex items-center justify-center text-[12px]">{i+1}</div>
-                               <span className="text-[22px]">{item.flag}</span>
-                               <span className="text-white font-medium text-[15px] tracking-wide">{item.account}</span>
-                             </div>
-                             <span className="text-white font-bold text-[18px]">{item.val}</span>
-                          </div>
-                      ))}
-                  </div>
-
-                  <div className="w-24 h-24 bg-gradient-to-br from-[#FFDE4D] to-[#FCA01F] rounded-full p-[2px] shadow-[0_0_40px_rgba(255,222,77,0.3)] mb-6 mt-16 z-10">
-                      <div className="w-full h-full bg-gradient-to-b from-[#332b1a] to-[#121318] rounded-full flex items-center justify-center border-[6px] border-[#1c1d24]">
-                          <Icons.Activity size={40} className="text-[#FFDE4D] drop-shadow-[0_0_10px_rgba(255,222,77,0.8)]" />
-                      </div>
-                  </div>
-                  <h2 className="text-[26px] font-bold text-white mb-1 z-10 drop-shadow-lg">Unstoppable Force</h2>
-                  <p className="text-[#a6aeb9] text-[15px] font-medium text-center mb-8 z-10">The biggest number of trades</p>
-
-                  <div className="w-full bg-[#292A30]/80 backdrop-blur-md rounded-[24px] p-6 shadow-2xl flex flex-col gap-6 z-10 border border-white/5">
-                      {[
-                        { flag: "ðŸ‡®ðŸ‡©", account: "Wietjok", val: "50725" },
-                        { flag: "ðŸ‡¿ðŸ‡¦", account: "Musongyesquare", val: "45523" },
-                        { flag: "ðŸ‡®ðŸ‡©", account: "182642***", val: "38561" }
-                      ].map((item, i) => (
-                          <div key={i} className="flex items-center justify-between">
-                             <div className="flex items-center gap-4">
-                               <div className="w-[24px] h-[24px] rounded-md bg-[#FFE24C] text-black font-black flex items-center justify-center text-[12px]">{i+1}</div>
-                               <span className="text-[22px]">{item.flag}</span>
-                               <span className="text-white font-medium text-[15px] tracking-wide">{item.account}</span>
-                             </div>
-                             <span className="text-white font-bold text-[18px]">{item.val}</span>
-                          </div>
-                      ))}
-                  </div>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-
-      <AnimatePresence>
-        {showStory && (
-          <StoryViewer 
-            stories={STORIES}
-            initialIndex={selectedStoryIndex}
-            onClose={() => setShowStory(false)}
-          />
-        )}
-      </AnimatePresence>
-
-      {isAppLoading && (
-        <div className="fixed inset-0 z-[9999] bg-[#131417] flex flex-col md:flex-row overflow-hidden">
-            {/* Sidebar Skeleton (Desktop) */}
-            <div className="hidden md:flex w-[72px] lg:w-[76px] flex-col h-full bg-[#1f2026] border-r border-white/5 pt-16 gap-8 items-center shrink-0">
-                {[1, 2, 3, 4, 5].map(i => (
-                    <div key={`side-skel-${i}`} className="w-8 h-8 rounded-lg opacity-40 animate-pulse bg-gray-700/50" />
-                ))}
-            </div>
-
-            <div className="flex-1 flex flex-col min-w-0 h-full">
-                {/* Header Skeleton */}
-                <div className="h-[56px] md:h-[64px] bg-[#1f2026] border-b border-white/5 flex items-center justify-between px-4 md:px-6 shrink-0">
-                    <div className="flex items-center gap-4">
-                        <div className="w-8 h-8 rounded-lg animate-pulse bg-gray-700/50" />
-                        <div className="w-24 h-6 rounded-md hidden md:block animate-pulse bg-gray-700/50" />
-                        <div className="w-32 h-10 rounded-xl ml-4 hidden md:block animate-pulse bg-gray-700/50" />
-                    </div>
-                    <div className="flex items-center gap-4">
-                        <div className="flex flex-col items-end gap-1 hidden md:flex">
-                            <div className="w-20 h-3 rounded animate-pulse bg-gray-700/50" />
-                            <div className="w-28 h-5 rounded animate-pulse bg-gray-700/50" />
-                        </div>
-                        <div className="w-24 md:w-32 h-10 rounded-xl animate-pulse bg-gray-700/50" />
-                        <div className="w-10 h-10 rounded-full hidden md:block animate-pulse bg-gray-700/50" />
-                    </div>
-                </div>
-
-                <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0">
-                    {/* Chart Area Skeleton */}
-                    <div className="flex-1 relative bg-[#131417] overflow-hidden p-6">
-                        <div className="flex gap-2">
-                             <div className="w-16 h-8 rounded-lg animate-pulse bg-gray-700/50" />
-                             <div className="w-16 h-8 rounded-lg animate-pulse bg-gray-700/50" />
-                        </div>
-                        <div className="absolute inset-0 flex items-center justify-center opacity-5">
-                             <div className="w-full h-full border-t border-l border-white/20 grid grid-cols-6 grid-rows-6">
-                                {[...Array(36)].map((_, i) => <div key={`grid-${i}`} className="border-r border-b border-white/20" />)}
-                             </div>
-                        </div>
-                        <div className="absolute bottom-6 left-6 flex gap-2">
-                            {[1, 2, 3, 4].map(i => <div key={`tool-${i}`} className="w-10 h-10 rounded-xl animate-pulse bg-gray-700/50" />)}
-                        </div>
-                    </div>
-
-                    {/* Right Panel Skeleton (Desktop) */}
-                    <div className="hidden md:flex w-[260px] bg-[#1a1b1f] border-l border-white/5 flex-col p-4 gap-4 shrink-0">
-                        <div className="space-y-4">
-                            <div className="w-full h-[60px] rounded-2xl animate-pulse bg-gray-700/50" />
-                            <div className="w-full h-[60px] rounded-2xl animate-pulse bg-gray-700/50" />
-                        </div>
-                        <div className="flex flex-col items-center gap-2 py-4">
-                            <div className="w-20 h-4 rounded animate-pulse bg-gray-700/50" />
-                            <div className="w-32 h-8 rounded animate-pulse bg-gray-700/50" />
-                        </div>
-                        <div className="flex flex-col gap-4 mt-auto">
-                            <div className="w-full h-[80px] rounded-2xl bg-emerald-500/20 animate-pulse" />
-                            <div className="w-full h-[80px] rounded-2xl bg-rose-500/20 animate-pulse" />
-                        </div>
-                    </div>
-
-                    {/* Bottom Panel Skeleton (Mobile) */}
-                    <div className="md:hidden flex flex-col p-4 gap-4 bg-[#1a1b1f] border-t border-white/5">
-                        <div className="flex gap-3">
-                            <div className="flex-1 h-12 rounded-xl animate-pulse bg-gray-700/50" />
-                            <div className="flex-1 h-12 rounded-xl animate-pulse bg-gray-700/50" />
-                        </div>
-                        <div className="flex gap-3">
-                            <div className="flex-1 h-14 rounded-xl bg-emerald-500/20 animate-pulse" />
-                            <div className="flex-1 h-14 rounded-xl bg-rose-500/20 animate-pulse" />
-                        </div>
-                        <div className="flex justify-around items-center h-12 mt-2">
-                             {[1, 2, 3, 4, 5].map(i => <div key={`mob-nav-${i}`} className="w-6 h-6 rounded-md opacity-40 animate-pulse bg-gray-700/50" />)}
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-      )}
-    </div>
-    </>
-  );
-};
+                  className="text-[#a6aeb9] hover:text-wxœì}ëZÛÈ¶àÿóÕîìÆìÆÆwä#\º™C¤{÷É—é[ÆÚ±-IÜl¾ože^bþÏ£Ì“ÌZU%©$ÕMÆ¹ì³[éN@—RiÕº×ºŒ¼È%QàLC/òüi­ïý ¬üÉû…3„ìþ„ÞîÞc«ñDÂ(ð?¹¿zƒh´÷Ø¬wŸÈfñ™ÝÍ›yùÓü•ÝÍw·ÿo¹³›%aèFäÐ‰Ü[?Xkç&$Ý|Ê?“þØ	Ã·ÎÄÝ«Çî¹¯çã1¹ñƒÔnâÞß:lµÛÈä¦Ö©'ùø¾rr}]Ù •îýçè’þsxrTùPŸ8³j5rnÖÉÞ>©Ê Â>Qr…OîbïÎÏŸþôpìõ?í=Véàðáôë
+üùŒ¾RþXúÝñÃkM2»©µIä>Dµ¾;Ü€ýü¾Ùž=| CÕnüñ ×½ÿÉ›ÞÖî½A€[àŽÈ»sÉ‹Gék	q’Ù‘½½=3TÜHÈ+R¡S¸¾±+>vømï¿wzŽ{óòùwn°“>»¹Ý?þôQÚÂ
++—à±øMä‡¤ëŒÇîÄGxÕý”5vþ<:ìUœ>pøÝ0qìM5 °pÞÏNo|À¬Ií}­‰ë8v‡Q­Aïv„ÿŽjï[xúæ–AŠüQk6*ªiIˆ)Š©¨n/ÜÏ)Yr*sIûð°“®S iEb#6Çþ}mQsæ‘Ofµ.™Eµ¢|ôç!(ìþx|ãê–2
+ Ö$Œ)åï0„7\Ä¿Þ:³p3äÝ˜ŠZ*’pÝpæLÅ×d‘º²ÿx~ów·Õ„Õ‰|r£p½>ôÆðÊêAúÿÎ/]gü†^>û¡; ×Ö#¿ãO½Ç3ê#o0p§ëõ±;½FOÄ›’Èœñî&N¥ô‰?sú^´¨µ•ýÿ÷¿þwÙaÃ—ÛáC˜ç¿µJç¿A&vÈ{!ÀŒ6ˆ3]|X·€@á«;Ç;7cW>_µ”¹r ?"¯ÀB¸$Œ‘âÄ-ò
+äžJˆØ›‡ümÄ<×Ú€aETœùþ[sïà÷°6õ_Hå0Ÿ>ÆÍí'ÍÂÒéÖ†>P
+pýhäMæ*QäR¼@ãô´7Í#Éüw¸Ç+›è¥;”±™h1ãó•qÅÙØé»# 77 Z]éPkR†uçŒçnæ•²»@ÜŽœé-ÜXu3—=Ruë‘ÜºQ'}‘ ç›±ßÿë°¤MXØ€þ½ –A6€øþ ö0F&ýþû¦Ó¼i?pÅ¤¨ŸÐUÚá§™ôk5ˆ°\Là±­›íöËFüˆ0kò¢ó±NÂÇ&îÀ›OH8rÀ[½éÔŠk ÁÄ*9©Ó‡_€JÅ¨ñÈÈ*ˆ ~9]TuX¥Yä©þ8Äþ…òf7ÁŠ(&ù#¥wú¢X÷n¶¤š6½GN§Z®çžyB9xH~öï@"gL®¨Ü%‡#of­¥g>¥mùj/•ôŒÉ'ê¨«¥ãÒ¡`ù“q˜Æè8°‹H²ÍÏÕÂ‰ïG£
+ñ@Uës‹£ÖÇ‘.Ø	ã1µ‚Å,òéOó p§}uô72ñ€Iì×«XDÛðŠôríºïOÃˆ0…‘É¿ìKi:JS•ïIuËR€s4¦dèŒC÷¿ižP‰f»ø=Q0WÜò´.?ÏàBu›C ¤èt:ô0@q}@>€fÔ>X,['rJƒÖššaÖÍ_ŸÌÈ‰®A*ÂœªøÞWõ-É?þAÖÖÖë‘æß»Á¡ºUÄr3à¸šL"y\\ëÓ‹k8:~mÝ›öÇó`ÚÚëëÃµuÉùãëŸ¥ç¯ÎÏ¤çÎ:–^øÛå…ôü™âÅGÒó¯ß¾V¼øZ>Î/“^8=’Ÿg \³„¶À çw,dPÿ	d»¼ÞøšôÒ¹7–øàâüOr@#‹€-ÀyžüÛC¼(ûîƒÙlìJß}í†cGzå\<ô‡ò9LRòKãÙÈ¹qåÏ½q#ùëÞþrzt*GÁßæ9D}X†Ù@üÉ—í­ÇÞƒâ©¾|ü`f‹ ©À’¯ÑÐÜºFY´Mž£×ª¹l®1MÊE$‘\`|Dr3ÉÆI$(E+Áb[Oë‰d‘^ç#(EEê Ëu^<êrì¥*…úiÑO8{¨µ©eÒª’J„j¯`T÷Ñ¢¸œ™Du}%áDã'ÐÀsf·s”þD<ñƒ(ªÁGiî§®ÅÄåEç~VÑ'"šMj/;t :×™ƒLÏh ,5vGrºóºsØmP¿Vî¬ÄC¥ïƒº‰¨Qð¸<J†@‰]8½FEð«ÆF"_e´K+OûžÎ)X;L7zRùØ¡6+ðÞ“_Uî•C%¶÷"Ðo³EØR‚µà‚9ˆ'`uogàÁÒÖ"¿VW€^Ôï[­V»ë{ç9Âop‡ˆ`Êwì=1‡#÷.ð§—8%Œ½Emˆ]£Ç‹üì:H\ËX]±É	2ðÞS˜5ÂÚš½“ÙM­UÂó)A;Õ>DeŸ25¥ËÑô9ò…Q™ˆÍ,(îkï·8¹&îTæà]Ù§^þÐS~+}%@ŽJM*ñJQIç(¸*ø§Óa)Q©¼¦OÏ£ÍÀ	Gî E"~ßf·a%ºFèƒ½îŽg•ý? ¿œ^¨A¦båˆŠí;žy`„Y’Ý¡èûc¶1¢ÂT¶»X­*ÍEnô]gú?æ.²s"8Øê`qNª6Ÿ0Õmã±ÒëK}‡ÕÍ÷ÿÓ©ýÑ¨½ü°	¶ì*Ê™!ì(h4Þ)Î¬ÄŒÆ‡¾°£B3pn«î¯+çÏžùî=7À	(£è:~w¹ùîêˆTÏ¯×ã?½¾HO¼;Ú<<ÈÝñß/~KOÀó›‡?Ÿdï€ÇÒ0 0Æ‡T'.	•Æ¢8=ò™8Qä†Ü?¼§uxP«$AP6âÌ)À¸TÏ·r…ˆOSÚàOÓGuT¡.ÿ‰é`	ŒÅ¯BS)O˜ß¡=µ†K2«ÜÃéÍjóåIn“p´ËL3¿Þ&Ïh—_Ï…%™ËŸÎ¬/àÌ’Áý_Ô­%ÅŸ®oÒÁ%CÚ?]]ü°Ø}‘+q †GÕª“ÓÛ6ÈL“»yßüPŸÑà'R#Nú›\ÉÄUËª˜ÜÛFW¡¡ÒLN·œª>[ÔZ’UØuñ?±¥ÓPnÅæ0:Œ•†Q†<:Ò`÷'ÃÍ4©‘4ŸÍÜ b3k.…QÆ¹³ÁSŸAô}këO»›3£)·©/NÎÊ¥†ãã°Äx/rÆ^¿²$ê#ñ£À•k@T8•n©4^Uî$bÅÊN·èì{ú©o©EB<’˜%ÄÛ!ÓùäÆ”AŸÑ_A»_<&/{ª½xôÔ>Àœ›W­	#‹9Atæ;˜n	Z£«¢¿˜nmRT“éØ<ríÜT+€g·b¸=Àa¾7ñ^3ÍÒ¤¹{!ØY±aœ³¾´/;ÅÙÇTé ÆW±ðŸkoâ“Ç_þ
+Þ#ÂMƒ}«Õ(¾åÒÖ™¸àîÔ&¿¯RxHöŒfFÌ’ÅYkð~g2ßªðBÍÈD:²'ÎWý´z»g‚úãFâjgO
+÷×Ý‰ü+pÿsŒíwo
+:§3þ-‰µò¨º¥Å‘"¹þþ;ùµ7=éô©ƒ•†ñáSLCÌC78ÀÓóh?óÎ½ªÏ½Á†þY/¼º÷ÀÂÛ¡2]û"U`½¦¼²¹IN›é"¡3t£…ŽÔl ç«É6U†KQ«s}ƒ´†ÚœUÍEÜÅ¢ÁŒšªÄ¡½ˆ7´¨k›û¹S¿÷Î7ÃÞ÷¨L»©5u;VNÊP)Å'¸Æ÷¥Þßn·»m7Ù#¢§œö Óû@÷e„ÓÜ·®Ú6R	åvŒU¸U[§×\Ä[dÿÓ‘rŠRfà\ð–æð
+¼3ÿÖ§Zþž &µJ’Z5P~|¬ñéçc¶f½«Eâ$ÜÛB¬¡˜‘¨qÝ>»”^Øo†—ÅZ›~ZÚ-<q,Ô…ê^xø i² ”_Ì>îeÎ·'ÃO¨R7pk|Ùmlö¹@X¼°Ýhà.-n,7ê-`(c·±ÈVN­ŠÝè<”ÝKH”f#@Q­Ÿú÷Ã±óÉåšý6b¤aàº “wBÊŒÅ‰ƒLeêLûî°€µ7øûúÚ/þØ‰Öô‹c·<š=~3]è.ë/.µñ&VLMŠ÷ôbÈ4Èãnã']+f{>ýÅá’Œ%Ý-{Ö—0n`ûäGÒzæ—h.*/É<
+OëÕI@Ê™_×;·â~>>» ‡Ço¯/É/§Ç¿
+rIFS·q‹0ÆÆ,Ç*`¯÷ \ƒ7È êbQÆ/A¦Bºá4nƒìå$¤	1ÞÉ Iöˆ°ìÔºy÷ýp7ðé¾>šÍ¦)qrÈ/{˜ÕäyQùÙ8ÝZ%à±KÍR“T0%üJtÉ`´FYPˆÜæ°|®|í„}gì‚1FÓgÍ‹C£ wIH ð8s‡q|Gk[¦§(cavG­"kmKd$ûêŒ
+³©LPd~öïIøÉ½Kù_ínŽZ_.ý.‹t7èZËÆ×1‰¾:qþŸo Ùa/L`â<Ô€¿v®Æ÷P ]€†¤-j=û°„×åÏÁ4‘ëü~xp}üÓùåéñU6fßâ§6À˜+ˆ±)'ª½ÀÀ«º7Pû‚Jxƒ’ÈN)#ÎÈŠ5ƒÍZ÷w+R­lÒjsƒ¿@=W¥ÕFÌuå¦1ÜÇÔ8ºÀ*c¨ŒÑò~‹Ú~£ø‡`™Xn«Ýºù`f w’øÆ¬¾ÊØH³Ásì21iöVÖØÌ‡þÆ°Am ÛäJÙŽ`ãUÊŸe4É•¬VCÉÄO¥§îùÐ©„_+NG?!ò¢±û¼0CE
+³,ÐäG?ñ#Ð‚Èë]Yò%¿™€V$%eôiÎS`IÓž$N}
+,@³,¸’9;|ÎEÎ¯œw‘Êê $º¸<s~}|ôûÁåõéáYÌù‹7ˆ7xÐrE:Î8Ã/¨ñQÐ#>x >X„Y³'A¿Ï6·3º‚ˆ€	')¢b&žEi^TÐP7dcÎãL}’üTó‡CT·M&ä#ÿ6½¹¦Cf<äM´é}²«UÊ¯Ïß]¾=xZù9º<øtsµZùó };Ó(´RË'ƒuº4W®™BÀ~ìpõ ÃÔ8Ao~ßÛæ¿²aª³Àoé¨øwíÿæ°Õhõ’àÆ ¯KóäÙÖÃ˜8So‚áÇ0ë1hAðCÆSdTó|¦ôËâxópÕš=ÇçƒFùOÅ˜øy ‘V³Q´aeìl|›aeYî.xZ®Óõ—q©g’çò-cTÌjÍ¼Ò!3’Ú7«Ú7R:—H%Dô%ê¹Ôu1:¨?KbðÕn7;Í-É*ç†Õk©|xèš:'Xm<é.6ÿáT+vu¥S˜°àãÔsèûâ‘Ÿ@½9ýí”IÕP²ú‰™þ¾ÅT!A¿À$ª^Bó@ªýæ ÕâEäš«’ÏãÂ¿º¥“ §çfèE#räŸÈ9Ìgì,TšI
+Kun¼^ÁÜõ&·†ª0èï¥ÀÇ	¾Æ4ŒoE³pgs“žëói8ƒiŒ@#lÎF~ä»j6_nu¶šín³ÖÙn5zÍöö`«í¾B„Ý¢Ž~zÑ`êì‡ÿÜÛnüp¿×k4ÖÔ‹Ê¥ãÅ§ñÉ@×wB G7«ŸÇ§·º™ÓÌ¥Ðlt•
+{³ÑPW×á‡3ŽR€1ÕÖðÄ˜í‘íUÆÎ}Ú–ÕpƒÀ.|à‘‹½ÊÔ¯Å§tOjÌ3
+åsi"–KÃ æÑÐŸ6·¹4šÊ¾ÞôPëçôýœžCÀã»9‘Ÿ—œ´x’RT	òg„z‚0ˆ÷¤u“’Ì«¨‡·¸<#ÐMúåî¨­ó#Ã¯#8“Óm2Í¹÷ß‡n«Óÿ )ŠaÞ@Éá¾ák6GmÓçàçM©>®ÎDleYØ\JŒõâ^\.%N•Äñ’½ám£›ŸM˜Ú±ï¦‘7&tIwR˜¸Óî“SþÙjH£5Z3X¾	¤´V¼‘šÃÞ3,XsŠ…˜¤€	Ó³î`óÝ4po½FLAÎ0üñ;c¸¤2F¦Q‰©Ü^·ØNT1æùuyÖŸ°ÄÌZ*V;ãúaB–.Á"L•‚’çhõŠ&,U?QÛ×3_b±´ëÊ8<¨A‹Ä‘+} ~R#LŒœ VáÀÿ‡×Ë°©<ƒd$ŽÕ(S0zh«myþ¼]Ò]ê°J™ :\c<,Þå@iž©%« ")ŠC„‰×v3U*fçr	ÑbuS?SN\Ø½ŽG¦Ïý
+ú+»^TßÒÊê­L˜ÁAzáûL‘l¬­§Y8<ûf}ƒGÅi·¿S XÂ_+.WXI/ªÙs°%#d¾xW|g;¾óeÎã'Æ2$%çÜ³„òÙé/ÇäüíÙo«ˆ‘Cf[è–ã•1ü„½ÔPd!{”Ø[É©+"‘§qÂºÙXIÈ`Up—é÷a”S²ŠÕ-‘ï„Q=œ÷ûnV?²ˆB*ýIåEN•«ô»Éu@q÷»ÖoÓìeüwLuBÔÜp8l`H~3˜Ó)÷t|î<æ
+Œÿö6ßRÌéwæÝ XÍÌÙˆÜ+0¤.¶BùƒmÇ[>°‹Z\X¿Ãy´ˆõŽv'({à
+ºffÇHL.ëøXÇàèÏNµ#ÐjÆî%WWS¼Œ©ÑN^?‘ÍJ— ©ÈÄÜãŠÑ<´3zÊ_U]²)nl¿arx~ñ¹¾<8:}û“yÇ¤ïÏc«î˜üî˜ÂúÇrõÏ-“ÌÉ<	–ÙQ„£ï"¸9´/ÐïŽ¡K­ö1£"?;Ù³¨‡þøŠü|zu}~ù›™îG Ãü`±:š§¤ÛmÜÝ—£\.Ç>å~¦IôÈ**!Âû^G/y³LALÌ	–(0¯
+·Pë@K†X*|Ã=Ç~))I·Hm2–`IC‚À¿£"ó4./S¬Öäá3­|øL–ƒŠÑ4Šý.ªê†’‰H˜¬´d¿Föî˜içb_Ë²[U=ªLrKQÚÐErª@c'××d“ž‘o<.z„QR<X³CÒÂÌjÒÅP	®f’AºS“W„—ôH¡JS¬~˜Õ®¥ù¬añ½,Øß,•ËiõÛÍ"B&{Å4D^q»1×$ñ ²E‡W §Œ;~Xa­¿XñÝ_¬ðJ;°ª(ä|Bƒ1 .¡Ùð·Ûÿtã?XÒ­ &iØDq!¯Fþ=Î†Mæ|J§Rý.”–¬°Y1±Øj¶Z©¦Ÿ×ð¶ÄØmR#›‚iyŸÓãG!Žë­õ’wLdé`9k:‡/¥ I»b£˜xÓf(¥°9#bAŠ
+šòT¶U²ò“ºs4¡­’ò-€fWÍ[Ù§ˆ%ˆÛÇ+üÆ%ŽºÉJ¯Éx©$F+•j£LÏdÉ/ÌÏLGÕjÍ‡yËù^–óÚiÄ5¥í´0Mðm”¼ˆñ9ú2Ä·$±m8ÜÞf—jÝ¬†+p2Î¦pèœ_¿•^PÌñUµËûQ5d­¨ê]ÞŒ*ù”¬Dà|û}ã÷ÆïÀ~noœjc£Õín4Û½F½»N«¤ÈêÃ*uÆå×ºOÑó‹­6ÝXïÃ³ó«ã‚<“¯x<«–5ÿÌÅ:Œe¿da­Æbèò²Ò,U¸¥|vªúäŽ]Äñ«È‰BrèÒô)ÅwêÍ\Z©ˆ}í!ü9ÎDRY/ï±`6+ÓªUªÌž8Zˆd-I+MXEq”fFé”Eç:V}–aâ ™hgŸK¶šÏÕçÐ$ˆÉö’håÜS‚=ß77Hkƒ´7Hgƒt7H÷ÅñLÑÂ,*8äï«q2ã%•
+›8¥PÙL#6Ènë$(Wz£‰+)„0±.bqîª6ë«4ñ)¦ÐB”l—CIÕ×ôÊc·a§Tõ‚å)Uþ9ËAF±Ê%Z.•ß²ð¾|Wá¾°&[¶=ºÄ’Ù-u¸­®dv|Ä5¯Qá–÷¹óBïfìb%v.®BápQ=:Y^¦ìëxQ0:ÐµäaŒ;–ÕViòüíÜWËæ´“™¢²ô.˜Ì›{™UAÄô0”F]Œ}méJ&šõ¯â¼ É=ìÜ°.×&Oð¡öL‰´ùép+€›ãmu;=É³¡RÊïÎ*ù™zo}Q7Š-ò!‚ÄúV7ò¼5“¢Ye)@xr‹'ÒäÐLõDÒÆEþ~õ¦´`8“)%®{ºfˆ2Š‡8óÃP:P`d;ÈQàÜKÁl$ÛA¨[E6cÿøùN¼f5*+sá}V­ÀËÃÀˆÛ«aÜ‡™ÛÜÁ{0Ç™Ð^x?rÿþWRÍ¾w“4u¡ÙìŒi¯‹ÜTØÀ0áìL#ê¯nn‚a4îÏ± ª3®ae?ø	«3¡-ÆëÒ€w?õyÙ|¯Ì÷QkêßÃ¿0÷#xQ~Óž§VÅ‡ÅÀÿ7)rÂí“ÆUáÂ‚ž|%9·‹ÐìÚ“¿á¯ô¬6™»‚R}
+œÕ4_ýUZZ>ýœ~àïéÌa%¢ôT¼l–Z1œÙJ‹™ëƒSb¬e-…Oz]žôz:ÉªòäÎ½ªG>®rq~¡º^ç#«¸î=ÅŠü8Â]æhISRx$DÃ”ˆi<-;'7¹âŠ†aXD‚,°Õ&/¬“ÅúKæðÆ‰F ZªösßõÆUáµµ”.×S2s¥'â‚Çô,ÁWÐìÕÎ;;øs+ÃâÆÔÓÈØ+/Ës6ZŽñ"ðú´ggÿi}K¡Þ%®5-“Jï‹ÇîƒzjTQ^)ž6>ÔÉ{Í¼¦÷áæôEö©œ6¥fX—ÄNþ^YÝµC(¢Y‰Úi,bÀòdÎ—Ó+0yáÜï³ìÉ W;ù‹Tr“çÆy …ƒ^¸ˆe±¶å?
+a&NˆÊÝzêiT¢RZ¹ñ}lWbC,¹i¨Æ-MÂ…âW¬x~ìŠýôŠÄ4‚¨(¬ý¾QÇ‘iàaã›8—†±ìX ÜÀ3ÀÊôYI¿Û-á;nóUR“ßoæ‹ì‰¾3Û@µ WXRˆg) 8™ËÀ¿Ÿfgº0»Ì™™EY,»éî–šî³yþ	M«bÝñC#+Æˆ4[ÒÙ+ v×x7 §ó@yp§ð«·ò>_ô‡ñ+ Ç @e.cÇñúßnŸìR_7×p®ÆþMÖS<ŸQ,H‡cßè˜›¤Ý3+<ñ “ì t„¿°`¤žõ8(ÑÙ³=“R”ØÇ_<Ž€ô8¡®ƒÕ3¸ÂDàjkƒf»=È‹Ç‰öŽ	F'hï?š‘I2 jÑ RÔO@…˜Ìk@	æ³ŠÝU·~[ß ­ÖN·½Ój“ÿûü}0¿5ˆ|Dø‰Aš²˜ j© †Ù¡Ê°ÁÕ­k „i—Ó•øÚêìSS}ßŠK°cØsñ ‰i`•%
+³Ì0%æÀ}”a^ÃH†²Î£_{™ ¥fM[c'\öSóvÖrp/ØdÏœÍ* ŸŒõM¾t“—X¾Â–ä¼ð­ó¶:Lâ’Ë¾ê‰=a_šþXœåDJNÂ8ŽE &vTmÃ,³kv% :Æ‡ÞÔ`Œ‘?š­¦ÈoÐ_wÈZ«6ðn½hmƒL¼é<r3§˜÷K8¥m
+‘™Ù ¾3?³#vg¶æNk?½¦9Î";àh!ÝS	Êáñ„¢æÅ#ŸÃÓ³…žíþˆ¦µpðbUHôµ±F5Ü¯¨ñ˜V,ÉŠzøÔ¯yƒµ§¤Ú¡yØü~vj)öÀ-“fºeÂ+½Ìâˆëd×&¤”ëƒ1¹¡õ0’VŽUºQn‘P¸Lj5í4¦^`ºAÆX¨mg³"â €9ž¶«Pr˜s’-v]â”Kÿ~‡÷¦Í@~ ÜÁþŒ«ÄÐ©r>úþÄÝäÖœgeäõÅ9øQ¢Fß"›È;vÛ^*~Á8dŒf¥6ëH±[ˆàéyZf”ÜÆ“|J‰Ý¨æpÝ|ÅØ|qŽ0JÀ0Î¡ôO6,“ÐGxmfOÈÜ— øÚPê^mÐAøQb¡ùfže5ŠøÈ¸J>KJ †$*‰]/‰ŽôøQZÈ%»S·LqñÛÊ£©uYñ5eƒá—­|#2Ø5¾¸¬o.Ø<T“èhf‚úCwø_‘\]"Ú+“WQgX(dô?Â«$«ÀöJòKñ?Ÿoù¿"’ÇÄ½ðÜÃð¨Åj—[î²km;º-µªòƒ‡PvŒ*>G‰ï™¦…‚öƒì$.E{›¨ë'QˆXä(øÌêe-;Ioì¦òñã}­KFi9s¬SR… ¶-¢¤U1:êã”%Þ)MY:9éuNt)KÒCñ–ñûn§1µŠiL,©(›ÆÔ¦-´vøãGˆK`MFåT;Ûû–Ó¤{šÛÍ—ÍB±¤^!ö+,ã­	9«me%ë¿ëO}Q–Ù¤Ã¥%ñÊÊºÇâŽA5¿^Šó•[µ²RËRÉíÄJ.kf\(rGw±Y–vªå$€me<K¶®ˆYTCŠ™–³•Ée€-ói+ºÏæ.} ¥º½©¤kšªà@ñdîÑeÛ8äkñxß®wZ±üH#-#ÄíÈÊµ·3e„¤åGZ-1¸&TWlßÀŸá‡%
+´žQ€„Mª!l†_œ+I"ÎfèÐÉd§@¼Á^…©Ÿµàð–iü² —”¬iSâ©ã4}C)œ’gSHS^–,q"s}þ'IE‹2…á¤IO’†oòÊzeK™4¬K™¤•kËxšxQÀÃÉ$Õ`ONŽ[Ã$ÖA³ÙMr'Z: ¶ETT‰º^cÚ2~ÜgfB•É
+)ŸÅ&'†ü,BÁ>¨vyø;˜ƒ£*{RŒ´nI_/C×l‰ÍÊÕbÚrZX¯ö
+¶ùÌm-ñRÓŠœ{t0ZŸðÂqp»©ñ<S¦ë˜±ý!¤É“är}ã’¸¡ {æ<*eªÛä¦[DÁK €eeòƒ¯hÒ®s3vW“*Œ¬6îC˜‘`*vÏ²†d›û§ÊØ ßJ8}òÚ™N%¢@j_°zß¨7Zªâ™¼È¶¶zlGÓÅaÝy^Õ;bM²¡p,Û—íæ zCi”ÁIÁ*Ÿ„ÚÃŽ­wS¢R¬:-{[ t&~6]EÎt€yâ¿yîX?dNZ¯'•ýeÜñU†=âŽ€=àäæ	%ÛãÃëÓó·;@wðy´ö°7Íe>"ef½{ŸïFÚÖâŽ°Œd®êzÂ•ëXÙ=c»›tø2_ÒŽ©c Æ¦ÊþkgŒíÊwÐ HªPóXJwâ¯É}¡x‰?iå
+Å4ùýÊ*ÖN n¼OÜÀëj >$ê´Ô{Xj+² ÓÄè¡–N‡¶£hn¶+<…Qâ€fxBVð3G=" 4;v»Í¥ª
+úåö*,0S¾-çŒç´Ch¬4ÉMiMoáNŒ~ÑlÙ³H•ì‘™„îÉØw¢ª[gáüuú¾u‘®2³:< 0”{òE³ùÒàÏI±$bêøýy¸“œŽ•ßbñCQ&.¨Pœk/É,ˆ›TýbâN©øm@KùKçOûŒà^7Ø«SËôXÙíRSCîÁ¡
+sŸÿ9(ä"@]I^‚!O·Ø‰ÿB(„ð¥qÁiìr*¯Gò¾ÛØÀH´ÒÂŸºö+ûhðª³ƒ‰®u²¾ 8­A®9“¨6£_U{ñˆƒªƒhŠ6¥€st>ª'Z1ëæ°l@Œ#Øûá[¡¤˜Ò3”’"e³8é©pÿ=Ç×¤DÉã²..g‡Ó:h¶›’~9‰Éœ§lš$F±çT¯P­ƒ2©?ÃúØRÊQCSB\ÑìWƒL–aI™Œ¨×”Õ)…£ 	È‚œSq?6ø3>¾ã@ÀÜ´š :î5æh¤/ÏÉK;¦*¼gÞ¤J‹3²ÚÏA
+9Bæœ‡Fyèç·^•¤Ó×pØt™â’BWzMM_Œº€¶$Žmbü½“’V|¹%VzN>¸œ®äTõæào2rP;¦–Ô¿y,ÛŒü`ÁlêyÈ&a¼ù¿¼B~ÌC`bPTÿ²¾„^.5<Eõ°Ÿ8¡ÔQU:eà:rÅÇF	°/Wm¡”øv9VO¼é^¥©@ù‰ó€Wu–ƒÆNÍúô¨âz:-¨­Æ€±hÿg´N:€8N€Lˆ5ÑÊÚ/Ãö™Z©]Rëãhø}¯›Ñ÷´D‰šß¨wÛøkƒ¼„_vcEï¢¿EoÖ=´¬¢/4Îçk*zqeTô`.FEO°-2JsH-«àu¾¼‚Gí/+ÑéJ
+ª#ïNÁñvG™mœ/t‚5ÑôtÂ/ÞÿÀð¦K7œ#ò’’½ÈëèEž¤«ë3$Õ…þmTXoÊ­–åMM¸ŒcÐ:Àh·˜ŒºC~=}kY¹’±ÙF{këCaW"½ÒJkãµx•?sT|Ž–rˆ‡UöV-¯º—¤´Eœ8ëJ•lÑšz™ÊYâ§Xmïñ±KêNG¦Úíox:äÁ~¿zÓPäRªªŸ!>%t'¥žIDã©2|ë¢ô¤ñÙ—4-h™¢z¥}þÊG‹Š!‡¸'~Ì™ÕUÁÂú+©
+òˆWnJ²¸„®wW˜Á*š7™ON‡†raW¸ƒ%;A?“^yRÊÙe€©/7ÊyÉÂ1âôúüúàŒ\_¿»,ÁUØÓÔüÂ=²vÞu(\ov—`.z%j)b¤ËtÎöûD·¹ö#G„ù,ÚK6î~äd÷uéMJn‰¦$7=µ5áãþËQ\àvÈÙùÕUá=v[Ý–LxÇWV,¼ãa›¯B„Éì„£@‰d<óC×$ŸI‡ÎÌCjw@æyá§o95XË‘`Jÿ|tVÒÊ9FÎŽUfç°†7rNäìÐ¥Ü¼tïqÇ?œO&N° ŽXEŒð‚Ù'Š!òø‘8
+ÕþÕ<ÜR¥åDTáÔzHJ`<”=#Ô°VjäõÝN)ä€Æ$´T–?T6BwS2¤!w¹Ï£žˆiÇ<96PìñGa{TÐ½6Q zÒ˜jk=Ù'¬]-ò|tùhÜhœN	w<øä&pOÄ½VˆÜæèïa»–a\ŸÈ9y!ÄÜÂžÜób]N¿?_€$|“  *ÌdYNºmÆ²}Ts=…L%pÿsîä¨[#÷Ál6^ +'‚	‡øåÀðá; Õyì g¸=?»©mÈF²ØN"¾ÍÂä”!¸tdÛÀU¹+ˆ KUƒ]mõf#èT+@P 0˜¸sÐ÷	F¸—†¿°mci¤ ;XÅ–ô,ÆÞ²-¤tÊŠásáŒüóæ3¬Ð0À®l$âw•åW{ U°u	Sø‹YÙO\1ëèÒÍ.ETA»ñ²?ìd
+.tÚNoØÍuâåö‡¼NR`±c±#2X«æÏ­L³´¤ïYÒU%žé¦Ì¯®‹Îu£’º..Î~#oÎß½½Î«½Bd	bäúôðßéLÿMrNyBÓgùèøúàôìøˆµ^%¿œÿjî·×‰À8áP¬@a“¡H~ø£ö¾×(×nU’<Mi`‘ÿœMUY»¸2­TLW›+7ÐÕ7³[];T‰¬`TµTCT%˜2x*yD =f°œWŒ(L&Íÿ%ú-m/ÛoI‰þ¼)sG"E´ŠÀÕ´<˜€Va5FÜ¶¨aæñ0¦|^¤XõD¶|Ñzòô="Ã®vÏ¾Õ®º²Œž±¹3G”KRL€Q×&‘«*žµ_8=ÊÏ”®Wq±Õü•uP€nX±DÌ÷o6Q~‡¶>+µŠù×X³©ÛÞÚnõ:kúÂ,ú™Áð¤Fºd¢ÃhÀÏtm;vA­ÁÈñX7è3´“(âe6Ø7=&õÓ²Më´g
+ì¯?«îØY¸H›²xa,DfXƒ¯8mdN›/ßY*ÓÅP¥N'B‘2Žª„
+uadvJtÙðÜ¸y¯ H·[mÐ¥?µd¡5ð­e¶Èô¥
+VNÓ–)ã‰’,ÛÔ–/8Sû|¬¬[L3ÂÃNe\ú¬\aÝMQ P	%'È?*öÉè©Ú·‹ýlÑ?ZôÈ²KíF± œEvš¡¬ ¨˜¹+ZŠnñwXˆ^C´Ã±ŸH­F‘	&ïJøpæM±nÅb<òÓèPäš;0 N¼G_§Ì”®ÊµR‚KtËÓÙÏÉø©õÆû”¤µ\ÌIòŠY´´E@c«Ñªµ!¹a6ÆwöGpªÑØi4ŒðÑ^7\-ïÖV~j«•x.GpXmº¢‘Õt­IZ½a%°EV$é]#¹!éa£¼–oÖ¢¼1éÚ¢ºÃ¶·V’ÆrÞÖ-NòíMÊ·6a¯Sw3YY'“,l–íhRœ®|\s3íei•vVæÝ\œ½tiö´¬¬¾ìúŽ©êº¾þ¬¼ÂGr,Ï›Ô×äï[]i,¹Ÿoa×Ëx%€“ó¬EíN¦fÿ¡8,òP°$I†9=WZGF35h¿6O§ºWˆI1¾¼%ÿB£Mb½¤+9]€´#9ûU[>,ëÖ©­ôE*ÈŠ´]öüLˆ® ?’æª#,4sÜÉÏ¥ÐeAÙ¨7kyUè%XyÎgØÆÆµ¤óÑlh—%[³'@ÚÒ¥Èl–¸òuj•t˜U²sm'eoTÞ4I„ma‹†ÓÎ6­cD=sÇØèE<KG5ó°\.=ö[W7½Í©7I—™Wé&kƒfÙ®õ:Íúvo«Ýko·ºkª,:5ëXÎÉ&ý&5Û¨fV4z~Ö¿Tõ{ÌJJ}›ˆû€áu_	oáÝr´Õ°Î¸ƒòÚÅñÛ£Ó·?Q”by°\¹dß šç°›·b[zÈïøbè_d9«N9Õì}_rÂkµÚýO
+K9n'KïM›Óç¿_žüFÏ/~£Ô€ÜäÍùÑÁ™fºïÏ5I!«Ì‡IS™›jè`;‹J™½ê®í^5p³fÇb¯ú†þçÜ¬Î«ölÛ:WD/)“%ÂE½½tªåç/›÷þû—®Ópº,
+t©÷ÂQ&Kí„kýìÒÝð¼“M³_Y2¦¤¬ü¨)^’LÌªÊj³Ö¦˜ Y]KÃ$8^©¯¾q"+ l3;Þ‡§µˆ+ ð($Iôu]æ›ñìuòÒ Á;—Web³ÝºÙn¿lØtÒo€±\YOºÒ¬(Â¢‡i±¯áÏa™‹çÅWìÎ4lGÔ²ò1ÄÊ¸F¥Àï)§h”(<LA8¡¥éß×É±.È½³ }A‰¹ÁXY¸ïÖ¥­’Ðd¾“,Ø¬ Ýk=@îT9MÍnn‘{_ü{üªkÆz~öïO£_ýàSX‚¹kÉÊ3ubøn*aV%"P§¸DNoM.×üá5„Žx_ÓŽÑÃl±{œï«²D`íÌ–©LP>Nœ8Ú5C–ÎpcƒxƒeZ:}›T‰d	élØŠ÷îŠ;{qk/~Óù‘°Þ^VøSçÎ»E½zmU8.sT:mÞ²l´;-Ñ²lÅµòh}¾IÎ¢X»-Zï$»¾Äž¹YµÉëS@,êž	«Ø(V„œl³¾r´¤L +¼fNÝ=FÐ/â·aä–áUÚ]xœ±{çŽ™¡üËé…në_ËlC±®”, ¾$ÄLÞµÉQ‚z†™G^ŸäyVFiC7:|¢iy´PÓ[‡Ïrh‘˜ìbÅ¥0vt—‹Z®!ˆÞ½c‘«Â÷R‚ ÒÍý§ÍøìÄyà#Æè«u³”€lÎ%ÜfùïºHHÕòddCÓÐEÕ—ªˆUú^‚¤?9`þÂeÌí“¹iƒjU!—¹´ïxAnáunð+¼ÌÄ»ÊE9HAiß7gåp¥h7ž^1\ã¿"ê3¯Vøå€jê>÷ :™xaÂþsƒ3~Ï3€YšIg ¬mË$ñQaž,Òo%½÷‰áõ+XxQ¡.‡)v‘Úó–Á‘Õ¿ñé/ÉÓÓ¾1ÞJ÷Â8ŸVóÂ±†Ö¯[‚òš X¢Ø¾A—*«³X“$EI”IÑcÕ›Š	Þé›Rb·‰q=#…8ºX;é¹lM¦ÕÉ»³3rqðÓ1¹¸<?9=;&?Ó·¿œ^““ËÓã·GW§6]Œ±kè4Sh0ƒmczGuZ‡íèC†	û†_;kµðY×kY.©¥ýÁSV’–+²Ö5Å†+›¯uâ"°òæÊÕHYo…"Éš™ôÌÎX…é.sÃÆÕ“Z¹ÆblÙó.Ô"£§N/ê¢«&qššW‰®õª`YÁiÆZ&§˜m'“d19èšò¢¦údµÇXƒš{×@6
+èp’É¦ü«E‡=ÅVÖbêßÎŒ¼àä˜N†Ù“|B¬‰`"ÞHP ,ÖS]§¯›9±¨îõAÏµµB¹Ž°)#š‘ÚaâsÁ›Þ!±|3kÀæóU—`ò°4 Ìž›˜ANÀ’>+f–x®Eþ^àj^ÈAxæ³lsi[Æ‚#$®0“H‘¼;û³ö²%ÓJy¬™ƒQm[>¨ï¾Öê`aGìÎ“ÑKaÄ¶6	K2fëÅÉ†ÔTª[²¥+Ÿ8úaiPš÷©†ì4V>do™!¥ Á )u',_êµ[GåZ±†Æ¶ZÙ‘e±¦gà­ª©îÃÌgÖ”“ÁtZ“ô5æŒepÝ&“¶ˆxê*+ô‚ÈÙqº_\U½ðú††¯»Þä–„AOxä‰8ãh¯r«»Ê€ÿæïn«ÀÄ*„Œ/Û«Œ?ZÂ6µ?¥~H®íu$ÙKI£míK–¨¤Ýûb‡e6#,ÎÐ®#?™EUÞ:ãt‚Èß]žÑ=>z2óúÑ<pwÔ¥QðÀ”	sUƒ‹dÑè)õcŠ´G:K‰íÂa°0'í…Ù "Þ†U§‰îBµ¾r(.ÔN+p,öØc£ˆ),7²Ùld“%_vs{@ªÀü!|sàoY£¢ÞÕ¤ºéªëÍcu,}'ÝË*i˜Ü½CyŠRÆ«úÜ¼ª‡€‡nµ¶OÞþÇ?H¥¹ÝØz¹ÝkoUt-z´Åó®Xtã!Vu²®›w‹›X)+BÑÖ~G„sÅý?V:Ï¦‡•hùÂäyL’šI”ŸÇI¼ñõÎAç5¶sµ”|n™ÂóÒîkMTgà/±3a9¢ºrþk æp€x´ãýðZ†’Ê¡?bVŠVµ»a6!JŠ¿mÃ¾ÑñVB,ÓU4Dbý'5ür›¡€l¸Û˜‹ÈáÉj‰SD£¸‹ªRDr€=ð‹xCÜ806h/pÃ¦©Ãù‰63ñS©]˜ëÑN1NQò·5ù-<ýÍeŸ!¯¿C6+ûwØ§ÅúS–Îˆ“Æå9=•eÞÆoiÏ¯Ó^+ð&Ìó	è±a'É“ÒC"QˆŒ¬@,…À4GÒP45÷ü]RÊ3ÔúÒA@/æúÀÜîÜ	-•h'çÔu0ðfY-üq6!ÏW	ÒY¨ó–ŒZ¡^ÅrUÙy ©AÃsAŒXøº!ÞoÜ[u‡;.¯&b#¦râ_¿ÅÄ–X+®ÝS›ÛJVljU@#ù&°Öb¸v¿\ÿÃ™ý‚'gÛ’‰ƒ`õ¨%5‹VSÍOw¨5	«?Ü×¶ ¢[ÙÝ©’
+©Ê Óëfd÷LÈBR©˜&›ßŒCfª¸hðÈcE¶þÆ8cuP,=Š®ÞÌ3ƒáÙjDíöö‡Ldla	27-C”•‹û]ú~æüPB¿”€,WUm*,PHÈ‹eÊ¶ÇÛfYó²ÇG˜Pùs{¯ ØãoÐõgY›†ˆ>°,Z'ÇSÜÐ0ØëÝšMîÖŒŒ²ªÁ$+ÊèÖ¶¬\}Å&']ËFŠ>m7N\%@ÞMÅÒMX¤¯^)0”<Éd™›mnL§¦N6ÞÑÙ<¥PX:›ÔVäÒTö>ýégý$Œ­äÅéB©ßüæøèôÝÃ»ÕK³´4“€‰E†g²´\rKe?©ðÎ—,üù¨D3Ð£XI8Ä­giZË¨#$7B«K\âÜ9Ûc¸ {vdÉ+ñLsT˜6$ƒ¹m}ÖÊm¸K;ò§nâšùá2ÃF$,pžä0Š(–~ü7FK™?—ŸG¦L¶D§R±Õ¶A¥4:>ÌäRDB#ÚÕèoàð®4:’.g#ëh5ù•˜û‘^!¬¢nQ½`·T_<Ò[žÖ?b[ÆÌ]S?Jï¬hbÚcõ»üÜþñò}óº>-„XlÎÑ£Ä=pßÈ¾ð[ÄV¸0IjÍTÎ«0Ây4«.ñØUäÂs´C­ÝÃ¨w‹†©º™©¼™¼ô¡ÔSÎlEw{ÛífL“æË­Þ ÌÙ†!-h¹Ð˜´o4³´¤ˆn’Òæ ÑSªnË‰Þ•HŸoCˆ|.bôœ—à„ÇÐ&ˆ3n¦|jõ	¥Õ‡zë7±Úªÿt*ƒfÔ)äúÞ¯~äƒV?õ}y}VQ·
+¾ŽÍ’ò¸¾†•òvàŸáPQÜ+þrÓþÛãw™¡M‚¥Š q×
+¯1xéøQRHÞŒçn­×úWÓ3[p¦¬ˆÔ
+F“d$4žØ‰\=ÍÂñ³¦Ò’4ý÷¡fíÍTzÉ) •kó–K.WøÕDóëh4áEÄ›Ìü r¦Q±¶€È01ß(o3öOíeß°ß¨±Ô‚ø´ž›\Z…h óþ‘ÎÆÎ‚Ä%DõÎÅä-¢WààA`}ÏyôWcƒ´×YÕˆ¾²VD~ÊÚLÅƒ“è×ûþÀµB	cu°)±4ÁâƒELÂÄÀ${Døæ¡7Tñwÿ¥£QÊ™‚¹h·¥½o|0ZSÙ	LÝ{qÖO§}èf{‡“ªC³s›â×Õ±™á:ù«øBvÎlÿ	ï<rg>0¬Ü«­ž|öC#UÓ8”ýL‹Mõ ¯ßVa¬õõ¸p5ŽSfþ˜<œ›%ì„
+ØÖ/Uµç“ ðw²UuØ?O;+¦Áœ5Í…#
+¥î'Ä¹w¼¸Áá‘ß¯ðÿ›RAŠ	+D˜Æ•®«*Nk‹Â€Qêù §G¶ƒãÇ„Pû#t·°RÒ‹˜e},56(ôNÔ‘ª[nQýøc7ny)›	ƒ{
+ €w	T¾·0rèÜ¥ãÆ]Gõ‘ã…ïµ¦«MN%~ˆ)j<yªÐ[2«BgUaA'{‘©ÝMå [x0A2a‘D“–&TBÇgFÅ,Ä‚ÒW‰j²Ã$åÙ(.& „'b/€m´v<ŠI×¹aÊ©H“ì1+>[æ%Þ@
+§ó[£ŽsˆdL°Ž\2àºU‚ç÷¶M›Ó€–?^ íÁ*DlÛéÆ;Ó~úà<Ä¡××°óíæ[úæ¾]£¾imÂ3¶Oß“ÿ8{L®ŽÏŽ¯Ï/::r•Ú(¦<êKÚZ÷?ü©kÔH—µ™ÑoÁ—Ø„·ð£åBu`	å	PàI4V1ƒKc0ßPÑFÌ±–ëõOsÒ“V,£,Ù·O7U¬dŽå±8ßQf¤2ÖéµÝâ!LE—âTÖõqŒ¨.Ð )›¿oÞ‚ÂA°€Å 6í&¨/Äl1ñ)ÙõJŽrZVÜ¥ú"­/-+]¡}°£4‰a´“üW–®ðšÑ•´²´p*¾h‡À
+Vƒ_×·vŽå´œç}äÚ»ëÃµ/÷…vêŠ¾ÛMrXä”¸Ï,Z	º\àUÁ¡Ý†MÀ½O±Ò">ŸpåF!•þTbÿû° æhª$—ë(ÔAß¢pƒWÚÚ ‘&'øäFÄ½Ã€Ëg‹ùr×ô±ŒXLÀé¹ƒNÁÛÏ`9o›
+V9¥ ”·ÁØ=Ÿ¹Sqcší¦[…½J•qý.c¶ƒÆ‡IýÇ38ÔI7™ó	…ÖY‚ò)µ£ˆ¦O`Ø;7î¸°Ü0ï,…ÝPíÑ¦²/ÆnìnÒJl4‹Ó
+j 6 Ì(I Dåm%r;0Lä9u¸–Œ½²MÐÖ¥x‹Í<üÙEàÏœ[º·²AÏþ¤J
+¨%Ù`Ùn>/›¸ÆÊš6s;—9$ŽkË¶1im¾r»ºí'Éþ$‰!­gšæÚc6Îå•0vHV€Cü°ûòus;6ÒjÒÙàwÐ"%µ¢…ÃgB½NÏ”¦Ï‹S6C;,k¥÷i?6OýPB5M»Ôúæ„ZDÈ–î¾iH‰1‹ôÔQç`»•äÆ~ßì4»Í—Ó"%RqóPZsz2ˆ’W›JJ­w5ð7DÊƒr1˜F 9J®1ã¬P_
+zêìÊœ°¨)mBeµê÷|mö*W«˜ºVsØûr™*Yd]ÓLáÒLM—†A¡ 6®d¹Ø§8)ìYHZ'#ž$ÎRAGŸA‰WGÂ¬B«_&·W£;­„¼`ˆóÑØåòŒtõDS4'µùþ*f«) åštlIµ¥s¼5ŸIœKÀÃãÊ¾	àüÍ ˜ápyÈè¥‡üš}&K·˜É¢šÉKfQ¥²`]âÇî­3ÆËnÖÉO.Ü‚i0w@š9š¸ÑÈÇVf¦JuÜÂ££Ï`ò÷ ¬êd×!£ÀîU¾¯H9àÖÑICl‹’+Cò²9Ä¨¤3ÚMfâîî¦£d*ç‡ü¬5uuQCÜí±§õë2dãxÏ¦c'Ä€Ê‚ÃÄ°Íü¶#—¸¹ÜYmtXú6¥š§¡®kô°új2¨_ZÆbÞã‘oïÀâØíìèS—ONŽ¶Œ~Ò8ÜÆSÊea¥Â–Y®Þ½oüWÇ[~noœj«ÛÝh5»F½µþa™5ºr1˜bÙ’*	Z•ãbìD´šÀìÌ9VûjÄÇ¨ºÏb›’ëË”Xz9žñKfÉm…´à¶] ÷Òwôà#ñÓUž‘cSøÊ¤‹”.N&„"F‰Æ‚sŠvâ~Ò6^´úpìÜü}t|sßÞ´QCâa,¼mê»‹¾½räßOãtëÖ’-oVoj¼Áïüºä>å³° ÷•%†ÏúêíÓ}c’^¹o=^3žfòi7¼™__VÑÞG·ÑG°Rn°W‰gP!'rj‘F00LýwÎx(¯¨Ö›,šº5? 0éøµU·9Á­ÕéˆzÿlQ) Ü(Ôþ–m6ôçáŽ?hƒ?ä:"ØÊô&Õ/_º¡½¢dâŒ!Ÿ1àÉw{{4xoCÔ¸£AQ/6jÅ 
+]£¢k$ÿê8J”ÄŸ´“üdÌ™ÆvÁ¯ÙàÊµcü!ˆ›ÀÉ`ž8žEˆ€O¹–‹§LùÅ@,$Âü½ú—Q=‘%Á#Ó¹^…_ã[åÃCÊ„WÍhgé(ÌBÛ ­F£apØ«/ê|ùbxhÖ Í.Rq’&[©+‘jº£í
+Æ‰`ˆHìÖÑ@[Ë
+®NNýÍÿÞ[¤‡Îê€y/is,©`ei—6ÃrÆäß;äûƒÜŸq
+™½Ûós'-ã8Õ4ë+ï9= ¯'ZdT°é½¦ù©?~L2³Þv¹·OåÁ¬×’ù§EŸw¦Ý;âb¨k	Aµž²þw@ø2#ÏÜ)mËÎîåÊ»–:pÿN‚xlÁ÷#útL£®±šÕ‹Ì³ñ‰5å£@Åú}áÇdºšÈß%Ë¹.KI½0-îç12-{U®àêp0æ²Â:=cexlMáQV{ÔM¯@üT‚6«,rÉÂ„Lµíjp5íàÉ¡…Äo¢{Ü	bÆ‚Ä·ÔÉñôïþ‚Œ€IBŒ½‰…Ì‹NûNÓžfƒ ôÏqXG0šU.¡s¹ù/Lˆk­0)ê6•íÎsïëäzçáœ&DÎ'7$­N­³M#TédJÏ%ÃŠ“¹wBßR'¼‚VŸ" Mt`­£(tPow°_ªÝ<Öø&>ÝMðbI­7íô5ôJ
+lq%h%67³ÏQ×fì??rR±Å‚ó»,žýðÉ]K–]ßFÚ&«AîŒÁmÎ õ{wþ½Þ†P§<'È ü5àìâ,e‡#ßú÷\ZÆWN”;T*Î /¡è«¯ R3°\¼”)‹›ëmoâ¿ï(Óº¤Lk9Gç2;`õS­ÝK_Ïý˜™Æ³+ÄeÛôeö~Ä•î/´…¨ãç6#¡“]Âyâ˜àþ¥=˜Üû8ã‹zkZâTpÞú¬ ™3òB§úX¯×Å7H2òÉz+Ÿ¾”»ò³x&ÿ«ãæ™ó­ &Ìúó`f<ð¿,bZmÃš=8ÏÚ¨M2GMªúÍÌ%0ü'%º½[±…RÌ¿ñö–ŽoÜ‰ý‚[£¸éK÷oµ”$kO÷ÏÎõAöM-ßLÖ.#qªÓ7µuëÑÀŸQó‘}AåX•}ü{w“])óô‰;¡Ï³—álÕ ²Oÿ±x~w“­ýŠøJR)©TáLžhµ<Sê0ùø-0%¶´c:r6\iY¾4p6á!æ;ŠŒI™jodLv¬i%ÌÉðB™—åO0jIÕÃ„YQ«Uök5+ÖÖæA UÇhÚêãØÞF£Òn>mêïÄ£ŸO‘}„é×`Íj/½›OŸbÈáoûôïäÕ¦
+'Îd!$ÿä3åùÌ0úGŸ“ÓLðòõ!ã5h«ç6tÜoœß4[~C?àOŽóÏÌq~s+ƒkY†³€ñÿä7êCÆo(ÌVÏnpØoÛ4vcþÑo#{D¨½Ÿxƒø]]'5âÁÿÍíÿF67±•l±,¥æ6}4$Î­o~¯ò“a‚l±ø2Ò_ö9Ò[ÁÁ°Ïæ‹+£°íógü‰±›ÿýêüm=¤å‘€©VE¤]§;š¹h”šˆëë†8É8HPK†ÐLY)m4oŒÑ´Š3c¨«È0€Ó¾@ÜT?ÞxwÎÃïñ,Ç­žß_<ÊNŸ>näÁ”£±ã	‹:¥E¯žÔüèÁ(nàßœßüVç‘Qyc-ÑvŠšUÌ™
+<†ËêçÔÜ¬Óø?ÜÒ?ñ7 *¬Z­ûJò=òû—î¾´PVúkŒxÍG§ï°ª-+ìÞÈ÷‹6Ìc¤~v©_ßb„Ø“'qZ<}ãÑèHŠ'–¿Qb“å ¿ÉqÎâqÀüŽþwÓ ‘ ÿ¥ü¬ÅóOÑ•lõ©_]7=fŒ3£Ìwˆ3]X„šÇæ÷N0­VZÃœÞ¡7vYˆ8§u|à7£gc¦òVJåWnp‡ûþÇW×äàâte´ùŸ@—ßãôYdö Qœ®ñ&‹ÊÙl¡‹LumÓ™y›Hæ›V›lU×¬žeGïµ‹ó«ë5”¹a¸CmêI’5,}_Y»^ÌÜ5x3›y`ÖæßgmÞIÈÓ*á+xñÚÀÏ¼?è00êÇ×@]4ð‘ÞôôpfødÄe@šö@cyYd3ïUðÓUpÔçòÔ²Œé™\x|øÙœØÀ]-0ë[à¤ÀÃVÂC—½¸D*Ì*a²ë+Ùø*ªë~‘ÆÏ~§-â®üPuN:£¦\[pàlÏ·d¾­¤¥Q©N¸Y¾ù[÷žÝÂÔ’Àà/V´[ˆ°“Ï§DžoÒ‹WOWðØ	ÎÆº)XZBÎÃÈªrKÂsßŠsMz0c~Ù@F3ñwÈwø[þò´®­å(ÉxÈ7–›D™Š:Ü©jLÈÅç¾xÌ šM.ŸïP(ûXDw~‡´ì¯x­ƒ©†té”~øÁ\’‹ùE“ì‘?CòÄÂ;²]Ú–±Ët‚Œ[×e*à‹U†ÉŒ­™uMäýK·ïâ§L,Æn„ˆÄAAÂ)ÃPTMïdþò¤àM‡	%àÏß*!àÜ¾-: 3ú×$ƒ”™9…t€ 	&ôè.\g{M,™šÊÛ]Åªñ×QÏMdµqÙ +¬‡ó-„^–®‘ó¬Š1†Ær˜«
+w\¡Ï¼)ð¿ï±jr4›î«!µd2%TÂ$DO§{|Š;ÙÍí­­“V¶•x¯wrÜÍD6+,“$ÊåídËúf‘UpŽÇ²EÚŸÏ>.ùtŠrÍ˜¿3“h5_.m/›Ö4¶kJ¹ÞÝfcÓ» +t+–^û{•iVþ«ìïÎœhD†Þx¼WánÇC|m…ö*oZ­z·Gš­z«ÛoÔê[ÛµzcK µkõVOÿÜlÝuê­Þ¨[ÙêÃY¸½ÞÆ{ð¼îj’v½Ý¼kÕ·¶F ¥­~«ÞØ†[^¶àBk»Ö©ouØOÛõÆË?”Åy}ßîlwÛlJÍiµa€—[ðÝz§Wó“láÃ­z¯7ÆeØªá«úxNáÚ0«F®m5ÙO­úv4jÝzë%N¤]ëÕ›=˜H·ýs«ÞÜ†¹nwÛõ—/I$u^°Ep|{q‚'¯_6ºl‚]x’4;ð!ŽVgPowá-mö|üË°ÞlÃ™N;>ñË@–¾úO“íz·K`®ÿm…x¶]ïÀY¸‰t`Îc˜$>«´Ý„÷´Š;>è´ÛÝrÝz{»ß„;vm ®n×ÎuÆíz³[Ã¿›[ø"œ~	€g !p1,0€NgÏözÖ¯o#ø{¸äž$,›Þ& §F5YuÙíÖq©}ãÌfiàN€ÐýÒµ>Ð´?ù=í¿Ï½ºLóÎ‡Þíô|Ñ}]å­SçÎ»Å‚Ê¦Êó¤ð-³R°ý˜™Q¾‚:G/“+ÛãC¦xgz¶•T¢àgòÊM‘™åÕa(­:"GˆÝ3ÿ@©Q’7(õUaï­LYÊþ,ñç‘ZmI‘7Q†·ëùí§GæV»`>Ùkç†&ÍV¼éÖ—æÌ
+¬Å$™éV|âMk<ŽhvSƒÀZ>rÅEßÛ9ó’éœ‡3›<°îè
+èçNŒ6T¢ZÌBÊ+·êiÊF¼¯µ[ ÿà¯dìg”EßÅM¹‹ñ<ŒÍÏfC†tq;rmÍ	›¡’ŠI XÍÙ¡MäàßA ¿¦*‚@qôG4Ÿ?‹Ô1œF‡O£“™FV‹±œFnÕÒ÷Üø@Süâ uá˜3Å	¡‚%ð#àšˆ:iQaWøô¶Ê•P¦À½Þg ¹¨+Ä°;j×¤µ-<”µ‡ûùšsfšÛ_{wŽó b1JTö/œ šºA8òfœ9b¡*ÀÜ‰âCG-ÕwJê†ï4àOlgpÁ’+™Â¹ö¤lÃæëŽ±"÷vã/¤ïO&-ªE›™¹ æ|‹ƒ¾ëp ï¢ËÌç@Q|˜´‡F7‘:È³ÎK×åZårNõŽ!;›Íh'˜ÛWug"ÉÂâëzä…´4¸~Ó1Ó#ù }·8F¶Ì€Hn öLœÊV]ß=ÙTîOíÜK4¬µÍäóÔª›r#OšœvF´¦$c›¡µÛÄ?…ý=É3˜¹E™Æou+É¶œÜ³£"‰KÄv^ôFá:õ|UÈÇâb€â±iôå9`•j5I^Þá2Wç7lË³ÚØ ]ìŠù+³:¡[Å¢ìkï®Ž/×ÖÉbG{ú# vàOªØÆ¬üÜÿè‚9.¶öÇÞìÆw‚Aý> >{ËYýøâñÞƒ!ïëhBàŠÕ}eÞôévxñÈ?UÛ=·_}‰ü( eƒ¦Ÿ b3Ïhö¨Ë¢oÜ×@@_ÞË Ð}îs¡®¥ÅRÃãžþl4§÷!„KSƒ\Ð?Ç @sh…ÇPnX˜±„á‚…©ý´?Éd°ÿªôj™×ò}³* Ô	–h °‚-w’H+#‚”ÞfMÞö‚þ%íæ&9ñ¦Î”º8q±áÒÃ©¬#£ö´%ýµ Á:‹ý§ mh[ãØÕQhQŸå”e
+•X¢þ{"7¼Ö‡’¥ÿâ57”ds(6Ï–)Çte·,²^Jv®—Tub»Åh	Õ‰ÈGÜvÜþœm£[KWE3ô*`ÓÄ™U«ÑÃñTºiÊ[é÷èÁòÜ¢Lp<<Á?ÑCÝ£2~À¼aäLføûÇùôÓÔ¿Ÿò[?jJÙÒÃ“¥ˆKP±4èÈÜi~9³ËËži6,z¹K6ÛŽÀŽ€ù\?TÝäGJ­¯È±~‡ýªMf)™`†åoËî·Ù4s·ªj,>&LV+ù–	HÌôÌ®4ÈÍF—PÄê=¬”ßeµ«N›—uŽ:'â-üŒ1@8”Óà<K°ç±zèæ>¼ž_zãMs×¬z’[5O–Åö;vG:d7‚’@ ™EO+ïoå2 9džÈqÌ	A‚v¬'¤aÁòJÇióaEÍã0b³Â sPÓŸ´ìXœŠÄmo“eL~XÍf–!5Qßa`Ùæ®na­PÞbiWÕ¤ëœ+VÛ¶ˆŒõ~¤×ÖžYÈ¥sH­¤þdUÝ™à6òrÐ>?e[|›©Ï/í²Z—w§ó>§nläˆèõme•$CùãÌ`	…Ú•‡þd6v#I1d»"¹Ša/s³SžXjÔ¤s]ÅSo‚NÐÙ|ºê¢ÌÙ³èõZœpäH‚ÓA#gH¸h®M4V¶EY³š¥È	¨r‹aY¯<{” yÂ¨>4”2Ï_ùjkÇÇ£T¿ÓWˆåÃÛõÐ¤ÝÆøºV¬»Fy%6cF5?$äâMI8©?Ô0K›ïpæõÙ _¶bGùiÝð=øZà!L9[çh´ÃTCÆ/6c¢ÕkXHÚ›îÄõ htJªÜñÓÖÜTî‰gž"w/)¹«!÷Vè½²ÿ@øÞYÐžh­Ùb£j2™`³Žn#„© ,›ÍZ)£õi—ç+‚üÊýÏ9q—¼õî—†7Ú¨eT¾çª†O@\"i ¥S8atÁ¬–µ–*ý¬‡Ñû—Ë/Öù
+BÝº¸hÏ]¯l§Qu§
+ûMà:Ÿ¨ÍžßIË·fž‡Ï´Ž88ÝzÞZ±üä%jÈ›š’ˆz	p"ÛõÆÐ†1?ÙV%›ý£H'…>âç—€p9Ûéð\£`Û«^Á7_¡YýÊW#Ó½Ün5R |Ýõ°Ðæ.íë¬«òTåƒ*FSlz(oÈüšîŽ`L6myu|yzrzxp}zþ–¼9?:8Â²C¡QD‡•&qe¥?jï{â’«ÒMCàÏ‘¸÷•ÁN;ß^›÷Š˜–Ú‰‰àFü/:gó¤o´údÄ}»•²!ŸyR$¹8ÿÌ&Qv½\‹ùVÑpTìŒÉÂXÆ·Å×T Uö3Í»@{Dòd$3¬M­™z²|'%~1("×$ÑþÛÀÉ¾´•óoUößÍÆ¾3 I«²#Pæ'ðsáé æ†B•}ÞÄ;Þüà¬h3ÖÈzÊâ·Ð€Þ÷Ç™á3Î¸^`|23N¥òMšL÷Š#ÞQ§˜HQ&UågUT¢{jXÖÇ™õ\¦åê`™°¤ÁIõ À8%§Gëš,*]|c|ÅŽ|6¿®À22qpqÁz7»[eç=ˆEôeú¹SÏ¤sÌ´¾uë·uòf@~vBg*¿Ÿ×)û´è³ðU´¿ôfY¹gOÒ4J>Ê‰‡±«.'qn)Ö×Ç·˜¬¢C4]9Áo‘¿ +rÀ¶a-lÅ  ž‰&l<’3(r\QÄ7eë¾==ªì¿s/OÈ¡ôå÷r#\ÀÍü ûêðŸJ=~x´Ýî™ZF²2wB7˜ºÀŸÊi÷Å‰  úv>¹Ñvfø×â´ÇT—¸L)\,IˆñÙDÄ†Y-¯•ãj'X–†iGòbJl•ÒP&hH¢m-…Ó =€‘+TÇ@;=R[–úÈœº?ÄaOÿ/Ýa\3ìF ö?U5f_íG BÆxžøÍN8Jª	HÐ?	0°Ê5‘ç'ç)¤(5’œ|è	ËÉXIÒ/ÖÄÿ0ÞÁØ†ÚU0ætï1×ŒõÄ^])Rü6»ˆ³ìBÕÝ kÞ€.üX`N¿ïÎ¢½Š7qnÝÍ¿jã¥Êeˆ£N£ßa2líW)q˜öÐn6„úÂbTÈ³wx@À7pÃÑá½ÂÝLå€Í®¤<E!!Wš¿uéR^J(P¹çlPƒsD!F(›p„#ü+³o-ÖfB/š9°'›µ€ÔvggÄ;ñ2Ã”›ü«½aÛCÕbe-ZaéødJ¬œfÙÔŒ±@yFè®7¹%aÐß{|wyVÇÆ®‘Ë<ùð{57\Öc*ìMG‚½ÃbÞÎ˜È}:NSQ©ïr¯2vþXh)Dñ¹zWÝ7$;_ãÝ¢³”ä¼Aÿœ+œ"XŸ%7qÑŸ!6)Îü)5W*5¦
+MåŒ¾]¡i¿pÏ•™”ìV&2q´HLæ_J`^¹ã¡çÒÆò+“— îš“tÕw¦S7¨®…ô-k
+K~XÈ%²?åÒªäR¸H¶ÿ)˜”3â‚)„Q¾±tí|rqwèÒ”{g\jŸ'£8	®HF±Ñž+£Ø×~%=iØƒ¥dî¢ )Æî$WXpÝÿ  ÿÿì½ÝvÛH².ø*i¶»I") ü¥±å%KrÙ³í²Ž¥ªêÞZš2HBv‘ ,©t4k_ës1—suÞ`^©Ÿd"òH ™‰%¹ªwÕm‘ HdFÆ_F|!»Å³’°".í+Ãg9¾ChÏ,!W–œ—q¸øµ£Î1T‹ÍRdb¸> &WqÀvÄÏQÇE@M‰Ûã"žø1ßHŸÝ’/aŽgA—EQLþ~åÏpßžZ(	H]¸˜àÕl Ÿpº1ß[1+%Á¬™]R½5vb9<+n½b¦Ç³âAá$s‚äÏQ%O>ÅW&?QMðéXýý*Œƒ)ø¥Zð=ìƒjm(Na±£äßþ¶|5ž‡«ÂhñçõÅ<°ªW8¿š!¬%ÐÓ¨Ö%Aœ„	V¸ À5Ò’¶r`±_„ut´ùÆ ^±—Ë6Å¹Ž®fSÌÍ¡Õ†Æ8ŽŠŒ\qP&0<ÌÔ‘K»õR‹º€Y?‡s ö’ÃXðœ®&B¶_$/Ýb/6¿Á«¿Zl:)U%ÚcxÆåjµLv67¿„~Wüî$šƒJäÜ Gz…<ãå»ƒï˜g­£p5ŸßÒ9Ó>WAýgP[D×s¶ŽìŠF¹ðÐ¶ID Áe°@Ž¨Ö]ï5Õ®G’§‘ëÊÀŒêÈØ‘*ÆTWƒÑ×cQa¡$ýnZ ç«pÚÔ´#/MMm-0ÊUapºÑ¯du#<spM)«kb b‚¬…ã
+Á"
+´À€æÑGY"& Ÿ‡ƒÑÚè²ÂiŒë·îîuè$Ú¾³–s	P±H€ÒÃúÈüüs.4OdOíÄ3¡m§âïðýhÅâîÒtš2@l}¡¶}Lû×j\-¾Ð§8×Á!’`\Q×ó|sbAhŸ^€[É½*
+-VH˜ì°¯¢ÐÔ¼ŽJ¶¥E_t3$J¼p‰‹dH)«ºh”GiZ°20$šÐe3=‡Im‚þ….42ùžœ‡ ÍÏt¢R!põ¯_~y€€Œzyæ._ª.¶ÒÏYb5O
+	Úç¦ qSÀCàˆ7§Î/ðë/xÉ/ñÅØoyƒAÛsm§ít½jÐzý¼ø˜‡(Œó²„
+æ÷*ê¨”^EÓì[·Ûm@Sü
+•	¾QŠÕT†÷–û¸î?~z¿÷7ò~ï‡ïÜûþ¾?Ü×Gx¿÷W û|Ý0oìéI´$¯ý˜ù×ög¬Œ×LAÏ©<AHx½(ðÜÕGt5lç‹¿>0¼lçXÆhÛ!‹V‡^`‡aäæ`Yh¥Çr@¶µ-hû˜ÅÌ ]RŒÎ7KQað>P§Ê¨ÈxÆH&_¼"ë“ZJÀå¹Ëhx¥þ!ªo@kÊª¤ªª*®Ag1Öb,–Eµ«¶j® 8ã¯¼CÒ¡Ò^­W€äo‘áýJRŸJ|¬a†Œ>í+ìiŸg¯‡¨Næ02”Ü®/¡KêUˆúaìhsì¡ôL
+äÌH5ÛŒ`_å«Õè¨Ú¡¯vv"o¹îŒòè,9NÂÖìùÌ¿0Ô¼P7.²cüUÊ³=ô¦±†I¯oØj\´.Ñ²KûÔsDõ!GVdðÀ4§¯Òµ-Ü{zy#:’+úÓWaóçZ£õj}Ü
+«òÚÂ… íüñ‡“O«R€ä:4ÿ*ú9%N‡#Ît	…sø1pWÕPQLë­ånz„ac¡“óÊ7½ülCÐäHEhÚ ustz.ì[ô”Í9UÖËwT³Ëu±¤øu`$Ý<íeŒp‘4t=©ÎN¡_t2é‹„h›±jfòË'ÄÝb…×‰Ç¨ó7bï§)ªèô}ùžV>½¼nËúhykôè;eÍ'®¿”{ÒlÂÙû‡%[þ^šuE†c…bËXÖ»ÃãÒvÏÃ,õÖÇsÒ]EïÁjå¼Ýp1™]Mƒ¤•£‚üEŠd¦=ó{ÖQ ù­FõÙRqæöÆ¨«ÈHw}™´G+¢>•>æÉúªqˆêp©ÆŠ“=†¦U•(nO:íŠ’ªÃ5$Zm© åS‰â‹qËi{ŽÛv½Ñ†Ò1Žõ¥wµ®»Q’‚†^!Ÿ¿¤ÿòÆr={ÛØ­®RPþáwÔ™¼7{ /üx¤Ö•àçI8€T€‰…×Éuôfïx,[îÃåÖï oÓ9÷3ššë˜LÏ\—O„PªÐpÍWNîUîVb)+q±_æº:Yq%.w¢<E,h´"‚iˆLÃRÐR-œÙyFß¤ŽÂBy|³©løõ4%žX%’J’SÓ€‰ò
+žC	Ú›%©“4ˆ$+ÌX‚n Í—ƒUäø®tÁ©k›œz#‡Â¼*‡jÿ2BSÌç¯èB‹yådÚ5O½<ÿ‰*x@8Z'_^O˜Œù)W¿ÝªdË8VWË“ žãæÓÞryrîÛ–E«ô©Ò‡L…[;U8ÌÌ–ß.ªQöÌ:ÎPß²öÅŠ„biÉkº¼^¿A.ô ³ÏŠê’¼
+!M÷çk³XeR^±O|ÆçÄ_‚ï#ŸýPPÓÓÅå$Þ4˜}÷Ð™^ƒÜ¾l¸nCtÛeÝÆÓñ}n|‹@óÁyE,š¸E\÷§-@ß+2çÎÜÄkLåMZ”jpJÂ%Â„ŠS.„ÀB7`á–š+îUÒ
+ÔÀ°”E§ÑÝ½Œ_ ÷€fUb-±èz”}E³€äÐ¦_o×Ñ?õÅ÷ˆ-G‘Ô&ªÒ´šÉ<iu&êLßøLÊg.b0'ÿuMúº‰U`¡ÖawÛûÒó=â1vÑ¡Rá‡íîÖ6ÿ—ý0ê{^×ÙÂ³öûe
+fùz¼oÚÚK'ý®ëïRz>ª»åaÉ^¬BKÿuèX¿¶;ÂD×X‰W×}EwÉvwÛõAÏƒÿ±†d8s»–òõ¶ä'À-ôÞò3ð]¹ƒbH~{
+~™*nyüá89ñhÌòWæ¨¾+À§?ƒ¶—$toúÄ/iÄè7ŽYÅ1oŒáù×a™ÙûÊ<³Oú—îpâv]ìén#úâzË\wð{Î¼íO:ôšŽçàï§áÄÁSø¯‘8Ì2šÝâî¡ÎÌºîµ±ˆyÛíøD/ä—ügG4 ûiÒ1–h [Ç`jÞ•CÆïÆ“¬nQœÄ4®¼×Å«íuÑà1oÎ±wŽÊM[Ø‘__àÜO±¥9G°ÉrÁs6Éê2LÈÿÄfŒîÝR·@^»‡7Rç˜³HóÎodw/ÙÏqÛ\=S·£•|uB ··¨{ë»Õ¹ÿßãã™9á2Ëô×ß³´,ô)ÃxaYÆ†BB)ó¹¬S¸*’Ë£:‚Ž„@ëg’M ‹Rl§zéãbÌKQä Y†£ƒßI—©1ƒÎ.ƒÕ8ýlª|ARhÌÔ‹Ý¢+Ù:(Å®†4Qº*±Â”!FåAóÖ™¿ò,§Mrûêáæ+k¸y˜üœ ª/%Ut¾ºÝþâÊŸ‘CºC÷oÁ­²[ï|Í@ñËUBÂ—ºÈö	©b¸‹kâ8˜ÄÁêU³²zfÇ5»ÝnS nš
+mPo¦K÷ò¼_/ ];Í˜¼.®ÔQŽõË¤–k¢’²üE¿ÌcÉß'Àµ‘ÊÛy4F\Cß(;é}òEÎ0A1ý@Q\ö¹›tP5†ç©ë­·T—´´ëÑ%†Ubx*»/¤¿‘ñ–ò\}›®\zº`k
+ÔÏeŒI÷ß¹Õyê&LRqTb“ŠƒGJ—¡£iÂò‡*jê$w!lª3ŸÖæéÿåt¶;¤µq¶yÑ&Ífq³¾xäÂÔZƒÁ`ƒ8ŽÓÿ;æ‚Ÿ*êtÀJGÏp»‘£19äÂ}+8Ö«àêRwØ&2‚¢UþVŽ{á[Ò¦7ÔK÷uì¢
+‡Œ
+¯%/-4·eTÏ
+¦»ãw;i?w¤l¨ô\9-ªDµdÑq·¯Ó"ÆeµE˜ Fg]–ƒ²ŠÒÊM}»ŠÒú}šNcçªêy™«
+?ÿ\UY@Á9OU./A;=ùbï…‹v<}È\@ÚRí´=rÕË#Ã¨½Hë«ÐU¼²:GŠåÜw¢ØLàõ;Ñj‰YðÅ|w]Jz CX ÷†L <
+<]›ÄS—uÓÄ·'6êócæ¹|dŽ\yÊ/³–¯Ð¼‚fRõf±©—öøm3A[A½ lCˆ°&l·(×ºÎ¡ÉaæW—v¦á?]åXSç6,¥« ,¶Ïš$èµ£èyQÝí*kÚëå©îÄèKÐËUWòœÊ'e Õ…”€ŠØ&ûìîÔm{í^»ß´‡g,þ=ÔD¾óGVX 4þ3˜Îó»Pw-+Ceîß¼tçjùODÙ~ÈmêÙêú2ñç#õŒú½*—ÅÎ²ú©ÿY|e&õ6AÉ*3‰þÆyY¨·`˜û…Å9‡äšRF³§,p#Yz~?œ€uŽg˜Cê'äíÉ‡÷Û—ÿdêë	¶³A[ïÒ1mÅ›ž5»ÆZKm³>¿SB4ÓÆÎV(&ÍÓÚhåxd,7’Ïí’vÏëõz£³²%,%EðÅLd{‘m¨G¢Úˆl¤ƒœ¶.+5‘2hc”F±H€¸uÿ~`&ºl£xo6k5)w<Í˜VÃmœé°yà˜´eh³ÑÐ^”>ˆ=>ôAUd<¸b¡Ó•Â/U¬².ÛËá_£œ“y&YRµøé+}÷’˜^ÉqôËÖ ÌšÆ9L~òg!•Ñ\mæœ~:ªí&õ×W£¨›xDvúxr„zO÷>´*Æ6L’+„-k¾¿øþ K¼9ºFwJHÂ6Àü^ÕŒ?»ˆâpu9‡¿Ýs«®§
+@²C†×-A5Eã¦çT\˜ÐÝÉÆØH:Fy`ôŠ²¹™³•“ƒs„¤"„Y+°ñ;Hßmr.@<ï>ŽAë!œgLùOÆµ™#{Ô3 £N0!”.®\¯×›¹s=šô{Ó)âß.aáêV^UèŽÕÃS#š±‡ÀÊáªX :àŒ&Îh–3ž	ä³Ç©çpÁ|{1ÛÕ×ã2çø±‚LSò”(•¼Ê>‹¼6Û b
+zå½Ùãï£‡˜”ïP¥lUÜ’Ëæ2]›‡5S±ÈW¤QŠù&ëÿ³‘FY2êMªú˜»§ÁìyªHO›:j³r¸eï” g8Ž(Ú|æÇh¥—½²C!nL}‘{ÿvyT&®JŽÅÂ¹êÒÒtI§ÕÃSïLRExˆ¤ :ÎØÙrÊ
+b)àL¯šÍäüToC–®Ñ!¹ä/„-–zê¤mf’ä3xVÄev¶$óüÆ¨Æz?§‹æ*ÝèEŸ’À«TýÕzŸù´á4ÄÔK<§»ªŸô<š=`
+†•ÿk½ªÜvÉoÞ}ú@ŽÞ~üáçâ¶>ìì¿}÷Ã÷äð¯{û'äxÿÓááÇo?žƒÃãwßÿ°QL×¥ŽŸ}¶Ž-òvÏÃ
+œ&ín¥I»æ³~†?Ð’@Ó8ZbQŒÅŸEÀTˆèSúW@W2ðy¨Jxeg+Ïâë{™·Ã=ô•·Ã;è9½mi	z#¼‡¯9ôsCâdtø$sTâã/;§ÛÞ—ËÂªÌìRæ—ºÉ*ZÁXøôuó%‘
+)®Æ€cÃíù>‰qóþþÖQd‚VÃ_ë-C.KKeªù[hêÿ<%ˆÍ÷È b˜Ù˜j£R\Ïl-†«ºRåÊÏÑÕ6¹„ÿËyHVÆôÙ	ë:zHÀJ‚/ÿUBu/9lŒ8’%:ãÁäu4½­¤±%+ºUu-/sÇÔ6jÑP#ïºj¿ß«w@¾Gé»÷Å_ù1ùŽÎƒØ‡ßc–a‘…ðÅ_^†e-T}ø~Á£ðÏü]ž$ ÛAÆÛÜÎ,qü(¿¯ÌŸE9iÆ¯ò;¸7óÙ"yIA®w67¯¯¯»×½n_l[up—Ó€jœ'úÐÅ`Â¨MCZé^=n¼]¯~,.&áôeãZyøÓÞôØ}Ùpn[üàÀ‡ïecDÏÀ‡m8cSFG¢ósXù0zÆèhIw®_6@Ú¿ÙÞïW„æ›è•Û8ôßÔjc8(µ±‡a;uÚ (42<èï÷]c#/6ó£m¸R3-È Òiqø´xbZ¶>-£NË¡3ªªW“o¢_Ò×½šC:*¶1:{œ–Þ¡·å™±Ÿ¾Ìt\jÍõ°æX;bv=1»éš“KßqýÙuœÃáÖ°Þ¢+ÎXW£A½™Ù*·1ÚÞzýÀÙuœþAßLf[t	”Oáü-¨j3T×Øôg‡uí¦çõö›áþ;÷‘Å|ÁEÝíG¨B³fæ[cèÜYÊ§¾µ£ FÇâƒ@"èã—‹ _5bçÁˆÕc°7E9Ü Sh´/4=¾„T]Ù€¼EÑ4{mÉNJïm¦ÿ›ìu´Âx“IcÍÏÈ%P~Á‹IOf`Ã»ôG J ü…>»C¡3\Å³ÖŸ2a¼AÏ¯0Þ4ýÇyÃð.¹çøszô9ñÃp°¯%Ú0¼ã	èÁ‘é%i™v”iâxŸûdþô‡mÒƒ?^›ôGð‡ì=úmË£¿Á¼ÿÀ·áþG¯„Oûû†ÙŸ>ùwÃ¦}ax™PÝ0ß wÍõæQ+ËÄÑÁJJ\ ÙMËFö‚Y$X8èe#ðn¹½6¨¦zB1¼y®Ølõû˜ÖþFF|È&mÐ'œ
+|²ßcßø„zôJÓTä&£ µŒ‡†¤7–¹´Å½<dÒíô×šªîÂ\/aîf l_Ì¢$Ãœ°ž˜U Û¡îÃP»ÄÛ†¡vIß¡C‡z0´ÕtiW\)­zw´öh°¤'Jp?s‚žðù†z©mhz£î€ÐöÙÇ-‡ôÝ|pñÌ ì{ü#œíáÇ!ýØ‡àÛû>^Ôwè•CzüHÏyì:üØƒëzô½®ßíÑkÄ•Ã.>›ë³6Gx¯ÄŽñ+·éG˜=‡Ÿ#ï´Í-²?èó{qrñã(ûˆ÷íÓ—-3Ú1ü—ý³Ocg{Ù³ñ±"gàº¯×˜ô›Ú \M¼®.ä$™ÔÙûr|5¦ ‹_Vv3#Éœç…{ÔmO}ûð=ö3?¯ï@Žs•4œQl™æ@Îp¯—2låZ Ý$isþtÄ¸êxÜmjYÔàn+ë&õêH‰V	ÃióéÆW¸Œ#¬_®ó¡kæˆ:îÈ;dFÆÒ%#üÀˆ÷˜BèBþÒ§ ÓË1Òìut£e¦j¾2"lêbñCoÔsòµv1Â‰û£[>Ïõ;`Ë¼;Ó´Þø5Ê¼¼†ç³p¼4žÝ8MSC;RC½^o«ïñØ½¦·‡‹,öï ¿ç¸[gMMcºèGmf9ÌÍ›YÄvóÞÓ¼9ƒŽ¢K¬+äÀ¦Yh<Pk<‹&¿ò,Wí I4®eO<íNëQ³*5drÏ,É=ýŒA6‰ˆ¸Òm
+äzÁÜÀ†Ùfa¨ì2“R£®…£pç?K”çùn•ã„bWö—s¶–‡.5ºè—7}µRÆº2éZ‘™–¢Ähß¢V:%ûGÖ/·hì¦HÉò V¸Ð>¥€+\LQ>x
+d‡©6gåf9`íAt½PV”¸û\HÎF:59áZICÈãâh…›‡îÈI¡­Í¶¶Œ‰™ny‚J“ÆEE·0*×Ô*Ðäg°ƒçŸÊ›$ôÑ¦uR
+ufPÙ¦û¹¼_:äDS5ÈÕU1ðÂõPK’­Ñ¶29AÊº	2Œ†2©T,m¡¼ÐE¢—“O3’šÓcqŸê¶eRG„ÂÄðÞ,ˆWä$a´gAÒGëCèž«‘|îŠB½¢jv)_Q`h¤ALØ—÷Õ+°5^Ð×HßÂTlC¾«¢Ü»V`kµs<plÑ	7EÆ±™Ê=¾îß‡‰iLuìb=0Ü;§äJSÝ¾‹Îµæß:2ÜÜso Î¨è÷óºŸ`@ÝiÈÀ°_ˆ$PFüEsøÛÙd1îÀ©Ts³Aå%Nª¹ša«“æTUã¤±Fø•å„Ö¨Ó¯Üæ±`ÈxHù6Wæ9³¹JîPá•Z©Ãñ0T¬!À=PF3X‹n·êÍ4¥lÜ¾;pGERNU'¹¬Í¬³Mh›¼Z!8¹¦ÌMÑj¨êk5¯ÆÃ†UU¬Ák*˜m°°BŠö<‘Dd”»8T&;ƒv¦úåàÝÞû_ö?(Ê½äQü¥5©Lwb‹êþ;yIÊ4]¨³ŠÃ¹9Ÿˆ´Hóß7x¹xM\}¿Ø$ìÒ.ÓâkºÂ6ðàÿñ?¬Zì:÷ÒE¥íAe•£¨)Œ¼"1#1;ªm=q°j=¬>ÝwÒ Uq"<líEqXUþ)R% ™ÂPT™¸¿n°™²÷nŸÓC›\'ŠêÉV¥…8û•ìXÁ‰eÐVß÷zªòB‡SþýÖ@Zâp’¯ûÈ¹:BTp½”ŸÉ¬Lj°å,Pç(7†ZqT`ÈÑÃÒ!ÓÕC®ÚÓÔJB¸[‹½²5Šušy¯hÛU)K-›õuC
+FYj³§HÎýBûVÃa zgÈc”3^ÒÓúiÈŸ‚)7©×`€@B£–]ÇðS{ôX$è[ÞÐ”ëÌÇ©ñ¡Õ³‹½ÕÛu R½7ÈêŽâ #Éõ%Zß.Ñík;ÙO‚£÷¬ÎˆaVE6ók}i`»ç¤|¸ÚŸhÚW®û,ó÷BüÕNÕrR7Sô­Èþ¾¬…7‡¦8”Ç·6*Ö­a!™f›å(-"èŒvŸÅÎ’m®­¸'VH™LOŽÈuˆ†PÄ".ÀbXæ[Æ0U½ü&ƒqG?´ºM16~wKäoè›l’ øñ”4°¨w£jÀ¬ÚèsNÔZ0ÍàãjÉÕ*‹ÈÐÐÂDÜ‚·Ã¼énQbêôx½?í¶_£Á*i; mŒ<çŒøtYì$tNîöö™`›ÔÌÝ>+¦eQ£ì­QgdÁâæŸjÌSµ	wð´pkåÁ5"4¿0ZÎï#±'9e7Žy\8ˆ4/úÃÝ•ÜlM|gþ0Xæ'hE~mì#u!Æ+Ô¤B Æ•]"„ð(¨E‰‹,óE ¢°Òn8V—WÀ•!/¾MwPò}ŠŸzËB@–óÅ)–ô|Œh :ùó	Ï{é×/?^ÂÊÕ@,r4vØQëŸÂgéÙº[‚!¢/Ä0ØÊ±Ÿƒæ.ªü<4R­TË'l‡‹È|¬‡ºñlæêè¸‘TÞùâ=¨…Ï«×Ó_è‰@;p“é . oœ…x•Ix;tÂøk4_£Ÿ»Ú¿-IurW±+	òDwµÁá-n5#âV¢áæœßzè^OW§Çâ”öiäÐ–"3lNŠ4A§®“ê©y¨,®²äÊâT‚`ÕÞØ4;ÊM…:-DIµ;J,´BuÂÅ¨Z{ë¦ƒæïªJ
+e‡Ömg]Å×ïI«Æýãþ/ÂV•) Éì7aëVßI8‡)Û%ŽA4› õ‹y¶Í?à>1é[&­Êg]myPà½ohÓ£<×Eƒ#È{À4ê]> 4¨šg ›êÃhª¿2Ì1bê¡R-»uý‚„‡ßº3*}ÈÒ·­WfiôÕ´«þ¡}å3åè–³Á®z«Ž™YY_þBÀä‚•–Î®3rC?ä¢0q+rŸ¡Ãœ(YÜ×šV¯½Z8*Ö–"Ç²´e5…B#P®/M^D@HoTÆŸøiãOÔîÑ¨Å:å¹bä½ÚÅÈk‡å*å<Ê\,Ä!ˆ*˜>{\ÛPkMü­_Ã,íÛ°&€a¯a¬LNÈ˜îKñÜ_ÀüÎnyÍ• Á^¦$ñ¿°7a s]ÇÀSü`#ÍÌ:å8&åÛì·—×Q`ë¨¯Öe@e±ª†²ò¶\8ymÉsï¨ŒTƒùª‰ü ^ýQø¬ñ{D¦ã½ŸÉÉÇ½ã“"ººO¯ÌŒª”3mFÂbànè‰ß:§=D\ÊÍ’´žÁà2H²|q‰\L|6ŠèÂdÒ ï0Ì 4Ì°§ÝËûsÜÁhŒÜùÀ_ùœ!p™†¾µú½ý·ï:üpøÃÉ1ÇÀøX…©Ø›\†Á
+µšX ]•Êèý†ÐÙë*ÏL÷þ¶yòøVÉÜˆoÕSá[é¨c(8¹Å¸K|“:M£4 šíæVÉÈ-i°Å%—â•¶Û”D¶j=—V©aÜxà/¨„R6Ì—½£2w>M5M™,Ð°OhP/-PˆE"Î—xßþF4­u6ƒ»íÀÂÆÁl"~Š6@š¥Ó”Ùðhh~5[…ËYÄŠv´d)’2¯!b áK{}V©žÁ8 #éŒcZÔ ³¼Šá¨Î.1lV–„¿æ0DDšÓqê¦Á…ÄœÀHì"šøÛ8‰ô¿î`ãŒ."LBXµBUíQ ¸|”«ªÖ„R™ê§!ŒáÊ‡—ÃeáX|Áut†v˜AÒÂj˜w@*PùàÁH»+UŠ[TŽŠQ,P=õ°¾™”åO:ù9°´”Š‡E`§zÒÔ&sC1ÔÊ–úv-Ù/Ö¯aÅ†wSk)ðì ºú˜f%LnýËxŠPR…u@‹»d“àÕ[tÐzš…àeÔß/Q¿PGýƒ<õKA^s°*¼›µÉ^ R²ÏÊÍr7£6P}Æ12Š^†Maãjsé±Tt¯A‡*>ÏzÆÈNFyªE€¿A—¤ÌD4‹{p:³.UDÔ°ªéÖC—@O]Ÿ*Æ~á¢˜^IóÒ,Iÿè—ÑùÀ?+.N}	C—Ê…AiM7,—j½\àd!)löt‰09}xØ/—*./öÛ/v³·q–/Àv§ÛóÖrZ>D0b–Õx4Ç‚€kTo¹\#G¼ÄŠóÉ¦SZÈp’fËº?V4(ã÷ìÁ"@q*ÿ»õ¡'˜„óÃu@]¯ŸFeöÞôßË¢óCDÖÀQ¿ƒ&
+Ý+";(<EB±HÕòBÐ@~¿Ð·W‹‹ø–j‘q 6ú-ŒýÕÅ%™\Â—`q$¯ÈÏar‰ûÿc§|Æ´R‰Æ•@ÏÑ¢6qpíÇÓWh7aB~ ¿]'äÿùÿ^œ!A‡Íæ‡'Nñ$¸™ õßFW…×_Tÿ¢QÈ>Ð(Üwß¿=!ÇïÉÑ§oÞ½?$Ÿö~>ü$‘õ‹=fÅ¸Û2	²vïX°Ø‰?fE?8hŒàâªQtµÑ/æ2Ò.ô¬0Ðá¸®?{yw'tÏâ”}3ÜLÌ]æ–/nÂUUSe£oO¼Xá›Ý`êåžS3wèlÛS
+|ë±síÍ9›Áw	Á¥u›_*ï×&7¹_„¹g¿šñVÜª 1ˆñÈL®b‹u×&KÄØh´ÉÔŸcóñm‚âä|$	|uÝ*Íç­N)õtºƒz&ý^ŸéeÔ\…/ Gz}jOårû7À"¿8mƒ’O#@ª>ö•ê#4n€È¦}¢Òq&}P
+BF¯„”†KÄ9þÀñ³Gƒ/—ôGöÂ!4_˜­ô·‡{ðÁIR”ÌJãT³ápÆ#|4üE¤ˆ1œR.ÎÑpHË@¡âõ½çŸe	å­ÿ’d2"C*ªÎÚe±ô	`I­¸\áFÊF“ãúÚBîœû¢Ê\_®jQ^oÜ›Ð +plN¥šZé®H~»IÆ(”L(‘°·!MQzu{+w\.kˆ¢}Î/HO^J×ß¶‰ŽgCá}¿d¢ñ“Ì;ôH¿ßjŒxm-€íc>nÑäBú¦a²œù·?ðß'nr5f%Sadˆ»Ñ]E?bXKmÔ<½FÅ·
+â¶<åÄà¤Ä ØxsIZwöC‚‚1Ö@XÔ¨ü³ŠUl+ë"ÜÀ²¤é"lulõû}EXZ4r•a]vêö”k„_IYõÇ°^ê½m¥[UCPé¯rG`<¢øZÃdîZ†½:^3ìZÀÐ8ò’`-¤}:½“[¶GþúàëåŒ(½]G¹EÆÚYò¾1N´öÁ_]vA)oÐoóoþ®“Ö
+l’Ù{`Ÿ?¤³™uÌu„jßPoÇ±gQÓË\“ÙktH¡uuKæ¼išØó÷òüß®hLY¯ÄÏkÙè¹7+l­{ªˆÏÀ t]6•‰O¦ïÆîL%÷w…Á¦¹Ýè/9f\Üy¸¦mr´Î¯æob4¢Å/èæµQ_Qþr_•<U‘¥h'Ùõ±ñØÄAèÏ#Üqg!1ÃòR‘êYT ¯,‚)Ãù@8ÌÍô“"F³9ƒªBZ¡E(9µ¡¨Yjö`Ô4_Bª|¸ŽË|»uBÝM¹îö¸s¾´ÊÇ'«ÛµS(Fõùü¼8!÷þl(2Îã¸WdúÖ#ä©X‹â	H¤ÞB(Õ‡2‹ATâMS^é{þ-º"—þ,õãO.ÁÙµ˜ú1+µ3–c'Ïï|Ö`"Ž‘‰0‰&x¸>ÿÝ4ŽúßTq6Z6U¬TmÍb/"£$“8šÍÆ~Œk»XBIX\©E¥Ü=ùøý÷ïÉñáþÉ»?X¸ÊE„Ä0†"j:‹]
+šÌü9'Ñ‚dÙ™G•Qó–Êp]ÐHMŠŽ»¥\/)›kìò·¬ˆ„,)èåí—L¿,tÜÎòKíhÞÛ¼îßØMÊx…ž®y•²Çì]ÂÇ õ,µqåyÜŽÓþˆ›ÂÞ°d
+/ùvs…ƒÇ%/£ŽÅó»ô¹È‹d1Dù¬›c›ºÐª’CN/`$gu‡e½ñ°d§Â¥ôx¢}Z“—P“G&Û+Ô´Z7»ÏŒÿL!€¡ûus­Å˜‚íJ5¦ŒÛ÷Š¾(¶ÈüÚ=ùBÓ¹Õ!k:.ºV“³pG1ÌFáÃN¿îfÍå <©¯ø‘¼—lLï*
+V4+í%©¡}1P—,ü/á›hlr—ZcãÿPOQÙæµOŠð×H°
+ö÷¦xYæOÖÎ¯²gV/»ÑK%Â(½ò¶qjJÓ>u¤ˆ<±Ø¨Ž³“§áN³_z8·´Ø\é–~‡ºõëí„;‰¨GÄŽÓâÛaò“%‡oÂ··¡õÉÚÍ‚›³ò0™!¯Q´h$'KßÚ‰[ÐNtã›â!O~ÝgUr¸Ù¥˜[‰+š'lWŒ†LD3Ôz_raãÑg˜éÄûœzƒÇ4ŠHk1\ü‘•Ãu¬®–ëU™ã°¤ëp8e?OÑ_.ifÀÅ«®«)¤›Ö`¬úóžÌ¦¯–+Ú½'ng®NëH8Ãg·ijßŠV*2â®ÛŽù 5yÊ³'O_y¹ââµÙ;ÛìzB¦ŽLùh¬é«0æGfÊï_Pë~‡ÁbªÍÑ}²N'»¹9‰–·t..šJê3±¹ÌÅÌJI+¿×îÃ`R8Œ¦A¸±ÍfÌë£%'Þ–-SØÜ4°SÁËiTçÛ'Ú=¡GáŽ×˜Ë&yÆ8ŠV{Ëeë!ªà““ÔÏHµú§äû>FÆ`¥‰ÌG!%TÁ¦Ì?õ|)G,ïýþçšŸc>|ÕT<¯2÷Pˆ}Ý]}@1cžËé¡{]/ÞG¹Äoõö_~®¼C%l(QVq‹'L¼7{‡¦ƒQ#‡¦x¦–Î¿ªqÃøÅ7ÓÆÊ´y]?ža£vœ*öSéVŠzuÞiù/áê¶D^‚ÁNH1NFüÔs°¤†¤¥ˆP„5½¶Ö›0F èòKm‘Kø¿PÁ«Þ.11ÎaÕË¡,Øá'ðf+•U{µ•uIÔ1_n_ó%a1°‚ûJTkÍ32HÙŒZ@'W=)ÊkšÌÆRÚTsÎ·Ý†‚X-¦÷y ÄµùG½rÎ%ÓÇe°±ZtZ@Lz4k¾’åcš —‚ê¦Éì‚»î±Èi¬†ß2Á21ø-í`š™ÖPæ	xŒá7³WúÁÝÞN½2ü
+ÏŽsÚ²Î×ÚÐÌ‡sð¸%ÀJz´Ã¶ÐñÜWLæX@1az'dT“CÑï´`Á¾Œ…Ù¬@qÖ“†:’Ö4õª=êLoÄmêì›fæ¿y¯o%iÃ0Ü×Ià,€c°©¯–ôë#@.i6ÀÂd¡|¥ún°Æ&u¬–ónð¨oýöÛWÁxž´©·ˆ³ />Zo“[JÛv»lÈüE0«kØ*³0Ö8¼XÊÚ9LgÐOn¢Bö¯ý½;xBË¿Z]*å	¨¼é
+÷U™h)cQÌ
+>ð¸&[ªHÓ&Š›µ…Î(&à}t#Zá5è*ÂYÃ=bxÂ.÷èj¥¦"5)@€²€9÷°xøb³”O(£ÔHš½}Z×ë˜g)m2ÀšP-ä–˜ñiòùyjp!TNr>Ý_1ëw•'¢4Ç.-aÑäF¨:E°¯NÄ,°|©O<“»° Ôu°5lxh5åt`ùM4é‡ÊÌÌ6fºð‡¦ÎÃ‰îö ¸J•¹šmžrÈï+ånæcGØºfYz,z$MIÂ¤7 þá€Ý<æˆ* –Ý7ž{fÌ¢»™i“ú4éï˜Ó§.|L3Ò|B<v!2%›3†ýt“U´<‚)ö/h`t>¦´œ¿Ç²„É~tEÞ˜S™·7Ç¢+´ÅÜÎ
+]IÁÚ´Êfß"¤°$©C=¯×ëmŸC¾Õƒ¦ö9¯ïãÔ£Q("-õ@#_B?Õ¢SÔ‘-›°Ì%õs¥*¹%ŒœÛV¶yi¹T·ÚÐÓ1…åßý¥Áí›¾úy8›¥ßÐ‚¨…š ;];»Í„Æ¨ô07v_ÿ•¯õ½éÎgè”ÈB'´Ü¹ŸíþQ¯ˆ  È¸ó¸ø‚UŽi5¾Ÿ+0Û€“R”€Ep®’gzåÍžç¯þ‰¢*èg¸BÈŸ–P)žók¹D¶ÁíRØú­Â1Äjƒù3Â…—&šÎ Þ}Î´þÚ<¬¬ÿ¥ÜüùÏºtr»d%üÑÃ7O®ÓcÁ™ÝÑDiZ mÒøéñÏ0ÒßÔ…´ÐýÃô†ë«&<E­/Ø\{|®&—Ïðˆ{@‹úžZ>½<t%s`8}`aá^TDÐ-YtJ2yæYìçå¡‘¤X£Öu8:¼¦“Æ- iÙTáM
+–T=¡×á¾³¤ÈIj[^ŽyÔsë10²æT9Út,ç—‘Ð¯¼Óöœ~Ûs™’¥ÝÃù
+iÕ¾÷Y½¥išAÙ†‰^rœò.åsü~£_Lcí©Ó¸²Hø»sZýîçpu)²®ZØ»×þÌÃ«K6¥_>l×A0¾[¯ÇÇ§Ð³óqç1û¯tŽ«‚XbYa*§ R³RzàKk¥GY~Ð1ª‚t¶’ FbzŒQŠÔëƒŠ(\K™‘'kTh±•¬Ý¯,R¼ZôP¸m¯7úg–éìUÊÊ ŸPhfY%&°Ó1¡ÙºYOvèö
+UUÚ,:¢CTøZÔ|9ç3ôUw%,”c47°¡ƒlôÃq4­K£ü)8 4¡ÚQ#pð@unH¶”fÆ¬èZî[‘ç®Ó†Fžé˜é*¾ÕrRæª?€-·š›þ2Ü¼¦±™›q0¹Äjd*<Ú†bSó`uMwHóèãñI³­½î’ú­’rG·
+WèÁµÓ„[ýårÆKnþG-šä^ßÐ8šÞîÿóøã]†Ò,¶uG®BèDq»p–Ük0{àø¾L.)eÝY
+œ°ÇýwÜ~ÀxeôSÊÙÆmæQKOö¸Ïžñ‚çÓ‚w-wK^Ähë[Ëµ_·K›x¬ÂÕÞä%4¦Ñq–hÎní$Z’—Ö;Vz½ò$‚µè#4¤A»¤ØŸhQb;‘ˆrJˆã2c¦m½›ê‹Å§9STq¯é<š½'£F»JßãüÑ2³ŽÔÐ5¥Þ?ŠÆù‡Tkf8~}µ³HC¬ép1/¢úê§J•Ÿ`PCŸFÍ^ÄBu½í¶ÛwÚ^¿J5”G¶†D³ÑH­#sÍ–ëëµò¨Ôn3ÖZY¿Z­ßns,>qC&#éoÒ\bM&dnZ}YNÍQÔ¢å.ûêøéªXÀZŠ9ït±¦Iþx~—3—´EÈœf°èüxŒÚÑÁnN£‹m[+Ú Qê.yÁ ‚´Ü²¼©…Z‡µjÇæ&ùŒ¯nA×HôñéÕdEÁf¯€Ë$tGÂ=³L¨ÚÚj]Œ¾6_bcÊœMv Ì”\räEz«^Zâ‘KW}·H®ÎÏÃ	En¥½­yB²)ao«µ	Øa2nðÐ©šl
+ú¶óe¯ZÍnwó\Ô2[%Íîê2X´øß‘i4£s9v~€ÃÅ$¦Ðß@ÆæÉÇƒÍ ª{p3(ª0Ð`k:n“&žM`¥‚gh%Å>ôãŒ4,™U¹ùl éCJ%\"Ý¿nGŒ?2Ó-¼V6È8]ìdCÚêd§3|tm—Æ‘L¢…¯ƒˆÍyÐÊ>e+£µŒƒ/8ùôo'[&æ'@#'E†DMò®Î&GÁÎ>)¬!©üÖ³ÔÂˆ¦3„Ð2¤ƒãaÌÖŒc3'@²Œfàœù!–nm´	ÞoêDŽ‘È7wÉÑ,`Rò– +Æ×Ñ1›‚Ð9™ž½ü\še+‡ÕfÕSxî­d[wuñì¨çê¤¿Œò	M*põAÓlàž»ÿ¦£µâšk”àË£1AÝœ¼‰"ÔÿŽªTG­0'@âX2Ä+#AMF"Ãæëå-‹ÂHìÜ‰nR[EˆÖf†³.h[[ÍÜ"@´ÄV…woƒççæ@}V£¬qÄ»or‹Ž'	•¾kÒ(Prüó»“ý·äøÇýýÃcQ½P*í&=JÙÂ‘VYüÜþ+€.bçyHÖ§Å²°˜ëþ,JŠÈišX°jì`¤XÄÝÇHfì¼Ti§VJ£sãHå}ºt°Ìº´qR¥@£Š,#]|Ó{Äöä¡ÔåZ>*T¾êÃÞôé^ô¯õ^¯,¤YÜŸ^AmöE96©Æ¥%“9ã™È>GˆDZ*‘À*3†,.¡¬m¥(Ž GŠãŸ
+Áš+©°ÕØÙJ[¹·7PË:¿”JtxŽÛv½+•^X'§4M¨Jk;2ô{Ùb¤§úž7NOÅÒ©rA×cN¬¨3®#z.¸èÁ„YÔ¶è &[ÐÈ¡M2PäozÛƒ¡sVÖ¨¶9ž‘Uãž…ègY9ðÌª-hó˜¾ÀŽR®7xìÏ M²œnƒ¸Ëñÿ6áSFøÿºƒÒÁ;üŠFykÈ"8ìyI•Å›N×:Á½25+
+a™ê1HðÌ¥™D@e?À˜ÅàQ_'çî…w¢Ðm,‰UêõS	_3%®Ôû§e–°º€¬'hý¹ƒ‰nt‘¼ØüÍ›C¯¿ŸË­{óæÀqœ\9íœ[/‡ÉË—e5m¾ªª¸Kqóm®ò+ê.’òòñèðròiïàP£±`*}jÝ/­DddM"ÍdTL3A¦ªƒ©Ò²‡þ}õ¼gÝ‰%Å4UJ–(,«L¹è¨ÅHe’T¹n®Oú´‰]£|©Ö«°ìO™­*¶´„ÓÂž4ÇˆQTR.MgoCiG¼|çCT…q`ÐC¬Õ}¶Þ‡ÉŠDç4>(W]Väì±$Ë‰–,°Zé> ýƒÅ"aXfþmqQŠŸqEYæ”±h?œ'ä%™0ø'Q¯É‘·’&¶Â¿¯‚%/“çß¦[^`û±¯GþEð>biðÃicü+´Úh“Æ{Šâhòk°ÂOWÐFã¬›Dó µÀ>¶’`:A0ý@ã.^uÑWEËô46è~Áµ(TÔ“Ù’ÒB.¼Rª‘òÀ,º<MÙ.=ý“;eµÖò¹0—Jf!eSªü±Jn…âðe"¬|v!+aÅª•(qÎVMÑô«×-¹Còç»gEj*o“*'Ê¶e)Î¡>¯£u•Ò2dë‘ÏïŽÝsEqëÊH•÷Â”¼oåJÜ‘¯XsÌ):‚Ãy]­Z)k=ÈVf«Á–’ÆF›ôt[šò"rˆÖŸÏàßºL˜ÌãNOáuTû}¬ìav©Þù¸Æ¶³ik6Ÿa”)»
+—ë5,ZÜ©`b4vÿ†éRF_“æÐ¹³FyÍ[~¤~Ûõ®à’Äîü¿ÿŸü?Üå®_¯~˜ö%Õn;ÍYíZ²YIöëèV‘rÙ+/lÅEež(JN‹±AÔ,Õ —yò¹ ­«£Xz5w¦¼W©l–.ejóž÷ºçÊÅí(Ó¦ALŒå<EÌ/¬Ð;?ÓÕÞÖ@QÂï§úè3Ý¦±‘+ô™;‡žßé•¡W¤™–²Œ¹´ð…+©Ë7›÷E”£[º”‘# DëFZ³>™vfì†½»ÓØ¿†5c="Ò=¤Aù9ëÖÃÇå´þ(¾µ~ýi<Þ².iÇBÅÔçr'
+Ð+ jø¸	í¿„ôgY#Ší];§#ú2Ðú@M+Gqn‚ÿ¥êëò
+˜½‚–±&§ÄÜVRá(‡SÞtIkïÂüùŒÌoRæb5dQœw¤Ã+7ì:ÐrÏS57»`\Ø¶±‹8œüÉ+‰d.Mqwê¶±ôa¯Múm2h“áYwî/[!µÜ´ê}ê¯Á-,›ä×`ÖèÌ}03žß…÷ŸïóoÇ¶j„ÙÍRø5Ä1ÖdÔü hÆÌí	¬¿ºÃ\U¥M™µƒhM¢GzzPtj´É@K
+}2ÌOFWVäT¢'sAu”È×¥§TœXÒRÞ€Ë™–5·§*WÉX4~ÌC‹ÖU_XÌnqjW7º‰Mági ¬±ª…+¡
+×³äöÐ× *áhÚr‡kµUYæ³®¥æ Ðö(vMV”#0‚•Àb,–¢¾IÌ:‚ž­3AU²Ú9¬Ë÷êÏáegy#?$Ã‰Ó¯BãSÔ¼Ì’a•/S ›æ½~µÔ±¢Ã0û4-!Ž¦zBZûÑ|z<Æ}r<»¡®-ná¥$JóvDÇ˜ªj†rÄZ-V>±ÝèsëzaŒñzüó%‡L%à¶ËèþÖQº‚Óg=æ§KOÌv+ë”’ìråËÏKë«È‹×8.íï
+º£œ?£ªt‰?Ç=YzEŸ]Òá_•#¦äAQXmoo‰[¦±•¥i_Ñ@”Â o+šhÚÂL)U¡Uî©@;ÏöR³ý	9Cˆå¥?©jç¨É§‘Ùº’^@MÛÔ[Ãi«iÈ¨R½ª8»ªr.
+_³€¬:·è&)Øâ]ËìúÌôÏwíy­QIâ_³PÒaéZ¾k)_œÍ‚D¸"ÐH·ú®€`Qh	)M+Ká
+V¯ML)?.}›êçe\Þþ™O³*¤éÊ/
+ãdLÞ}6àu¬üp¦­ómi×b]”˜ùšk¢‘Ö]OC %²+°íÉ:Š	4æÂl¶{`ŠSEˆk‡Ê"bÇÁ,º&Ì5JÁÒ«¢Rô.W§ìh­ØG-~/£¬ç),~å.ú}y¬l.â
+]~Ü‘ªYaø›F&HÒ¡XŒÅ&–¦è@ÍÆ‡»nÓ1Á¨‰ ;©Vÿ´cÎÄ<\`ô˜c²’ïN{@÷mÒ8Š–W3?Æûñí^>vˆIÒ`•‰¿ªp˜iÃäóõ»@kú¼Hz”÷Kø.Ô¾¿
+.¢ø{d¨ BÌD¯œò4O++9”ü¬ÊC0Í÷‘Ò'Ž\õ¦¼z#§iq§PAÅv§´³SÄ5ÍíéëÓ£ÂCR9­æj&ôÐ¹=‰™k3¬¹1ÏXmºdyª—a½`×É<š¢ñC}±¡»0á4Ê£Ý¢’$~¦‚…¸>Ä¶q'ágMûÚR/´y	
+"×ò„ñö†¦¼ ‘ÁãÙÂÀß„åŽXæ=øÙD#w-Õ¡|£ï”?
+î´aÆ¼Ð°X½%ß1L„õvAù™ÑÇàüÙ<z|x'´ä¢ëCY¹Â*…„fJ)”Z}Njù²§HJºv))ÁESrü5^l^öì¬?¹¯æû±Ï—V÷<œÁp¶æ(æÝ0ahE‡FäPj™w'œ–^åÃ:¹Æ†ƒ–~Ç6øðllP‰×bzE›„Ó›JÙ—½v5Çæ{üñ¸í0½¹‡?ì4µ‚ó£Ý­)÷]<T vw" ïe8eƒ8^MXEÅ#­WòYÜÝ‡«I.^1{í¥Óuwð—	{ùšýLZ¯Oö7þÂ.z=]½Lê=zêþsE†º8*ÐŠF{å‚…ùûÛŽ)}qŸ£m6t M—RxTß`V¤$xoÚSæív3Ë|­€ËÅM9ª˜.tÔKÓØYÔÃuÅÒ²Ã&œÑ²‚A¥¡›–ÈH£gX…ŠB,s#óFS‘±Ã´ÃqüºãúùJkÀÍ
+Ñ˜‚Ì¢‹(Åj‚,¾(§zVüÝ¤^éÞZ÷Á(‡ó’Ä“—rÿ@K˜­^6úÚÑø?`ñPuÃaìâà<€•EÀ¹@YDqªAÈŒiL/3ÿ·[›-¹ô0«AŠ×Q%RJ‘5ve–üª{êœÑ)}Õ¬®YèÕ•õÞÁTïAñ
+tºêÄWW¬¶ã (ßÓäCðåH×FžUïõ²',ë¿È ÈÇZççmiÙ;ˆ1Tÿ#ÎX¡Y©‰²ˆ/×´ÉËÈ¡,¨ÆÒ„„§:¦ƒ3WÏ-\$+Œ-0iùGôiñW!Ë´IªE“º^¦qô¥NfÆ¼<¿äÿù¿\ÕÝisBÍ6iF«Ë nžeI?¼Ó:-ß”ŸWäsª¼Œ9Qð«ëÜN#ß?ù×ià»æj{yÅÈX/E»­.3˜ëvT\`h^ûÃ:V&w|=©‘iÜ·wØ®¹“¥sÇR%ó‹ÊKiÉR—Ö[’ëŸÑ¬Õ&‰2m¬|A-®)¼Þ´i¹×-ÛšF­Ë`$ FV»Š"m¸½Ië/6–¯gÁ„K§˜Î¢¡»ûv‹ÕjY©¬ýbT¹þé.£ßjÃ^)ˆEÜ0z	‡Û0f›Û9)t2æbQVÖ¯ÈmËóÐß€€Úý~ý™ÑýK8 ¸äaþ¦cj²O›ãpYRÍ¯å`}ûæœøæœ0õ÷Éœ|3£¼ƒñhÎ	U¦—¶¥ð]l9ë»øÝóé7÷†4ÊßÜÿ„î¦`ÑÐ?¨›#¯w€®eÈsÉ7TöfœþéÐÁÿÎl<OëÃðè–½Cõ27,‡Kjgyðuî ™wÒ´#ñQ{KÖûÿñŸÿ»¦£<Eÿ…£q²”ÇâC¸Ø¡Y‘T]Î„ÇòH@—Ê.	[Júæ`Ç:þˆ,üæa.	ÛÆ~Óº^»ºMë^ÚÛÞ¶Þ´N‡â±mý ;±Z¯§6LfM¾Ö¤(¢Å¾U{‰m½Jý—ÕñGÓÖPYÄŒP…-==Æá¡o8}â7É†ew57Ê¿°[›•VÒýW2~ÖÕoÖï7ë×Ôßo[óÇ·­ùo¶ë7ÛõÛÖü·­ùo[óß¶æíÂ)Sø#ÎüZf0ÿ#ÛÂÛ¿çŸ[ÛÂt,þùí`Ý~iÅv)ã_É¤ûf ~3 Mýýf VßÀoà7ð›øÍ üf ~3 íÂ?¶¨.\X¸UyþÅf!ïZÂð!Šƒ4Ÿ;á¥;ã`Á”ø ¿
+PiÒn¹õËm˜QÂjáKxF|	U=¡|i†Ü60ÔÆÐvÂ£­é$Ä€U­F­/ó;½KK=˜ƒFjTj³X( ¯C¤
+"RÕ…¹W•$O×ÃˆÁ,k_JpzŒÖç8£ýju˜Í¦.Žqà0ÁR¬8³¨/y¹íV7ïÔénç#+³âuú‘åˆßR9U-9ÐgvJå^abÉþe„5>QiFYÌ±úç²nÁGIQéÔíÅyMÀx —Kªp›ç%â)´1ß¥ÀÁŠÙ¶=ðor"Û^”ï,÷D3[KÝD˜T!±%-RéMÜiorF¾„>|ëO½ó^Ÿ—¬ô{[Û=¯X	ÍA@màî8«”†k\KÎåÞ¥°W›ÃbM¸ù”Ö„+”–¨Äv43¿j™þâ²o›B×:«ó:˜D Ùùä§wGH=Áj˜Z¿êaª"ª*ye½¾Ô‡ˆ–Èçœ"àb¸˜…‹ ®Šô¡qc±ÿñ±d“¼[$ še“q-|”²0Åc8õéÍIòP§ÊÊfºT¾KÑŒ*þQ‡Ýq“Êî({óyS¹Œ·¶ÖŠØÓ{irH%6ÉRº7©t£ô"VRí”4Õ“R÷qh²ç2©¥P¸r^Y¶?ÈX‡›ÜÓ"çzû0R\úÈªC•†03FCÏµÚ"sþ¶ÔŠ¬ƒ<‰À­Wo`F^£ÕÖl—ÅØuÇ«–CËlÐÈ`_yùpê²
+9/h€¸à²¦Šÿ£v#|©ˆñ6˜¡ÀâäÈ¿'‡¶ˆý—´ø¯çÛ[CVŠY Ðªš.ÈO.Z›†-Œìðîó’bªeRpJÁ”I~­M…uÊ+¤÷È%©|7}²òã®›`~­ë«È÷Ã#øUŒ¿×æUæþÊ¡²s‘U¡å#ûSSØò*^‚	Á‰—Qn*X¨šqÊJÙ£°Põ`0'xZ¨[¯n¼ŽW	ùnËù³…­Õ_•â€þ ‚ â¹VRã+2vo \ÂOÁÔ{¢ˆ[Êi8™=Ÿ_ëMRV$¬{Nòœ¥ìXº·!ñ°BK²‘ÿH\üq8Ýc³96þ
+·‡[Ÿ½Ñ5Ü“ÅA-Ö& Aœ[p¹ê4L&õo¬ÁÞ*™Ûãr¶ã•¿˜úñÔôÐGRwEñô-oÿ¬¸K–(ƒíEpsŸe[ÍêªDçÑä*¡u¡ÂÅN‘òlÇ ]Ïüq0{¼&µíS@fÂø¡‰Ål•o9¦Œ´¯æ"«Øšy±IÝÚ¤ñ¦›9•;À’Å?3ùò›Yì9½Ë«*ÀáÕíz´¸šqgß|ívÒ7ÐSqh—þâ"HƒŸJºCÐÉr¬º´y{çF¾…FÕ„èjEýJ4Ö…;N}X;>uQ_ôyÌ¦gäô/;;ë`ük¸êÀm°–“e¸è0×óÙNvkL¾œÖ5^^L³„^—Ñ8ÈËY™®7m†|m¶i¬c“g¢hTÄ&qæÕäe¯A7YøºFìõ±QQ~ŒõlÚÜ6í.è¥ïOïŽ,¶q«ó ôçÑbJBPGÉñOßWÁ¿H¾\°ªH/^¿A.T´Øç/apý:º2#ñúÏ±ÐJ§äf>[$/—«Õrgsóúúº{ÝëFñÈ4ÇÙ„†«]—þê’L_6>¸ñÜ÷Ù~Ÿzï=þÉsÿ]<ó*žµþ´ôASw~Á…êÇÊ ˆâ¶ø~R6ì®ß°knÙ[§eƒ·ž÷>E»½íNƒóÄÂºg~Ïõ[BOr£óî¾l¸^ƒÜÂß|õøWøë¹"Tãá
+È…Ò1ÖFü¸øQYWÙŒl%øyÙøÓÞ6þWýšòýÑù9Hè]#×ÔAÿ³i
+¤n40|nnø¶»ƒÜø±ïO:€¯ð¿G@†-ñ•ÐËÓ_¿0‚üÄ“áÈÁÿeíÉù‡°§\ÂÛ_k	·ñ¿G>û™¨;| ýTñÉ(ÛžZ³²Œë0û[jcR3?HØÝdGóˆL"0i$e‡‰¶Ž‘Ë6¡ÉZù–²M›×¢dÍ‰×OŠÃó,ú»àÛKÃãÓ-¼Ìì6RtøÄ-êÓ¹ôÉAôÆ²£U¤5Ð©{7m1å,pu÷Y£§³~=€&­¾nð’¦Ån’|'X,Ó~Nê®”søéŠ]Eµ2ž÷t)>èë–Uö¯ªê­¬eA¬¥‘ÔX¹¥dê¡²H_—âÃšõôrôj¸ ÊE¡2½~W—`f^ªÒÓR½aAýôQgýº÷Ö%{Ñƒ§¡|EZåtŠõ“{Ñß	éQÚÍ§_GV;k­%áê£/SãŸ«'ØØýn€Ž{ºú,¼‚UoP=ÊÉ/¥0èYg£‡DÈÂÞáCÕN&Éïb§ÃZ&‚tyÕÄ>#„ÎÅkæXÑ±kÁÊ.Å‡GT¾¶ª{5vCû<«W*f§ãŠ·ç^wè8ÙÊO%Ñ,œbp=ÍÎ¦!?Ö±dÄèÞë§˜”óÐ÷Fí­ºpm'Íp·Z+CÎ9[0XÌöîI´BokÒþƒM)O5Í¡ëÛÞ£Obå5••ªFQãïwT¢ØóÿË«PÒkþq(ÞÉfõé(õeh4¨»ÏÅÌô­YØÃ.q¤zß<F¬P|¹Ï‹/'ÝxÿäZW65kê\|sŽ÷Â,ö‡vÚ‘ŽSÓUéx®79„£v/Ð&Âº*j"‹v(ºHU/äùÛ	€ïÃ,Ì1¤'ÍãŽ—.)Û´\¾ÓÎöÒ±½F~7#Ï\
+¾~›ïOËõˆsû×Rë;ù y‰°³z	[Õ£œÉ–ãï~ãúÊZð×œSz¬¦$•âÊö÷³ÈœT;Íå³m[&p‹tÃO4Ï<Ë7LVqôkð3ÝA½óºS¢4š•Å­ý!-Ï+³\y9úºi®C:{ŠdÖß¢hŽ¹¬ÛRëà12XGÈãL•ÑíÒXÖË,Vøû²ã?UÚ ¿rFä2ÆLýh¾œ¨_Â+±i_/É•”"º@x}ÁøFS?ãž† DëÊà¦b"«:ô.å×SG’‹3ýÑ&–ù$ÚÍ'`#˜”9ýj^G•0f`oí†»Ly©šçÁ»ãFü“ËÖ«·Sà¼!©DŠ‹½»8Æ`Y^q9Ž&A’Pxh…êYÊSêÞÔ¢-öLœXå¤«˜ZŒÍ²SV•ÝN®&Øí&P2®m”@tU÷9Ï©.I³›wÈ‹Ÿ)”´ñþxGUï¬d¶ÑXLžõF#E5[ƒÁ”†7œÎÛæ~´X`Éu6d¨Œ[úÎ
+NX;”Ì²fák·Û}p«ÁT4zÆsrÄøçúÍÊkÚ=J¿’¤dŸ"[PÃ„?Š3r„Eñ¬iAÍ6UáˆEl9¨[Å?0‹G›ñ[Œèâð“_ÛðæÀŽ8´I“×¬üAÂÏc&3Wb>©éèÏŒÕó—(Ç˜€WPxŠ)ì‰u˜¡Ä?I}þ[tE€o‰·Bxž÷L=¿ûí¶rá¸ú5_‘‰rß%üM&œLñMV=_áóc‘ïÏ>ëø9LÍæž\úð,Þ*Ea’“Ë0!WÉ<ý–¬ü_1<2{BËY3I 7M:ºŸiÄ'i¯=.äÒOÈÝ£q0	@ŠMŸÙ 9ZäÐUøèøqÇÆ{o:aÐPfÃù,[Õ¶?}dYw¢öÑfŸs±h]Ã®A–É€öc´ˆÒ…ž÷~sµŠÆ9k"
+¬‘ÀÊ
+ê+…^bDL5n…_^Í0N©º[~°» ÜM‚–Ó&CXÝ®ò×NßZÍ~Iƒq$÷OÅ×›{î<X®¬+L¥v’åº'RF ŸÜ.&„ÙU¶hì ½îgñÖ-™ûZB„ŠcßÖ|2(5|¾ôÀ:iÔ{$a«èðt.`M°E‹¤{.ãìñŸ|¹ºÝèˆ\\Íí‘XåƒUrñ'ähØmÿX¬ö!].£ZwRôøû?½ÇÛi’ûšÎŽlôDN³ÚÕÄyÍu€¾ý"¸&è_“ sãþ$œÑÕª·‰|cãï×pn¶ÜùŽ|ðW—]œÓhÞ’²=Ýáç^›Œ6àÂ0Û†õ{gù˜;p©É,®Å_®þ£•‹¨½fK÷XõgrI0)¨öÜã:ˆfA7ˆã(†ø”×Öí¿ýÕV¨¿üPpqL°‘øðh08éìE{L‚+$>Ë‰ÇˆLÇNÛumÌ?¦XüAòÅ=õÅƒîæÅ|=~³½g(­o;n5‚0=lã#ÙCØ¼ÔFÌ,ÄRÞÙ9hÓËMiÒ¹XJêzBe‰zŸs)¿öT KQf~õáhà¾.ìEfu\Ùè§=èÓOK±5!rÍëõ¶¯ÿ¨{Ó{½ç½ù}:g{í©“’qi©SÖR¨æÙ±dEÖ`Êµ•@+í¡ïÔÖê\‹»yë'—-P1lõ…¾·ay¥×¯Ù÷üDWçÓ½8_FñªÕìv7ÏÃ8ûIÐ…Þç2X´81Ý‘i4i“«åzu€ÃÅ$¨ûë~³ƒ©îþÕêòU—c0ÿ˜ñCTrì¸ˆà|)BN"Š¢ôF²Ô×RO)ý¦£ÒšâÿÇm°@ å¤Ù&ø†òv¯Â)<x·ÄcìÏhžt6ú-éµíÓóG}³£–Þ{¿Ñ¥:f+@)êŒOGÔ«ÈOV]¾xZŸ3íìV¸­‚iÙkUÈªÿú²^óÌ¶n}óu•ë)Öì½Ù­±ÎýpL»‡ð¡µŒKR±UÎMŠ¹ •’sÇyíl	Å<x#aÔÕÐ¶ç¸m×Y(èòµÕú9²PÒí´#dqŽ¼m}²6
+’æ^_GJwöäu£1WbÓÖÖÿv·¢Z€å“•O¾ž“ƒ£½Ñ:zKX7i ûƒd·nãE“ºPÌðCon†‡­‰Æ®´ÓEpPêEÎk;®Ò²ƒ›ídz£¬i°åÕ‹
+4vùÕ­‚`o!X•ñXÃQ[ˆ|©%0pø2ºæ¼¼ÅªO×eäj¼øˆƒºîšþ=—gÎ•|’©'vC7¯ò¼d¸‚g`ˆV·^ŸXíîUDN‚x.ü™ÉÙûJl­×õ›0ýŒ¡laÂwÆü‹à=+ST+èÈ>J‡—ÉQõ&‡
+‘µ‚™òµ+£—–ãªêƒ
+tç!¢;EGú¤¨®Ž¦ÉùPäÐŽ¡_qª(á8XÒzb%Yè’ðq ¦M@¾‡ç^û·Ýn·*´¡VLƒ$»|ûœÚ[ÐÅ|Ä°$XÕþ,ü­ “‚éˆˆ‚ë7Žã…„}Úÿ
+¨Ñ&…áOñCM~Vøé
+žÖ8ë&Ñ<h-h	DUù
+„Hk46òÕq²*:ŠZYc©„7`Èˆø¬ßèR8Ë˜¥ÄSÊ½-Õ;Q…ÙåWN~E&“8šÍÆ~Œ« ˆð½ÄˆÐ%L¥^“¦Œ5tÆÃIŒ1„=²œÁZ¨’3e9šV¾bi°0ˆø/:e\¬ =õ†TÀ|¹ÐŒ¼(ppBìôòf°èüxÜl“;àyáüjþ&f
+ÚAx®’âµqé(¹ß0MÉ½–¯——RÐSàiqÑƒˆ,¢ÁäãÕêÅ8ÞÜá^^l;Š« tiwlDÙ£ ‰)[JWQÊ.-žÐCÝÄÍ ·¥Hø<¼˜&JoÛÛ–Û%ÝZrL3¢¤ŠcÇAü%œšY}QõuÄ’§ÒTÄ{Ó[UÈÓÁÄs¼Ñ™˜%%ìS·Û£¥:dK,e16“ôîƒ¹È„‚.RAÄËÕ´¾ÚzßhÓ.P4>\†cèÃ¤&0~iE&q0WÝÊ9®\¦õ(¢ÔK•Z†©½Ç×š E®3Ÿ’2v)«;©«M*¸›"ôôÜíš`V¯!*ø¥†8MÕoˆ)RK£‰;pk´„Š‡ÔŽ·=p·]¹Á-À7ï‰Ev¢æÔMPZ1Pþ©Œ]Ç$ª"§³g›¶—€Zóë¯.(å(ËY¥‡Yoý…‰Š·zú/ãZZüù/›¯{Qºê‘8+©»îtÕâcû Ä6·DM#I,6vy8ð‘ÎÄ—Lc÷¿¥©›ëFDsí$³$°Òš*r^c÷ãbv›j"`Ÿb´T°Ä- üNØM!ƒèírpæò«y9ùoÄÅGàövQë£	Ð•~>:ß>÷ÏH™¡*Ð(<kÐµ†!é?´½m–*+9R¶“bQˆX.0€Š?å£p±T¨ãöú[^{àê•=­éœ[Û5Ç«³Gqw2—ãÈ§Ýëæì¡dù­ýî5|lÀ+ßúÉ~´ƒ)[ƒ­U|UÇY˜ß5k°¦PeH_ñY¯¡´Ÿ¦ü{Èü™m‚u¬›¶ö&ÙE0b6¥Å|¤dBqë
+‰«ê"Œê¼»Ì	f5½Ã]À®œÛäîyÿ-ZÞæ~²ô]?²#Ñ.ÌþéEÑ‹"¯X¬ZL‡l?Ôñ“øæÝæ-à—T.TÈ«<ÚA#xCP¡7j
+1@xvÈ©ì6×çÒÝÙ+Î1otÄ4`õÚ4Ãæ¹ïÛ™ZÑ–
+eþHj¤&È<;åZ™Ló2'©˜Ÿ¼¡(öÒ8yä²÷3
+’†-óF
+­×bÄªQ¡ Ìýÿ   ÿÿì}ûrÛFÖç«tø9#jG¤x•e­/%KöD3±ã•äñÌ¨´1D‚"bà  %Y¥­­ýï{­Ýÿö©æIöœ¾ Ý@w£AÑŽ31]‰$ìëéÓçú;Y®×ÚÊa`ó¼é®qJÌ#»€Õ{Æãá|cÄÔ3âò¬á8<ÂÂ†Xñ
+ò„œm¼=9ÄÊæðã¾x{Œ?þôüþx€ÿû×ÿúrÉs%~ØvØs¯ã2\l½èø˜h•ÕÿŠ™
+²Ì¬ )Ç¸°æï\cYÖ»-lÍéÁExA7	#¼L‡t‡¿ä’N.ãp\þ•ƒÏêD9²ùÞÂÏ0d®‰-Ìi8ŒFä.Ë1Eà¹ŠC¬>QGë3FÀ±þüÉÄ§²d‘GC¯&—‡rVX¬hG4Eñ•7_zÀ×ÿ÷ðökj^AÓÅ!,Å(Z³ûj8>Æ–žíE3ß¾Ç—	ö N¬Nñh¼§úÛªÕÊ‹™„š†||Ÿêîz\Yå$ ÐÉ¦{3#¾yj	÷ï‹ô'Ý¸7Â”%6“²™Ì®J¹÷’âõ·GäË¶ÆH²%HÒ½AVˆzáÏQ8­3Ð àë³Å9ôR¿=®š5v³Z÷/P´«ƒhìïaÖuZ	NªIt9@×žô;¶ÒqUòàÄ¯á,¿§¡¸Ûnu§òn[ÊÁNÞ×:í(#›ªMk:k9O÷=Ôa¿©OØë>dµI]{´jP§Û“Ž"–Eì®€8Àüýªpådy1R´j&R¼³sÔr±×ÄWÃ•³˜c:–$ÁXúÉ^cq^5E©xI˜ÑÅ¦˜É·|u2tÍ@€æÎÁÎ.B«Ë3+‡é­Wm³LëÐâ^îtÔ€iMµÐºÓÅòØÖˆiåáû¥4V(Ü¼[ÐR¥É¬BÁÇša¯¢Ø'oÈ‹¦m$Q7°n˜EVSÃÂB¥©…·wL!o²Ñƒ.á… k%ÍRBž}Õj—vKk¢ç©=ÔxF0g…ª|ã.Ë"×Í^ýú´Õþp[ÃÈ°ªYH4wl©ÆÌ‹Ø÷>°ú¥§ÞÿùñämwÞMÿòzzõçE´ÓëÏ£Ë_^œô·:ãe,ÉÂñ
+C«¦ø?aCÜ²Œ_d!1„s)©µV„‹Ìmà]3à}I¬Èjkøïñ|r“ÄWú”°¶à½ÆÓ~·ýp‡Ù§lXõ,‹¡¥H•Uì*ó'|;¿¿Òùµªý¸äáJ1
+öqŒù½½[QuÊºÙÇ\"9*½Svð>Q:}c?íVÔ,pÆƒÏˆ®ðÄÏ¼>ñ„Àþ¬2@|%¡GóÅqÛ‰-Š X9îfÏ¡²G`½RYùÌŠèÒ²Çÿ-FóŒ87; –® ÒŽUðkJîæœ3žy ºœŒ€[¢ãõ¿3´xgèw"^ß[,®	‡!¯ë¢QB)–›Ûºìo±£)«žArDw±×Îˆ—N¹N=S)8ŠC×<x§/rž³¶î³,_lšš1Z'*üN&6žLg
+kXz²x·…ßŸÃo	Ã³ž;£ÏqºW¿«‰¼„ud°?<8§¢wÅÝ›?Üë¬vWEæiÆrÁNé¾¨t&)‚°RQ_ÄÆ0T†P³‹é:i<ýîž$@Ì‡¢ïp(0ÅèÚ¯ŠU¦™Ò˜L„!¦•uSXÍ§SŠHà,‘Óãƒž(kGèœ&ž±ÍvÖ4z¾ID¿!Ìõ,®Nà2¤è·xfÃsk&d[`Cà²½{š?Äô2`8.ÇFzzÕsÓ¿Ï¹QûÿuN>†ßáÉÙçÎÜ¤`ŸÃ¨•å<øçÒ§^ßMe¨ä6á™e‰—¥v‘î™`°hsÌà]OŒüûˆ:ÞÇüÑfùdiU¿—üwÎ³›“bïsR´~¡Ø´ƒÃ>ZúEB•Cå:^m®k¨—…gL<Á’B™«ÒÜ0ƒz'ÅƒH#|u¥±ª_—Ø™ÆPæM#TòdKZ¥¹/Ë'»VÌÓy6¨–ˆ,j%ýÁ0Àc'™Sdû`æïâþÑ&ÝxÚéìuí»¥Á8)Í[ºÌ>ÞÂó¿Ã®LPºdv¤\L{wM“tûJþ;×¬•= 4•÷½T^Š™…‹¶©Æ`u{ÃÎ‹{*†^ÝU3dÝµ.òÐDþW·Ó‘Q–O?f¬´”©hŽøðûs½Yäø†lÁêÒ¶%RÏ9GW,¡ÄI¤`a4éÁIëHI¿Ù½k;¶ÎT†´OU1ŽÍ#EÖPàN³–«dÒ^'ÉíðŒ+k1‘Š±G–(Å„b–k•dqövý@ç ‚˜€9#TÀýÿi·FXäá%ðÄîn¿ßÛô:=÷¥rú†Îô]ÃBp?YÏúá·^8àŽûìrÀY2Š´utøkpÇ”)¥òÙB.Š<KÒ|qÝ~ØÿkçðoÙ¬nÊ”Rd€ÌÐGE«Õ§ªìX«Å$5Iœç9¡M•G½ÚÍµÚi7|`ÒeÔÈ£âS¨êÌa©ìO‘¡Q2Ë0Z	Ö@|Ex@žÓ	'4TFyZ®—øR/Qà§GÍá¶…A„¬n†ŽÞƒîc~y¿;érô¥’[ž9Õ[þGéayEŸZgýnG[ÞUS³±‡p9=UŒWµ”uRÖ€Ö÷ã5m†Võ$õbê·gá'v¶­CØðøïÜh"0_Ó¬k
+ŠRq`ž=ïšÀ:•k³Œn¼9³|«uÅÿØíí¸°ðR«W­~Í6ý¶µ€èÁÅÜŒ8g»EÌ eü³PÔYÿ›Ëå`”«,\Á‡w[„¯Bó?ê,3OÚ“ „©4SL2KÛxA0Bäê1¥Ä´Í¢„Ù'¢Øå¸±Ùýùe:¥¥Ÿ¡ñÒ‰ÎB!­ô\•W#ÃÓ‚Jg*…=$–gáˆéñÀÒ%ë]5{\(®ˆ*¥™@…1Éÿ¬üñ™ñ-Ò=çÌÝ>ë‡¸Ì*mU‡›ªÅÚ‡ÁÛ`‡Ò’T÷–¯"§ý'‚:Ùß¸…óqs†8c9N¸MRmF6•Q¼bh®ëÀ×âDY>¹…UbŽÝ³V %~ûMì" e·Í‡š&ÈMÂµíÁÎŽ#SGÅL Œó>¸Ê!Ù$ÑéŽvc'ìaÐÿµ)|ö1no“ýñ*>p"–ùIçø4³‰?àó·'‡£	’ƒøf‘F0ñ+oÃ…)‰•¸™”¬IÌœ[ÏÈ¥Ÿ
+Ó{¼À/²g©U½0Ì)|€)„5’³\`Í¸¤eÃDÆro˜öË-}/ãhFm}ÃN§`âs6šä{eC,‚çÐ–GRÉŸsÂ£	ÉÕŒÉš‡Ì²WôðM4GY¡–¤\&¯NdqIV¶3uîOqCêÎ²ÝcîÞõ¯3wú”s}ÝñM]H?H^½<Á<üz «ùˆÕ{Š'ß±Ñ Ü©ë qÁêß× ú ZùeßpÑžÕFõƒ¢¦î˜á¦«ŒòùRéÅ®ðaa='ÚÕ®³ò]ð6§§ñ¨×1õŸÆ£V¯Ãº7=€ŸWuXñ1Bó,c¼¹Þoè¦¶DX+ãOŠy×Ô“2Èn;™£ãÕEá'Š·×ÝøFCKü·»?°¹Ò÷Š­ã»÷÷œ.y÷]dS±<LE‡£zß•a«ñ9f/‰h‰¹L’—çPFl=ÄÇ/…’o³xe€˜×ÐAºÏF÷’º#1ô	­°u4OÃ6k}$AŒÆ(ða~Íf6a‡A:à³Ø^Âú¶è)¬&ÜqÒ<=>€3½ùöøó1~CžÔg!‰û¶ý1C­n¾/Z=IáQãw†Gî]²°çh	L½9Ü^„²Ë¤*ï¤ù#Æ¾Ü[	•­šâMý¹f¹®˜{Âì\QyžUæmGÞÂ„³ôóEèÍ?¸@ŠPYàŠÅ¾Âö(ŒŸšÂò²ÃâÍ'jéa7]ž.i7Mc‚%®0°à«Š^ï¶Èn%ªžÄëÂÛçw­Îþk‘d¾N†]Cæ˜M’²À‘ÍJâ ÐógàŽH!zñìs‘ëÓ´C]ÿè2"Ö‘‘³fˆôƒ¯bˆü iÆÈ>ùBƒüvóð¯}»y,¯uÞ<–ÿ{‘œ²‘ÂIüõÑ*,YwX½f6£³ñ3Rˆ!¾A‡Ò9etRå	†¾y#Ü¿Y ‹UT*dÈ‰êJ
+ñY§ýh÷ÜÅaAâp¯$¥@+T¸œ©?øiÙß.ø–ì)xKŸ‘Æ,¢Ìpk„c~4Žý…ï1ç’°6PÄÈ¼Np×+ùþ•éh‚IKîú¼6I©¼Kåq¸-ñU“†k=Êv§S›d¶"0»Óá)]™÷¤ù?Ü:A#2†óƒEš½Í;BsÞW1?—í3ƒßVÄïØ€Lžü•ÂDêºÕW­xû$û^œ½]‹%Ñzžjj³B¦2bŠë}öƒÑî`29'ÈbÄþÍkE“	ÍêÁ!E<·(OðvÊX¢?€Ñ #ÉrXžkÛ>-5hÞT¿+ÿŽaU‡q´ ¦;'?ÁÚ„ÞM1šê6É7î€Ûk³ï8‡S‹©¼W¿øsmbP±Iï"‰Âeêg­fµU$E)ºw†¥ŽE‚TÉ±8+N‡wÆ|$Cv¥¥¢F ¨y¶ƒá£V”,¸jáÍ÷ó@*LÿQ|«ªÄ7h(Ë|3ç‰ZƒºDrûQv@³¤ôhRa´¸×aã)‹°çÃpž²ÒN™³›¥Ÿçq´†~¿¿[HK­s¬aÌ û;’¤qôÁŒÓ)¼a«<c?é¶¬2« #j†ÑÈAL”™¶Î†Óóbu?óœnÏûaˆ7Ñbz1þÊ}TðÛ‹ËÊKðŸ0é´qÞžy‹&h	Ôèc^+:tÛ­÷Á¿yrû~ä%Ó cå¼´E1ÜÇ^zg¿V•òQ×ƒAŽÅ».ij2“óì’Ây±ÊI@¹â`2£Äìœ¡”Ñ§–4—JÃö¹énÒÂaÀÕÏïRûI±Þ­vT<º–¶ŸoêÅZi’å7•FKN­-~Ë©êÔ»`Ú0×Ç±Ä¬-&®;fÀ5Š52©]´ÎXYêpTàÉYùËÂ€†ÞŠ¡dò×WØÀÄ®3Ã­²zaG[
+!ÜÈšÝ(^6%TÜg‹ÍáI
+‚Ñ¥ßIþ.æ{Ýè~†ó[@Õ}¿ÉºDŽ LÓ$¡Õ&ºÈ::3[$ûôq*Ú¡¶ÝX6aYiÚY©{5u ž{ó9ð”ø(¥htË«8Š¬r)æÅÄRPÚ*ÎÕæªHìbûL¦xû‰ÎöY4FYÚ\Ô6¹¡YD-C0ƒ:_ãŒžÅ»ŒúU¹W§/^ß÷Éí­ÐD÷Hg‹\c•…:%Åé‹KZJc]ÚXý¶üë ÕŒªµÂ°ò{
+²´Øî×n«$¯zÃžw^ %†Í`*h=­‚ È*éÈÜ*#ñW-b´œ$*nƒ¤½Óù¾ÖAáÍÅ\~ƒ?*Dè
+©03íPýº=«ÿB/}ŸÐÌ‰„ Ö@:ß7Üñ¯å†ö?zAH+„Òvt;+6ôÒ£æïìö%½ÁöÃÛ:aÚ4ñ²ÁÑÆê·u~¦ãFç5
+ .U”_q«<)¿Ö|.ºzÃL³ß$³Ëyr©âYÎuZá¬9hùÛ’ï‡ºjo"* tPJ2Cvt‰9™ŽÀƒ å‚ÆÓï¹Í¯6A™ÇÖu1äj^FjP«´Wí÷*<:ÿŒý¨&ýŠWž4¶=¬ùšlò3"µg‹[	´òåø7hóZíëa-Vüêl‰ÁW«}w#NŽæÔd¹ZŠõ¬ÛÍX û-ºø«,ŒÐnÌ•ú¼:üvþ_§ÝÝ4ze*^ÑüHgÕáÜ+m^ÛÛä¥‡úJÐÉMà† 8@aäWm™é'¬H(&¾(rJßq/|YxñªwIzú L'¸¹ÐüòÐ•[eƒ]x8@hwÂþæ(ó+·
+kÉ½„qˆ±Y êE£%¬=Š}Åù0›È<ë”:-½DíŒì¡·8ù:†@[Â*°¸ÇVß`Â7·í-°lÐÁ4ÇMÑËê‹UûŽâ_[é{.µ¹‹¯Õny·r’òË|÷ö¨\À:Â(«Áú°c ©FìSÕ:Üw/Éê4¤¾4¤@YLy$_f\õ7äñvn:¨c¹Ø.˜.œ¿ëV†6{¡Mç$fäh>Æ[4ßÃ¦£¸[$˜4ÕÏÐ5TW+¼=ël¡q¢·EúÌüÞÆ×›xÃ@W°Ý@g+›nßƒ”¡D~Ý.í‘9µPðAí;ÆxN`äµ¦g„Èe%_k7°‡ô¸ÏÉë_ºu…¤
+÷GñU[2çu/Ñ´®fsãi¥¹¤×+Ü¶íï ,›(‚é…O¦~ìSµÚÁ˜RL£(ñY²ã<@ñGMÝE>‹Ïñ ó4¥zw_QD®\GõTàæŽFL?ß˜¢DÐÅ°Ñ.HÒË9^}±ßÁ-Ù#ªÝùŒóV±ö3VÆvi‹d,5ÏÜƒ‚FZØ9,ÒÊŒàOË¦‰“ïïŒ¶Niz£Þ¸ß?×¸Ñ²2\p&r#'xÉøól‡E \·¥„[Mª¾ÀÀÞIž¡æ›ðÏìêÇ+/|Ža»"dmNmt›
+æ_”@KAS4J™—´“\´=‘qIÿ¦ÙYˆÿ6èPÅ…Ñetš9¤à>¿„àéïŠŸ?ƒ—Þ£?f—Ô ·vG¼0}ÒhhÎ&7g¨êl6	“ýøMûqó¤1Zâ­¡:"Ðü“Fè}ºAˆ5†ÎªÇX,¡7Ë”ø¬}Ö9§Kñlƒc8B[¼570he¢	ø``E6
+´»Rhßjº¯ŠÜÚ2©œ½Ña°n3üåŠ±ºA¿vQê`9 !ÆþÃ[¼ž®ˆç¸Z¼þIƒ_ù”øèžw§.×+*”@@;õë’ÏÃ©¢B·#YX"ò¯ÿù¿™ýölƒ¥‰båpŠß-×ç+)ÒcŸ©4¬Ü*Öÿ c}*A·s÷}«4#îØ»Ê@GO—Gù´9)?6%äï ?’|«O™ÍjÃr÷(HÐàÆ1ÞÒ­4j]Ätm`—:Ï;‡=`ÎÿzÑ†°gþ±ßÛÙÖs[Q1;ãm2U–½ECôU»ÚÎÇŒ¢wîÐw@Tä"¸¼D³yMXÝ½„ÃÔ´]T[ôqÖm÷Ï9€âQô!!aðo <W˜Ô™’MÈey_–Ü“6ù¶ûhžj µx0‹}ž|Ç%;Ò]¹'ñg,ö¹ØÓ“uÎºT>,_ÉòÞL}4ÓL}6GIÆa´HIoÿ"Á…OÉe]ÐH¸Rt$˜9˜¯ã¬ÅîiLi»G”Š’g 
+ê3ÙÍ¦ì7êPìx0ôÑ¨Q#Áw/vz“® ñnoò¨›{bvT;Tõ}^¤­{F#=ÀúgëUOl0Þõ'Z„*ŽR\£ÁpE_‘n0;b,;ÕCyèy¥×Ñ·¯åcâ‡]6V€žµbñ»Ls!y¤c¿$Þ*¸Z(ŸGjþýˆËxñ}“’¿IÉ¿s)¹Ó9x´Û©/%óïUKÉYdÈg“_ó=¢ÎgÓ€ÏsÎë(À–)Dgý©ÿ1ŽæÇtç*¸š¸,™—ÃÈéj›¤hýÑQ
+=:e‰wWEóW®Ä±—L)Š­‚IËoÊB®(h½Ž$“g2Im“•U©Ù-mÙÀF§ÈÔƒÍ&ü¡	wUèÈ(äÊa¤CYlË3#&ÞX“!ÁÄ¹jJ.Šù,ˆÒh’†Êø4¤a1ÅPÅ„7È¬ú£za‰¨ßZ¹åË™D+ÉJEémïÇqtõ£?„ÝÜ1ªÌhÇ	*2\Ö}d•];ø­Ô]Ç¬ä‘òå¢»Âål»‡€æû¸ð ñ^6=‡÷±æ³Â=­ybÍ÷õ}®k¹\d©@ñz®p{¦k½úb¨WQp×Íå®ÞMÖ+Þdpè7˜óíþÅÍ^=Ãº°Û·húÒ*Mú	KJuQLÙU¤QB‹‰uÅtÊ fcfö)r…yqæ4ÈIvúÏÿ™Go»‹ŠÿÿÂ¬c€9€Ÿ‘ohÛ71*e	r½Â—»
+É_€
+ ö½ÜAvoëÙŒ°úéåƒ[³•Z]4­ŒuÖgGækÂiÐú#UQX+RÞèúEäA·Òy†"4¼Ò¹Þ±nÛuE.”Àe”ÏhAýz] ]IÉ}ë‘-y¿6YÒ0Y{a’û4Ut.•r»@´¼ONâ5ì;Eœ	ånxq ÊÜ€Þ–p‹V…ãµñL¹7¬ñº/V~‰|Qyµ|ëØ3hýÌŠáßWÔ}fº³ìC³|Z=ì· – ²]‚¶q˜ã*fXqªEíÒwŽ½‘›up‰m 2º<Y,7¶Y-­[² KbüÀ"Æ“Y¼Ö Ë[:©ò5þ64è¨b½œÀ¼á•5KµU„ÉÖÓ,&Ìècå™}Eã Êgºïö4xøwÔ—³º Ð³×¸Ó8'h-¡²9å²åÏüØÇ”´…À³X†‰_‘üdBtêE]E^È¬¼ªzˆ¥O¸ÄË\k'4\S –6'ÆŒå
+eGÙO.¤s4ö>÷B„’65Ãë6í‚}Ó` ^¥$­6ÄÓ–ªm–óìÅóXÍ<VÓúÑ—ÀH„|ÌÑMOƒDIËµf™4’ÔÈ¾ÚôÛ<„¶læýJ•>V‘cC™¾aˆÈ8%ÿ±7ð†ó¢û"®BÌ]0CqCRÎå5¸œ¥Œ€.£eJ¨¿‘½%›$5¦zýìŒÒ­= ` %À7Ôã&»³dJ¶È«3ÝjŸv!$—Œý“¨3Ô®Å‰¤öSº°H”ÚÛ§”6PÞˆ#NPýÞ ·_&¨þü›ÐH‹’³d§X•Ù Þi\kˆwwÅº˜ƒZ­ZÌ®t]òâèE«=1N¦Ž÷C?NmvB&…ô;6<¢u
+y¬Øï_ýfM~:}C¢±oÏŒ®íÆ²ÔºqÈ+häºôõÎ'Sï#Vpšcý¦ÖaëéF0$nÆ±ÌyHš•‚¶(—~ÝO‚ GEamP,VFþ/ðqmf®2^Úoê³!\ø U¶-»²°$­Xï£ÒzÙ)Ê¡Ä«kyWèøGçòävÇžUP¸×€cüß±Év½‰
+\;öéµÑÜ>ûïÖ£óíË-Œž¬ÈyP.?†*nŸ¸áîS«„Vß}7ÌP©™‰ö¥0¯Oœ‹p½ë0ççÜbWuJ.Ç‘¾ª™Š3ëâŸJÇžkºôÑž3U‰QI_5ê?ÒÙ’HÎ6ZG¨J¨áªÄÊ{Xû¬ä\‘=ôˆËºøµˆ­;Ss÷¼äf>"µ°˜ý.iñKÜD'¼he½C8c2o³qâÏñZLî˜vÛ¡j!âûÜ¸¥PËÿòjªNà–õËëÀu¤ª´¨Œ|Ë:ÛªS(OéÔšýÂxË½º5èÞi}ð\ÝC@+„w˜Ê75Å*Ÿâ3Õ…!¤Vc?ÉÚœøéhÚÜØöÁ6CCÌà(¶AÖ·¢tUs\3ê˜l¼ùéätÃ
+gêÓ î½zøE‹ÁÇh'Þ€N½++laû—$š»€6·ÅÁ'Ú ´÷þ¹ïÅ>–´£q÷Þµµ;ç~/¢ñÍùóÉO¯Û	A³yËÆžDuw6ËkÞq:{©—E—Ì‘’(,~'úP6!ÆÑe*£‰#`µ©¡ô%ˆ™CœæD‘õ8B%8¥|²Ú…Ér4ò“¤¹ñš17&SówQÔ¹ùÎ±Sçu­º@lÜ×…×Þ!šçhJšþñæNËˆZ½ÑoÏ`ÂXéžkÿ«.ÃýŽq`ôßøÉm Î ¦ RôNgÐÛ÷Kƒñ|#¥)0¨	¡’õŒÓÝ¹Ÿ´R»n.Ÿnñïå_ÐGhÚ±'Û4u“NhõXT+Žº_ÑP9!þ*+U·ªRWq2e“¦ÜIÑ²Yq#¾áàc·µi?<²Jyë^U[Kói¼D“‚Ù4APæ¥7i‰çÞüñØÒÖcÃAÙb¹}Gi¨‹ƒQßi7žÂ's2Œ“s
+—\Ô„7îJº0‡r|i°nÁæ—[auª`Üîi]Î–¼
+_D„u 9ñ4à4†¾ÿ®b›·‡Vk"©…Y±ÂÅúWXc{ÌÖLÉºT}ªÜôÙm<…âþMžhÜ‹á^bZô€ù«€´¨1¯æjX-(FûßJ.~Ôz¹jÜšÐ»ðÃ*o{¢œÆ‚ãö`®gj}¼M[3wVu-±K‰Z^-·RáNbvYóã1hU?ÍÃóZ3={lMNo[´¼øÚl
+Õ›VGdý˜eŽ»ª Ÿß”ÁLŸYŽàvŠß•!ªnÐ*é	A!Bß0­ôšLÄïÒß¸u§,ypÇ¶ÝÒþ9D6 o¢‡uu¾‰µ¾¹öþ-ˆõVÉÐX…-ßÝƒŒ¶dPeÅá…2U¿‹ì©ï‰ì|¬$±ãb’CŠ×Ã,—\Î.Æ!†¡²z™ÇUf›så£kCÌÃÁ·!È¬çšÁý*9Ø]í¥ÎÞúZŸKEjî³úU¤~Öè\¡¯šÝ¯ÛÍ"5íèk©ãb¡¯ý,ôµš³…¾Öìqam®ÍíB_î¾úÒ;`jO¢ä°©¿bKqä´V(P}Xa•Á±ÃµG´7|ýF=Ù6Qj•½]¿UQÎtO­]Kðöäp…¹Géb¯tEÖ#*'ï´.¸Ž¾VsÆÑW…GN
+qžPQärw˜×‚cNê5fW?ˆ€«8èèË’„¶J<ìØÉ;¥ûºbâ¿g+ü®\µ•tùbS÷pü‰&VŒ@ÒM¨F(’¾<øZÍK_f,-©$(«Ö?{ëÙšû.Ë=Ý·w[¤ºL|¥ŽqgJ·†*5™®ÑF¯½_«Èb"<* ü5—Ë)¸&oññÒq LE<š3å5á@€÷×øØ*Ìä„§£ù[YÈT—q4£JH	ñ³z•Ä¢Øzª¹Zï_ó`¶œÉ‰ÖbÕ¤ù”1Jß¹ÅåËç}/ä©JšUóOW]Þ§Ú¾êSa²œL‚Å?©Wˆ5´6‚ü¢6\YÃñobžøfOøBö„•b7éë›aÁôZ‹aaåÈN6„'Ý28¬oH_îÊåªZ¨âåÏ­h°¨’mUW-ê;ŽÁúR_dÿMáÑ½>¿Âcú¾ÑÇ¾~¨óKiWÅRêÕÅRbyOú×‹Ì5x‹ßÅ$Þ+Ýè$²D3)ç ã=5	bYÆ§NxÞü¶Á}hŽÎÕû"7‹Òiù±Â#·£i‹¡ìLƒ‹FéÐ§ÀwHÐKTc­3?ZBƒ³V2Š#,Ñ€ò†`ÕÅÂÛH 6Ä‰€2áeãé)’$"pôØ¢ØðC4åò±¾[ZZôÔ	âzÅÉ(§ –P( ¨Ì9ÎÕ$Tþ «H³OÈ0}}8k&£a>4Ç_n_8 YéaS±·EÎ%y\®[80á?„ý’Ö+P˜l ÂJõëˆðó…‘ú3&7~jS°Ø0”J‹LÁòÓë(ßx3i0™:=ôRÔöÓë6dþI?kÓ÷›dƒÚ‹ÎÎ7ÎÀüakóæ8†TÃ\STH£7Ê×ºn_»±]ù^¯â{†·EIÃÇRôºu‘×€¥
+ÆØ#ü’‚¦¤Þl¿_Î?Ì£«yöðûbýuQÂ6S^eCù°\·vX`—.Ý¸P© »ê|v½Ú2äó‹kàœ@î§×M?û•žx¶`Ï@É‹ýi‹›³ÇTÕ¿6TÑ£º¥8nŸÁ¨åÇ‹ÌqU˜€æ¡­ƒ«xü¥Û„Â11à š-B?¹ƒm“üø±ÿõCËOËq‡J†ö¾cÆ|X.:œã+í–¦+•¸År;A<Ê£ò´fY©·
+²Å¾óµË»þ›C·"ÈpÅnß0Ëâ†¡¦¯®O±Î]Žºc­Vµ0ÁÛEUULþ§žnå•]µ#9.¾î±T.§Þ¢Ã#ëåÌrù°ÐBõaÆu1àÞ•å{13ufùtæéNUií¨ làÌº¬ZíE+`9±ÐŒ¡p¨czü‘rýÖÆ ”ñÁ·„å~I1;ª—Ëaž®Œ#½ˆæË„ÛQ«"À³œ‘ðOÿh˜«ÔoÅ„§óEØEeípÔ…\GJš½\¸þB¨ÜŒ’ÞÇEYŽIÖëÂ¿Á¹Ÿ‹ÔiA¶Îa°%6=Cý{
+ÛŠ\¯€‡¦tÌ¾{1ôœáµÄß2§&Äp—!*ƒ±õÝÙï>|®«o¦Î©N%÷ÒÁ*°¥R…æÆÓîìœ¸ò\âr–ˆ~Éç˜tÏ5ïáš÷Ô´ŸZ¸z5Ö¼Ü=ûåõÝKõ"VÀ¯CÚ!É°ÙtUtxÝJ%Ú) ¾©jÍáÂ‹¦}Õ›c½’ôu_#;Š(nPJ‰XVç~¡É~õjºðîv%¼£ÎnÇ>«>ç¥}/c?IÈs/¶ßv|z¯€á4_¹L2Û7^ ,5Ê‘têHˆta[m÷¹yÜŸ€ˆxûpcŽëqåût+8×\ïÕñíûÊîh²ß´ŒkYFˆÕˆñLùË>¨ü=ù[ŽNó:–+·ZõP(B&ÙM™W¨ïz2ðŒÿÌý„ˆÃ5Æ~…`«k€tI“ŸÒzJ8Õnº7dLCÅó‡ÎÕöÎÎ÷ç¢|ó°ó½©xs—•êeõqD•ËOX%¯Î•Ss	z¤ÉçKpì'Ë0Ý$-BmÈdì/àÃ„€DÅ©sÕµ¹}_Xº|eÄB9,¬‡{HoWºêÊcçåàE9Ò¨˜É}™£>S¶Q©®Y–O©a¦)ë.'•o»>õïk@ýóÙ¹V6;ëüŒÿ€Sÿ,´¾Z"œlØ¼ŽÎ¶*TJ–‚Ý:œ;òX7ŸC†#®‡ïÛÞ~ÛÛûî-R6÷ûYc7×ËZ+Xgq¹;ŽV A÷8E7/’XBã°ÐGAŸ 5Îœ‡÷YÎˆûýæ¤1²$×¡(Xùõ2Zx£ ½iívÀ·+†‘™'e¤sªtÔ±äP‘û–†VÜ‘Û±wSÃÕ¡4Ñ«~—8Ôðmó¯×¡ŽºkøY¯¥™d{Ê–ÇÝãÉÇUÓ*µrÛY‰&ä”É¯ÒÒc÷ë¸Ž7£†òû ñ´UwÀNdRŸÓ¹=åb²bÎ''íÊ`­­¬¶§»¥É‰+Â„âÉ½QI'Gu®Áv¥V1‚3©^AVÇíL&_ÛÚ®àw·÷0(Úy‹eW÷-ûaˆ_¸·)È<J½pm–Ù¯xÝkpÁW,}Ä‰Z¥k¼ß0%åUréêý3°U¦‰»~¯w®Àgf‰»¬„×ñÝÌ¨YtÕ­ËMè‚ÌFíä¢"ŽèÚêI—œ3Ìcp+­Ü-èY‘TßÁuw\UìðC–ëµ¦Mï^ôÆ½¯xÓ3Ãã:6=_»µo»ËÉNS Ö$ÿ¸Fi¸Õñ¯ºÕ˜²æ\²˜éz—sïcpé¥QÜ…Áâ"òâqû*j¢Yl¬E÷t8RÌˆl¨‚E‹ÀWjÅQ¬®*Û ^&îÛ…%¹MÔR|ØQŽ§ÖUIêimåêò•63„/K“r=ÞÜ(-n¤¨Õí§„¾stètŠZ‰g¿Ýsúõ›íd¹XDqZÆSkyÈb½ìÏoWñâ÷Ü‹i„žÔÙÍS`ä„mÛ:ÉoQFIÂúE=íh²õ5ÍëÖæmÊçŸI¾Uø3ãÝf/N|±7ðŽ<`y äUt„>yÁ‚Ï@fž/¥k“ºåOÒIÈè¯æpÞZÎ@i,j
+Ê,Å6Ó«4q-Šw·&óÉÖ33÷µ½¿ó&áeŒåáÕfÊ¹K'ê¤9·P†£±;–fÂVôdêû¥dÊâÊ)a­œyˆ3Ÿ¥U«Ò—1€õ‚öËÚÈÂX1!uqÑÚÍZ½­…LAÏZô£’Ôƒ³úÂxh$«ú‰X"ªWDh.Ä«IÝå›e¨½k» VÚ|ñºGEJö»¬e7"E¨"ù×Ä4õ³]LÖ`5i„}¤)­¤ÆšD ãVnmI>³[Þ è¯sw(„ÉÄø0W”†y ©éºv½œKD’£-Ô¤•}Pº¯”*¶<áâ;-^ý«îµÀTXÇf÷wúû£óíÝNAXz_n¿™Eo…ý.¤©iw\ VØ¶ü+ÛáTJjÿ½î2Ç£¨Ú]Yç¸µï	ó;ÊŸ¹%†:œ0ð !?Ár†Þ9¼0º,Ê‘ô!þÑjr¤,ÕU.Iì“ç¦Àñ³Ä‰Í¾Ë…¥THúá‘/X„\Ç>E ~4öhhK#z<í—ˆðR¢9Ä¡ÐÌRŸþø¹†ªÚubç›8ùlwÔÎ·§ýÂpÊ6ÁdFT±FTî™™úyW{ìC˜ÿïn9ÀG¸£ÏüˆÅ°°`ÏËàÚ7Ùªd/dÕ–
+½²úJ¼êNá3^TÉÃYáw‹Ü¡T<	¨l?{ºXà¨øm¹&Qãó³ÑçÉ§‡€…o˜LÂø¯\¸l8fé/dÁ\°.ÕyªªÞgzyÁ­®ü‡dÎy#quFéS+ùÈ”±žSÒ‹áÃ0ŠáåØ8dºt}é9ë(±zº¾ŠäÚ,tSfÊˆ0–8¨³VÍº
+™“#GR*cGú	Yxqâ¿#/mæ”®½)’gö-âÃ`€¥7ñí"¥ÉÂlG÷Ì`dÇtyMFøSbd	»ç]À>± =”Ò³‰Ž"ã¼Þx7°cèÉnNDÖt4Þ+ƒn.ƒ±¿hÌO÷8LÙ>þa^š±ýÁl™ì1G"_ÒTà]ŽXÂ>ŒqÚóèªiÆ‘¼sZãc¶(ý0©D­ƒš#…: V!o6­¤ÀfKçí©fAã´¡oR˜L±Š+³ˆ~¹AYÛ8<3Õ‡ÆÔ»ÌŠNhd³ú¯ä¸Ž6×ÒLúÄ±AçG¼1M	¡k°×Ø"Æ.4ï–ßÓˆû–k@qlJÐ…TÈÒ\ÎóÎÃŽæ†¨¾N¼:iËt3è,3LlÉ Òž’ŽÎû\¼r)^1çß€}ëãé $ñ]'…ÙåbáÇ#¬÷¥È¥½<Bä
+ê´þÑ}Êª¸j 1‚OšAçå]·¦­~¯„9(ü³°Ï±!4M¬$ÅAó¶H@¯W½û5P4Ãü¢mµBÐ©Z(·Üzö+¸32¬¤ˆ„H¼‚4‹âa¿ß78oLÎŠUAY¡“]
+óXI(§°Fôâ¬Òƒä±u×¨D‚;Ý–ÄæàbÿúÏÿKÅ‰ýçÿAp¯-]Í™2´„“ØÇnu™ä>ñr–ÿ²— e¯‰ÉîÇÎ.ü[2ŽF[dìc<Ìa4Î/®þ`†.¼æF»½=	bÓÛpý»¹RYY³Í1þw±…`pßƒ¡¿7¨^µ/<x›Õ*·UáV‚ëÇm`þÐâ.ÇÔ¼|9x8|x.ûbLué°.Íåƒ‡Û{Ïr¢^óe"A{#¬í¾V#}o::6uo\›.F¦ÇûÌ¾ò&öT/ñ5,aäù$†…½°`[R¬>³Wµ]ö%sXo/|r{+²?öàæ-n67ò(OuKOù×AZÑ^ßUç¡Wye&‰¼‹ÌÆ{fïç°ƒŸÊvÂð.pàÿØò?Â	µÈ´¶í´xÒÚ]ï‘F«Ûé|ß(NYZºkÍŠˆ537
+|í?ð(C%ÛÊìlÐr»â%°%øü´LKMY×¦Óec‰Å©—S‰1XƒºV;ÂE]µÎú;–J|Ö–œÝÌ°Øëõ{²à?é2ïôñÈK–Ä¢C¶°G(þÈ{¤-
+å-LnÚ’_/HÝèÈ#¹›Ïê¸-—fÓØ”3uŽ\Ù¾^õFR6v¸©KkÌÎJ‰Ý”}Àõ¬N.§è¸ýîîî¹£ë—´fqÙ¬‘‡ÿf4ùkXz-@˜jMöAé¬$3ô÷Œ!ÒO¯SÂþ.SC¡ÝË¤hü.NR/µjq…nÏ4×PcÛ†Â_\ Ñí()ŸõÕÏ°´wø]ß*ûX´#ýíÈŸÁ†/cC+}ú!nìÝ”¯ñsŽÒ<1ê&6’ª&éD/‘8ÚÑL½8åx÷ö‚¼˜=8hËsÆ“dú­x>øé±?B M¶-=ÜögTÍ«BþÌ¯¥Ÿ±²Ú§4F<éË[$£Ý#édK”/=¥ô‡ò“éJ®›IˆÜÞ&ï|2®0Øç†âdÐYbu–ˆ°>V…y²Û"@ @	þ‚x$ñ&~zCg•\&…MÄŠPßSH€íÓéwŒå&R°œO¾¸QRÉe­QN¹e<j5®ñ*¾ŒBÈváNŒäòŒ4
+rPv{ñ í^Ž)2€û™ïŒÊV?³÷îâúçøòÂkö†Ã­^ogëáÎV§Ýß<—/®jp—èÞˆ[2Ï66Îù[™ÌÁþÒûKŒŽúšÕ·2y‚½­.q‰èu”‚H”D„'šÒÅpyƒ¼œR’¹Œ"3®ÙáÑQoŒ÷ú0[yù½çðŸ#Ã¿§×[L“$½	rŠ;
+;wË{?À”ytáÀ‘Fï%}öA·ïz ýí‘[-•êõ5+GeýG£è”Þz¼Ñ²Î#)<â­’Âã¢	ÍÇh)ã7®
+&òMúèBÃÎÇ«ß¬*´C¥X—úE´ ‡®ZNŠém»‚óÚ• §óGtZ·ãù\¡*Æ½**P—E=ÝK	:ZwR~´Ô«Ý{†4’‘.¯*3lZ‘)¾®¼9ÙÆÀÈ›A¶MÖÍ¹}/¼b7LÍ˜%1™ U¹,“h@jÁ±-1ÄŒïÒ 2DJ9þ¡™L6ÊÒA™&rê,k‰öñ˜29e†z7 zŸ4à›ÐÊ[®b”DÚ µŒrnÉ@è:2þ;Ã:¬FŠ°ÆÔ'Œö„ýš$Òg"CÞ¾qäcùý‘pSC.ÿk"iPŸ‰<N²\DÏo”Dt—Ÿ»¯ƒ¾Ž«ïv„5/—j“Q›ÉÇ$c‚w½îEwrnÎybÐ½ ý¦Êû•^-Â_£7B6–mÇås+ÿdÇ¢rËÀ-sƒÍV5±,WºÂ}¤>[ÞiE¾çc^çG8*B(ÔÙÁ•ï8¤’šâ¸› ]ã©–è«¢ì‰©bOkíZ¡Vb{¨&1IPÂf^
+VÞ- æç*LV,NØÈÙQ'÷‹P“…à²;6¬ÓAÞ%œ“‰!è:ó‚Ìf°Ì'~Še`rì#¿Öf8û]íØ£T´œï˜ÆñÉQÃd¤'Î42',»úxF5 è‡ã«9dƒ’¬pDƒhüx›6àØ™á@LŽpvóR8£ÛrÞ^ÐþÝŒ\ñ£X^ƒlKwˆ1i¡òÓ“F~z×OÃNÃ­	žQ5M·ÆJË–=<*4Þ¤mo‘k?¹nÝé*†dÜMØ$–æïòbÑgÎƒB±Ko4¢–xÁ]V°¡ðE¿ìv&i’Û}Œ˜³“jˆf#©<$ò¤‘~T®ÊyE|§¦w÷ÃQ˜¾P
+\¹;3ì8PyÂ‘úù«êÐ&‰’¿ê6êUOI+(®á)™¾Õê:ê!p†À.$íB‹»òqã´×+‰ÎáÓ¹-ûjì{@î*ä:1º: qÏØ°OY®öWû‡ë¹ÛoÏ/I‘†ÐÐèÏàrî…EðÁ¿18«}E-cøßÝÊòùÌ"Y]j #oA+>}Â«Îr1‚Ô»¤ÙË–™h{™Y%¡ó3˜Åy-.áÌ™h[H÷cK¥|Z~3—ŠsíFW­.Þ»
+³à0³b¼ìÀ+ä8ž†Ð¥;à¼®Ñrº&ù˜Å¼nÇUÎ#k'¥/KG_¬GÜHÁ²°Ê˜ò¹.ž—ßtÊ¯P§Ämùè”Ê4×¬SbÛßtJù©ÃJuKêèÿõN©mðµÕ®8ªk:©òT?Ïq•z€?)zÁÑ¼¶ñíô~³}%!v0>§EˆŸŒo!£EHÚƒ‹Pôãöö?ú±‡üÜAF_ÉßdýêoY4ø…wuëÎŸq	q ºƒ¯MFâ|ÏÙv`a†ö™¯[dP{û&ìËOÝëD›]Osrkª&€â~‹0}à§þÕ>Áü(÷sé–èÈNnÏ'¯ö‘T^°ïøü“Èñ„8ZÈù k!ÛÓKÉÃšHõµrŒ‡û©ÀŽà'þp-JF_…<­ž”§•„l´\ª,õ=pclé1a5:%ƒ0‹8‘Ö¼n§bDÎ 5–`ž~$K½½Ž& Ðørv
+Ìª³ÇuÊ)8XY“ës*ž©t¶ÿyéa0 VŠI”NNò ëŠ*,Iéy†ð.´öÜÃ¼ÝÏ+*Ý³~v_Ø•—Ö&1·°¾é³Ž¿¥ž»¥,1ë@m"“qê®M;‹KÅžî//}““Æ‘8þ]Ïö¡ÿ1 1Ï_ËñNÒ1Œéë<Þ’Ñ4IýÅ“F§­+Â }Õ9ç|¾Ä9g]};çnÏ¬l³9I£ÑÔÃÿoBÈjŒê/«à¬‰OIû÷uK µ]°6Î¤›õÚ™’ÔÉ7¹£üØ¿éq>äÇ™4OhâæWp®Y4ä›ßÀéî­ýt+sÿÌg\îëÛIw{¦BòøîL„‡ó:á,Ûü4B B	Á|.Ç~ÒÔI3›+H/h ì(™ÂÁ¨Á¹Ð4Gq áqž±7è(Ç3Ž×¸È¹ŒÓîhjK¦KûÚDBc>ËûšDñã‹xÛ”Ê‡¢îEEóvuUc’°Õøq¹Ä–aJVL­N£ËË0gzŠ«F¶æ4V|½ª6«léæ\F©å„(3RÒ£ŒNiJ€,šÀžÜ^2òB¿uÖi?Ú=×šÅu«sþ¬íÏ½‹(‘ÅxØélwù‰pÁjL‡xª×Éíäå$Ï
+Ûwý®2ƒÆaàï9@G¡Ä^Ð°+–Ú°«ÒVn9X¦´ïo)äÀ ^Rf•ÚxÙ|­(*W%|?oÊÂ:´ä¢÷Í½~ÑÌP¼Q4¨+/\‚å¬á D’Jgh†(®|u¬ÌÓœøŒ¸D¬VÛâ»D}CÍ6¤5gÈÜr]Gq¡íväÃÍßµdBÛ¯¿ÛÂøð€°ºAôTü‘•‹à¨‘–3Qu"¬7MiVÀ\Ê©ŠX
+‘X¸Ì!¼Î}>lôN[~ëµüH©—Zs‹=Hæðd£8ØVW_(O¨HI¡Ø&(ðÈ‚§­¦Ï7©UL4û¤rŽ¦²V*E›rùË.|ú¶v.&Zn<Eb¬öSÚ‹bKi´`«s¿ÌTÑ‰¿`›_åÆÏSÜØÚÁø®sTÈÈ%Â’`0ÛBç†îv
+2C¥Ø\G=Îã0Å\ñd8*Ànð#.AG˜Ú"óa"0¯ÏÁ¸È¨ðð+…ñ®±$ñU#MD¯lBÞº;çsZ"ßQì(â-ÃÔŒä¶D¬ †a‘‚±f‰²²+ÚÂšš£§Oc/™*!Ü'^P­#W=azXAÞ3¨ÛfðŸû =E2Ã!.ŠP%eUH#ÃŽ)ð*~½ÿÑBUØNlg¾BtVþd1¡4‘Z?î„S©:²3s˜;Öë#ív¿k«BGÈO¿ø£´ü<iâ77Û ®¿ðFS‘ôl×UZ¿Fó7Iök¦¹<!ßÒ6[}7Bb?]ÆsÚ²ù1[Xµê‘œì¦JûM#/IÛÉr4ò“¤ÙØET
+¹¡áþØ\üÍ¨7;JÐ‚ÛP¿£¥Y!.kû41…
+s3}3ó2ÛOV©„¥­;@? "(Hò,ð0!æî)óˆËúv”’Q,oã$˜-à´Ã¿õ³æ_85ÿâzòéÑ‡WèãSï|º‘ãU:p›Å» eü„œÌ¢(b'õûúGpùï2ëM ‹}±‚¤)Ž…L‚úqiÿ$õæc/“,ú¢²¯¿F˜Õ¢:9ó½dû3Tú:ûë»ý7Yóï@HO4m/g>É6‡¯«ÈìÒÅOÏÿZ9Ÿæä¹¢öJX.¿Œâ
+6þueûûp=„Þ"/8Ð/öm—M‰FHú9ë«1ÀŠM½ä0J÷(~±ë—QFW„óÒÉ2DÆ¸ôz4š³èÃ¸U´g½Ò¿J 8cƒŽÕ‚$¥‹‰E)’Ä•öÿ–õñÜ‹iÙ†^i)ùþ±OkÁÃ²8/ã«Ç²œeÝüÃ+Òc¸¡H4aõ®ÉhÊ<\mSŸ†…’_»!/q7œ|p7ŠégtMŠS”·1ž>4=Ìý²å'°&ä§d„!µiw _š‡cÑŽ_ËºGž¹‚ìçåX ©ž C[£óŒ^Âµœ‚¼#±ã ¶0,Œ£1Þ'“d¿a42ZøÞ‡d;Ýêrêt>Þx±ªj0"'ûÇY‡Ìg\:i´ Fâc(X’Üè¶à(«¼Ž_ío‘ø?¸ûÈG× ušwÑ©4P&ey<Xléc{û0øØvé¡ìããôíÝPnf¼[þÀ¯³„…C_—
+]ŸÀ„ü[yäOà~o–lük.}œæ›¼ýØÄ³N±XÉ±+CQüÒ¼uhT³ü$Fù)6áá%™@˜†&Ç×–¢±\œ4ŠèÔüí0{Œù¹"ÐrÙþ2 BUåÕÚ˜©©àˆ*8ÄÍk¯C ËT©JF•¡Ö%fRòY±/uÚþ9õGYOŽ€¦ÆX<1èU$æÄ¡ï-³ƒ)û˜$Sèúƒ¶ôœò}ì)¯2Ú€ãÕ:äÊÉôP.šà¾5vèlJB-€võTJU¬ß¨ðâÓ#Âä3'CZÉ¬’e9·}¹K4ürE3›¦ôÿÜxÎê±
+Û C˜.ç*³*•ñ6³X•½Ë€¿Í°Ñ+©n]VÛâZÁë3tq2Az>B9ð~ôH-™h50“£KdVÎf+gì`wˆø)î€l+É‡Ðá³´Õú£$øÂ‹žÐX¶¶tEÝU’Ë
+äTFÜ=á1çá¾c¨!~;ãù&ŽÞ%Õ™›NE£‹1&³¯. ]I2ÝgŒ?˜Ó­¢8m‰<Ê.ƒâ«,°ÂTÊ†95íjÜ²™ë/ù`ÅÎÎ+sW`|X~ï´Õ‡eè³IM¢xV` —e¬÷üÑü¿"¾ÿukÈX„ôN—^MÙÍ¥áJæ%4õ’œTÊšÕáKN[Õýô³uŠa÷=™Õäš¡µswÖŽCqÜBÕ„be¹–õž,ÃÊ#ú°$¹dŽ&(É¹’†(`%ô	VòlP¬û¡½'ÖtÑ2añò=äTSÙŒ­™6|È	N`€›JX,ýÁ˜²#Ð­7¶¸ö¹AmÔæ´!´OÐúý¢8ø+à…6–68ÍÍ[ýA~·Ì—ÉAB¿²IØGP‡åÿš¿Sjn8X
+üu<êT6ÖDj'ÊÛ>–Þâ¶ƒ.½¸z˜“à"Ê›y	Í½Ñ(ÈÇèÏ—ŽM™·ÄlúÇô-n@‹ãèêíâ˜†nZU~¬¤gW÷-µ˜ñÅÀ Œ6qU€íLÃÞüVÙãqhòÖ+x¬µˆŸý«ª_ñý6fÁÀ_y¸ë{K3önäQZß»HiiÕh¹Ðl!O gŒÎ)K˜E‰Ý}4µ'“™én¶DF±­©2p3À®]g.kdz;²µ¾FêäûÇN9
+Yì·Ö£Nf©±·¨ê¶\¸¦h¦bõ0…T§œ íºœýŠ·ÞÒšOnÅÜf®Âæïwã6­*~Dò?ðÎ–êŒo®,¢äÌa—µC~¿P´¯½ ]Ò\ËŠÞmš'äelgÙP)ê
+6µ#ÏÇ
+;œÿñ]aàÖX*›EÁr‘o‰¥jSJ\¶í³‡eÐµ½O¼ò*¡¢÷¤$zù£µßzùgƒ£·ü¸~@)
+Ÿò5¶½Ûù‚1¥ë1•Û‘m¬ŠU ¿J-cŽí´Áµä' ÇÚWJŽ‰RbLA©îÈm@þHºNá².vA7ÓBÞ‚{„ÏàOyŠÔWåT¥/EG­j}ÕšzV»5ô5˜n*6`í1¤NÏ¢Â¾&•¼ƒ*y§†J®KÖÈ¹šŸ-4“y`„sÐÔÒi4¶„ž~éh<9î8¸¸ ÑYã`2	FË0½AO¶Ìç~¬1ÎÔøNçQw2qqCÿ	Sæä Ž’¤Ø×î®HÝ¹ƒ=õb©'ÆøêûÈG‹Ý‰ÄÖRÈ@ÖÙd‚>0Ç0r×d|éC“NË£U¤e<x´Û©—‚!:QiKËƒV²®¼áÐ÷=§ :2w²>”&V¢)Ì'ëj0ô¼I¯"†€—¾YK hl­Ñ½Þgˆ&xpë)¡ÌTâR†_
+Øe^’}ëçRHØ‚©7‡>M9ÍÂª•q¬!b ÓŠ»=„.è©IÅFyÿ™ù”LÀšŽ‹˜yP$Ì6G¼×—2„Õœ8UÄliEÌj÷ëãlHu‚ vêA¸­…¸›º6ç<©ÓÔÝÐ‘}µœ'¸1q÷òÏ¸ùÊ!Ÿ7Ò`:Ð†´ë¸,ê)Ë˜u«dÊŸt‰(0Ï
+9t:XKôzþ xLšL§º37»Á-òÙæ÷š+Ni4ÀÝ¹é=¾Ûdã l]=E	tš	0‡ƒïÉ	3D9^‡ŠVó°¸òõV‡[•ON=»¨*ˆÊ¾b¦9å¢I—¹cŠ+à—ík<e–>­Y¯B†Ì‹¿3GW+w‹Ž_Fû\Q[«ú|4!ui¼Ð ƒ·.K[fÌb›°e—˜¨HiÔºˆÉ$Žfª¼ ïËÚèi1{Rd°’§C{æ²‡ÁÀÝÐ­Ñ£ª¦Hì §ÁXô°ž!›%Ç«â¡OlaäÏµ?–õ\;×>ˆfÁÇ2Ö`R—”z‚JA0Dœ…²ƒ5æ‡˜Yðbož†7ðø(öq²7Ñ2Fè!¦ž"„ÕfÓ^Á¦m$NcàÎ”¡Rqé™ÇÛ³9U[y?aÈ¾ÿx{Ì€%ÑdfÐÛ²S@ñ(Xü?óJªþÒÝàÖˆò5ŸGu:ç’Õ?'ªi…nc4ëO‡Ð
+ædâéÏOœ ø9†u¦,·7ìniÑ.”}G`ó€Fà ¨æÅ1N±z©ƒýÏxQB¸!Üøñ´W"f	µ"¼Ì¯ÏÆSqBøêÂ)éZÓ'õH+òqÏq‘ÇiÓÒ.ŠRd˜Î®X¤ÃÌnØ”Ø¹ÎNX"TÜ»XdjöÍãÒpÁØ–iÈ»Äì§.ìöy†KzÃLK¸÷eÓ9¦fÞ5â³1ñ’…?J[ïQ<´]RŠFW¹³žÁ_„K_`H}¼Öb‹ÊP¥TŽ¯÷:T*¯ÙrMƒñXãV,NµTˆ
+ð2›±çôÒßN>^þñzþ×àŒ;ƒ­7?¼îýãæyß{wÜñ;Á«_öƒ£?MCïÝ8‹¿˜¦~zsòçhüÃñÕOÁîÇqÜÿq>úôãìÑÍ?nvo^î_ýØÇ¶ŽþøæO¯£Ùëä'Ïñ±“£Ë¿÷?<:úå´uÄ~þé‹‹?]=:šÿyþ÷Ù‹èÕ/o»?u_Ÿ\Ý¼>}›¼:\½>ùüøi°KÛý4x²±yNÎf^ò¡E§²‡Á“^œmO3~¾ˆ€jg[t‰·¤-ØÔÅ™Ó>¡ˆ W8tèÂe’VEùUrD±êÍ×c‘™`aÆ[˜X£«²*À~êûúø=ÓMVöHuÐ!U:,ÙÁ¨?Éì«ýŽplu~îü< ‰ùçøòÂkmuû­Þ`g«Óî9Ð[¥Ë~{Šu…2œÄâêÐÎ¥åAÅû,.c¸¥V\Ÿü»Ždð¶,¤±6V$Í›º·
+k‘±^ÎŠÍ@Ý¡2‹T‘S&
+B¥f-
+·4	@P!sÿŠEW¥SÄð8ÂK Añ\é”gÚ
+A1i“¿GË°ï“«)(k‚\„6š’±Hü…–Ù7¯0wo\»(ZjÊÇ‘‚œ­	H¶IÊ×úÊÇa Ó°è­L^È¹`Ôm[|LkÛ|‰­™">f†FË„ø×‹€_ìi0ó“=ÒÝ"ý-ÅdˆÆ4¸Ý`_^´/Û[„Z×ÈáOï^cê/ˆ¢t[a¶4AÞ“±Ï5 7‹5£â5rÿãí0øÒ›Ðûâ›€! —þÜGÇ˜Bóx:õÉËÓS¶ 	ÁMw`)1@qŒ-m“£	,)+†S6ßHáÛKLëM£(A<JVªˆm
+ž PVÐ-”²#ú5ïCÿ‹ípvðêó‰œ#²Ä+ÅW¹MN`!q#(€ñf¸teÍ*!oßàqÁsÑ&§p$6€ý¥ßÝgoGaÛ×*/£o±iœÆ §òœéFvmaÁæ»=2ï!$
+"»¸eí´hÊ©Òø>ŸŽVÔ7è0'“ñ5j)¦v2ñ=|KÊA‚,m1ýÅŠ›Ö‚Ð4 ‰	é‰M½áp«×ënu@jê(lUÙVÕÕ•?³õáVT‘`ÑH8G£Ž9h€ýÊ¬Ç{¡?ÓµKm]ð'ù©Qo¼“ïïvø'ÓÖÙNþñ©u6ÄÅVÕL…‚Ä@Ó=Ñ´x¿“/o%ÒG™XÚÙ¢ÿÚ; ‘”6­îcu4›¸ÙJðƒçÑøf5-\^†â9Ñ ”—9Ø-°©øŽ„É‹ÛÝÑÛÈËÇ½«"Ÿ;­›ân^‘§6py~×€ð·›Â®šLÚ&N?1¡þ\¶©6ž¾ŽøùD06„Ú ›š°ëQobÔ+h·—W˜E=À¡9kÐƒ1Þ†:¼çM´ÜBwðƒ¿ño*(>ß Ä^î]·D9Ã‚NCLÀ”áAµïh
+¾Ñû©„À5½w×	úY\¥Ð{¸u7i‚÷td‚ýµ þjÜ¹9”Lê6ìÊ÷‡{HD;ª¸ÍØeÒíµ‰¦vlâ’ü†÷°”ûÏn7)«Ó=K—½3SÍ‚&~W9€KïRÅE£ÛÓ`\^FC^þ§+Ö­YSËNÏ”ºîCÇSÇÜÍ^Ù²ýŠO­! ÜV`-¬Í^M &¿z16C¶Ã³ à,5YRpMW¼`C—ÿš|ÑÞ™%a]ÅÞÂ¸6œÂ`Cn³ò4ãý/ñ&êÏôÍÍvýˆ(U>~é$EË[óì|‹Ü’eº÷ÆXõÆ{7ð×t=ÐÄ7È¾måâ8@àK•è“gÝöà\Žè±,/gG%.¢X&ÑãÂ®^ãïèy”¯fhâuÖ
+öÌR&w	R¡6Mß¾ Îb†ŸT
+ZÈ"ëäšåªÓè³³‘zé2aØÑÂŸoð˜;ÇÕJâ=©:µü+Õ±RÏf2ËþÅ>\2VÓ>+»Ü…
+E„,FV4å†Õr«NñóŸ<ÛÇu½æå8³áYoq¨¶/ÜÇz`Ì?)ÛŽ’äœ@X\ìEhÌ2#ÔUé:R¥S‘ø$ûÁ‹áÁóÁ@)Q©«¾ÌPq§ Òæ"º;¹Ê‹aKLï•L
+;[ÑÓnžWž&´¤ÇoÂebŠ5êk½'§ûÇ§äõ‹wäà‡ýÓÂæÔ7VÐ'"½ÅBhŸÓp1èÉ†‹Ý*ÃÅ¤3éM†ªáb·d¸Ø]Ùpáb¡èwŒŠ9¡¯	¤”¼òÒÑ–Æ~.Y¢ÎÿÑ`·¡	6žÅ×kÅƒk°ùV½ª	:¦Fiepá˜;§5"c²¡CTF‰žSø„<DDFÏ!äNŸË¥]ÔÉdüÉè
+©mŠÿSîøÚ:ãLcÇÖtÌ˜PË]º˜5<£ZgQ	5:…^RÖ©Œ2E9d‹çõw{vUè>}¸t¡ÿ`5ïl!®«"l½"TJÑŠØÍ£VuR·¨ñ&%Í$1}Q²†"Æg¹R‚²6>Ñµ§¹©UQ6üyëíÉ†›žB¼ô>Ýž3M·SÐ¤~¶¸ÞêµÆÁejU¤r|™iK­3÷ÃsÕÂ›^)=‹:Pb2vÅÒlu=Üz4€kÄ Õš½oÛ;ôƒÆÓçp™ /ŸÇ<k¥VÇsàvP[Ëàªµ«¸[“¿ª`†¥+¤Â,©9¦<Œ›Æ­äWß‹ 
+aíäñ9fÝ¦¢C2Š£0¼ðJ†{”^Et£©gcô0WÕ1ðŽ}œKÔU±¦ðx°Ú¾–ÂíEžä5‘]Œ÷'ƒÉŽHßý~'ÈBÇxXÔx¶;üþ\WŠá=Í«2„öèì¥
+Ò%oóéÔ› !.¸R,Ú÷Çˆ@ö6‹6†ÿ  ÿÿì}[sãH–ÞûüŠlv÷Hš)¼ˆR—ªC¥’ºµ£jiKªî™Q(ª@1M ,I­QÄÄ¾Ì“ßáGG8fÇk‡Ãûe½ÏÃü‘Þýþ	>'3d™	ºÔ¥¥ê®¢@ ‘—“'Ïõ;ºÍ¢²7N)¨Óe'´‘©§œÌÀ8™*ä³öã_þùÇ¿üßÿò§{œ æ40!z ‹ç[ox8vk²p Þ¥€ò‡2
+‡†jyç2r&ç3´¹±È¬}Ò÷1…}]œœ kAôuQÿkÛi‡EÆÐÍ8ÜÝì§ƒHØ†‚Õ¨?~â€w'çpiHw2~ßÅ¼4÷r
+òFÿ3Ûb4„óTËy:Gƒ’Ö‘…ÄC8œ2_çWˆXB$&¹-ÙÌx Ít„ÇL ®Å|}Zás„»üó?ÿøç¿þøçúñÿÝþËÿøÇU_ûvo;)pv>ûÛ¥U¾wÆÿö?ü~>ñþõÿæý[ï_ÿåO-îÐÁ"°ÉBÏ¡wýíÿßÿí?»žŽë¨OC7C—PÇ,6 1ØÉÎLªsØmÆ9›!YT]m‘Ãõ$µ@l&M8`ñ´pZ6þ$cZ2ã¼é6ˆ~üzð’œÅPM¢Ü¸>[>8ó%]ËqxžzØsmVdÍASÈ»k¡‹¬æäjê2³27',å<Ö¼˜™ÎmÏ\ôÐ"wÏ¿¹‘ÌõtwÀ7üÝ_’%éX¡¹‘ÂI¬ÏßU¤b
+ž=ñy£>UeÍëÉ1¾t#k™sÌ`û^ˆK‹.3àÄUæ4»Æ…ÄnL>z—ENoˆe/B¤¡Ì¥R€tªe¨€Þf,píd;ÅÈ.Ð\xù*qöû—›ÔÐ®bqÑ¾yãsFøè	ƒ|Œ"P“GÑV%}[%£N6QŸlŸº>«=ä¢×_U"ÕÙÉdöRèŸÌmƒt9çÒ‘ÜŠ™”zÐæŠRç5¾Þ²‰ésŸvôcÚŒ\/ál.~9ÍyKm!H^
+_°`ñ`¾`nìˆ-cGAïª=ÉÆåì,tùAÛºsþ¿;é¿tyçCæDñB˜qàö(ž©wøB:€êÁÑ4$o™Bl
+¢XñA’Bbïâ+èzÊ~GÉ¡¬ùj³Z¯5B“5é^_mµäÝÆWÌEâA«]£Û”OÃ™·çÜî[¶u&’”IAñ½ôVã)¦ Ò¤Jtm÷z.šX.ÕÐkÊ¾Ðólà!"•I2•Ÿ<É4—8‡“±ö=óèA‡ïâ'Ý”MYæ˜ËâÁ.”N<µL®9æLà×yïòI~‚X‘`z~ˆñ—_§r,üKñ=ÝIªJ)ÍVýI³Ub¥õ‹*
+ ¦²Ï¢õ“áb¨4õöøÛP:Ft‚z×¥âË®óqÍ¬ê•ÆpÔœ	å‰7™Î¢\¿>Ë#7?5ôÀb›×~ÀC+w#P-¹uÍÀºN’g^M±t|þ	§×s§@ò,gø«µiï€˜žÏR”å[²$®U~3¤SÛr¾¬õðÆeå–É“§×ÚõºI	eëüì{ÑÚc;Œ<÷{3”s1½&5idžRÅ78(»¼é<Þ]-kÌñ1sS)e©,oÑÌIè¥;]©BJ=¼BJÂyè#Ën¤˜s7ªÑæ”<ÅŸüÊ½BgDÒ†[£EÅQEÞÅM±„G*Ï'¢®ZgB¦ »C„ƒ¶*TÕv—Û*ªaæ£k´²”èÅœ^aH5³9—¹TbHèÐ¦L{ba¾kù%WÛ
+÷LnÖòsÖ÷BZ hëúa±k ±aÇ%Æå±O39LÛíúžæ9d½eÅ›þðÓ›@ÀXpž4(È¬,"Ýªçšå1çäLkuÞrçF± È_s¯´“`s­†f¦1'èÍép@wG³€‚\äcw´YEäI
+7“¡2oâ!À+âïÑEØ$õÚÆjŒO¿­øÛ®çR/øû…-á1‹>–J—EGF)óµN¶âDÑààÍÆ8u1N™°*eª–Äß³ä¥TÒ,×Øaê Y/[£ÉHQ	§Oô*CAt"-ŽÎ LÇ*B\R›Q´2"½Þ(E»Í ú±E#~áŽ¸ódJi½úªHLžÉ™æ
+’‡z{÷=Šž‡ÏZØU¢å…×Ž‰Añ@Q€'#§ëJ ¬®‚Láä	1œÖk¶;>#ãÒá1K À‚èû“ßÏ¼àêÉ}áÆÛ±»ú™rŸËlBð!¬¢gÍ›l*"Î›Ù
+1'bèÆzëV(ã?LðÇéRÊ4üG’àøÌ£zQŽ?[F˜ã?’æRD†çîÔ‡™ @î†çÄ€m¯”ËDÜ$MxY	Ù«‘½tÐ¥|šm/ïûfyNƒ•A²àá¾Up€ Ã>ü‹pëºi Wi§håäG¿SbÕdÁ²{	¿‚<F½ÿ03ÛÔÃ‚/ (×jïÅ†A8|è÷¿y>ñä wÂ«I“Œ½YþDb…‚Þñ‰´òü‹}a8V¢Í?X®(|Ì Ádpž;ê‡š<düaÞ]Í×:ç>u'³nbâ\8ÀL™»…‹Dq‰8ÈUÙu­ëÎNÜ¸aÜzQI;ØÜ!R1ÌLnéoVÎ“:Ë;§à–$€¢”q¾ÍXÒø¹¸µä”
+FŸË·i/šo3:OF´™VI¯ñ<ô‰a›þ…k§•³4êŠ|*eÏ-]JWÔx¥yíäðÛÝ—Û¿!G/_žì~sL¾ÝßýNðEdÓp¦Ï^Î•‚#iÔrúL½[ïÕ])(!ÒÚ­†Î@6©Ý¯”ºEÖuÃ"œR"Í^´½×¥n+µ~­mÕ³¥­®ÊÀgEI‰°Id»H* ®Ñ¸ˆŠM«¹Ä…®¤3¤*”ey1Ö,£"Õ÷Ž1HÙ‘ÃÁÀr@°j'Ü<úçÂL5$Ê`ôW#Þ
+´‘[%ß©e×©UåBÓÂª¨&ë´Õæéfì×N}:[aVÄ'Ù„™=Jv»ÚØPhh þw+^RHµq€ˆ¾{ÙÍBtvýÉ,tCŽSváý†[¢°Ãpõüñx6–¬4Mä.\§¼ë¹9% r”Ñ@õò¹ºfÒEqõr–˜0¥±€¿ð+/Ù‰ˆŸ©\¤u­óÓñ¡ˆïíYrc“úØ†'] !$Øy*ž¦Ú/•±=ê¡Žý ¸ZÅ0ÝÀ¥èz“È}KÃÅâ6öÑ¥T#\Äì]Ø94<äP`
+ 9hû@›Æ"×«C|u…»5¹Öš¢ u¾-Ü_bÙïÑ¹ðkƒ²ïÑiÀÙmAûôÚ*[°ý2ÕœX˜$½¿ÚƒÝZýŒµ‹…#ãÏûÙðÉŠÉœ5§†e4B¿nåìÊCk xN6¬Xd’)m¸Àh#Ãm¯\”èbÜÌÁ™Xñ[º˜}åê%¡CÄ2««ÆÉæÄ¶V;w‚(®F=Ã(W¿¾
+F…e1hd…ñÂ/Œ¯),m¤Ê¨gŽ;16£<ðQ:óˆŸ”èÛK(Õ‘LV;úƒ!%|ÔÍ\4$tÔÃñ³U9?\DI—úÐÀ¤KžÚ²ñ®‚‹åÈ‰vF<78m…±¡…ð0F-ž:ÊßmÂB_¸P_*÷P£û©0³ßkÞDPË–c6µR¬ìYœlÇcÍNy½Á3…Ho<T’Á)öNg#”Å¾q/ÊÔ–)(÷dîÊòDÝzÁ”®ˆsDÕrU¸ ÏRPQÌàUÃ†B¾1KÔ¼}^ž¦ßVžJÜ$é†±i§™Á³5EÓÓr
+À/D<¥¢jÇ¼—°'zGó†Œ{ÔŒŠT®2p9ÌÂôGÈýMv3ÛÀz;Wü3v‚ï“‡¶Ã—0eéÞ/xº ^ÚP%Ä¤É	;¶¼½L¦«pœ<ô…ÑøÆ»©Z¦ÊÆ§Â·Ê<¡‘ Š*ßK¹©ÜÍê$í5^nÖ\Ÿr:rr@¯¹:@bW®Ã,íªŽ}‘AÒày
+i¸‡êF÷Ò‹Š›3öZ¼D‹‚igíae 0±œGæ*¿…if2³#†É¨Ccò•FÈè¦Aœ°ÒoÐé;qt.ý'Ñ~ÔZA¹°šD½@µTŒúÛaÎèZ\£]RÈØÈÝ9†MñtµXìK#½ëI&´c±ÈN¹­š í•ˆ!"Ã,e4*U ]õ ÐA£.Äm1]À¨šþ\/çxVª	j¾­påî´Ï…Þ7Zi9Í1ß‹U‹4 ˆ¯tÄvS£#ê+„†×çKJqÍKHÿ
+óz£]dOO¾ÁìmÉ¤^$xëHÈ(mé‚ÿ4s Òý›å©Ù”šûõ¡s )h†Ñãåf-­hÉ³`²ƒ¦•R]îà¨K~T`m¹Š(ô*{´ž½%—ûÊÎx ©!MôëÖæ¾1òâDå³i¤ŸbÍ¡pÇ/’½§r–}—IïÓ–ýÄ‚Œ_#4æÉoŽvÉ‹ÃçÛ¢S«‚î 3V]U]P£!ÈÁÙq•ÕÊª¥´uµy|šz-yÅbÜßT•OdÊE‹Btfb­°Lj³NýŸ¼@•yvASYà-íL
+y¹I*x2~^É]˜ÇKåäÄhj$Ýx'Æ›ÂÍ4½²š˜»QÓ°W	ú¦à[üçp)3N(>­§¨ë,0†E50Ôz¬ð".íþÔj©ã7lÛnØ	v¯P?™qŽudTYµ&³`T°•”ËE…uâOÕ¡tI³_ÃðNÑéM£$çÏ(¨H­òf:Ùç-pxÔ‚ÝD”$òïT{äµy«·Ù¥$ŸÕwúi§Ó9+²Jhºê8¨Zù³Déýµ¶Ü¹¦@âm¢ïõ z-Lšn!Õ€jŸÅÍ#&®ë^<©~‰ùTqebŒIÇÌÁÚÃFªŸ]ã?Üµª¯SÖ¼
+¤@Éà€©$[goÆá-ón˜nÖ™áD±ðgÑrB©R÷Øã«ÄnÕ5b®ßˆfZºØ)fwZÜ×+@0E[l1Ñ˜qÂ±
+Ì\ÒÜ2£EìOÈŠÆ¬ð¹7ÈL_’Jæ¨T”¶O,Kô°}]§,%º8:ØÅóØØä`è›\Ö¯ž.-ñKÉ¹Ã~sö[Ü:Ýò¥äLa—å¥1I¤›„GÍ÷ì>2ëV‚êŸÎ>ýÔmâ	Ë?§~…n—…ÑÕHJ¹:°×¼;È7ÉÒ§­Vki•IÏéÈ’/†Ó´—ÈŒãZIÃåÂ‹t8Ý&Pn¡5Úu¬_›°¤ "í8…,·
+.„ì¹óÂZãQ@âäOO,UyÊø!Í­0bÙ˜ô„,ð°×¹ô+O ìSíTHá›éïmØnN„–¬ÐE,ÈÑñýØ–ÂˆMGÆPªÆÚ„ç–?qóZuËqVWH+Ÿm£ePø2¸–XËÕ¢¡[]ÿRÂá¸,®ãÓQûû™¹Üµu£L59ÎÜ•f›ð†V$¬ ª‹*BÓÇ«-‘”nÉÈN…–»Ïrã pq>/¯àÅYÒ›šÛðgï,›Ã"Raro{§½³Þ:+Óâ:®Ô/ÐpyYì[Ç¥<…	1éjEQƒBoM)
+Pcl%ç€öÈ¸Žš©JP¯éïqü„•¬ÍŒÉ”öžíÏýv¡_¿Ÿû„ví}Ú ¬C?ÁÑÏ&‘7"¸m•…¶ˆrpJìyuzŒÆÖ–ž|R¦Ìöññw‡/Ÿ«mzG0ƒ@	*“^Q~fŒÜq"­EØ?»ÙPYjàØ±w·4zÆ}ÉÊ¬Qf<h6Ý·«GÒH•!íªp¬$NF.÷WyÊø‰WAi¥S±ÕÖi=µÆ‘2€G¬‡™G´ükAèÎñKM¡…¡C—ÌÔ ÅiÑÍ,	ô¿ÃÂü…%Ñmb5êVœ~?åÏ«43žPßÆUe!”â¾…Ë×µZ-if5ÎQØ$r†±º~¢ÛÈÞ¶Ÿ5¬ünktáÏàL«‹c1²ï§77%c»”RWM”ðüoüOÊÿò*OÅbï•rïäA©f¢V›æ¢hã‘ZÞµìø“ŒÉƒSM½øö¼†µóH=åJLjä‹4Ç‡ªCh˜ÈxE@ÀE7È64³]â&™+|…uÿ·€9Ðc¨ˆ»/÷1Hë'n·äIÒ÷ÉÄ@rŒzÃ{êkœ´ù„´ËM$˜ŒAò$]“ýpn#Ò¦æt§’çB«bÁ•¦O”d8¡¼
+ao"i¿×Ü±ãVŒh•¢¸ z£kšl‘]|j{ÿ-Vû­¥_/çš_%9¢ÕŒ›á]®MckXî;/î([_:el´Ž—DnBZehEÙÌÚù•ëNÉñßhÊéâ&ñ@«¦íŠ$( CO`*GŸ~ùBR ûÝÍdy©ë½u._Ó{–´+6¸T¿¼´æL½5œ·µeþÕx`XzN«€Ýhè÷7ÉÒÑáñÉÒªö¾!õz‡›äÚ´ÄóÚ«hš^‚VétÄQ Ö~úÃài$(?ð~ ÷Ããož¹N@M(t"nÞh¾Ñ·ÛõûW›äïŽ¿©±ú ._'Ë¾) ¹YÑ´t£sù‘²²Œ´°z`\wäÆi)~7%$2 M›•U·¥y¥šHÿ	g½ž†âåÜ	ÿí«OtœÇ jd‹Tu©T¸TŠ!£RÑLd2î&q&WºYÌÌafŒ„^Æ	ÔõVäÑnm,jßcxY‘·•Hcêþæ®™“R·o#ÎØÛÛ{NË€
+nÀ½úN/	I:©è)HQj-LÝ+NÀÉ‹¥¯Ø€ãÉ,¥ûß»A#7ayw²´ÝŽÅõ6º¨Àâ)Úq&=w4UD{!‹Ã>1«,B®|í…p\%¦¼'ù«8Ç~èfæ8w_‚p™šhE“â·ûÏwÉ|Ü}™GÞùÎuó¹¿ö­‰™$—k¢€šË+]ck
+œ›‹RŸßØHG®
+òÂ^Y!UÖÇï$®¥‹`ÕÍÊSqO´	 %w±P5¦‹¸ú©ü}SZuq“¥Â×ÂtM¾¾R–+u›W#KØ=™ûcqë§‰·=§B«šFU”˜ý„ü7‹¢¸«7àùc‰f’–)Í7_ºÀöË·[K˜%“¹+p©-Ü´J–Üq×í¯-­ÔBã¢å¥Ÿ/­œÂîÞÌ>œ¾â
+fVëºkÆw¤wÁKè/]Ô¿ñZö…_ª_¨ÐØNŽæéÑNE3ÁL¦âYUæWÌÑä|¾_UfŠÂ€Œ5rk7ø‚`L¾ø‚èÿ]J.Xì/ˆ;éWSÌh¦ó9¿
+ü°çOá»©×}ùP•Ô½qºÅ*doxúd‘ÉÝOX~°¿ûÍ	Ùþêåîîü¤/!&Ä6¦¥æ;>âœÎ”ÁgÒ¤Éhæ\$E Y3Ïc¯É‡Ž‚£?Šé†è)x}>–·!§f«º®{ò„#–Î—iÊ.Tw>¹-³še$·d±¼É&¹SFoß	›W%G.ÌæYN.Õø’Gñ"ôQsŠ¹¢ˆílC²üš©Lˆ£Íá-ˆß	›µNcÓZ‹šVx ¥¢ò¼Î ª½`à'û/vÉÑþÎ¯@ØT2I8B„Î`žQJäTEýKÔÀä2B°N¡zË¤ãˆw‹¢È—syÛÞA;º\ûÀîÐL¹(fZïE”_Õ(T”)
+B”qó}Í ©òÚh-`eÜéO6‰Õª²€„®À[˜EE‘u=›êpªÅÙ¾^6‡ 3cœÏ«o‘Ó3µmä‚Þ‰v¿-’Cœø/B­}ï®Ñì<xK?\ÖE§w¾ðF#/,¼]symìy“>kaNÁGbk‚§]8Ç.Ð+ËÚ—ãcø«O½p¢a­çz£åå¸©_k…¬ÁûWÈ/àïâ!³÷±&çòÀ–±CÞVýâ=iÂ_¿ü¥Û˜¯w_\Äxä¸oX~I<ÚqøtÙº~HL6µé,.ë“táQ¼ °/äjôÍåXKdˆ²t«5®~vÝO‡…øw†§TêÞ	uî^N=Æp„Z§TöÒ­a‡|m¸NÝi©²zôM¡Akîë#÷ýÛT7]¥÷Xö&¡”¯8*üå¡®¨IëfE_­	¹CŽü’bF%,ù.8ò»â¼}wàÌFu¦¤®Ý‡fÑº3fñó‰G6ñÈ&LKVQÞ²ûÕ«ƒmå®ï_ºç³‘ÃvûÂ6þ)°	$Y-¼n,KuˆI–h®UešeÑ.°Køƒ]²ÞeØ¡/¾”Á5©{×aÇO9¾<µD´²D”ËëRå#çæ7[Oër$ã=®m%1LŒ¤×Ûšâ½LÝ?bø
+mÏªÙBL‘1Isžêj°i@åcåÜcˆ+OÓM¡ÃUQ¡^ÓB¹¦"@2Tµð¾<yèÌ"?' —ÌŠyÙàöyJ¸}\sÖZ—kZµ•µ
+ýÀ~„Ö¦¦hmBüÄRMMŠ}|h~Ö£€°üôßb(ƒ¸ÕŽhyLHZƒmT>œÞ­·oû¦•Á¨T—-ä°§Êóñ:H)O°‘RÁÉÐEÕöÆ7Á&{aˆ¥ËÔøjUEý ±Ìâ—n%BŒ
+ëÚ‚ðšË…ÓN5¨väÞ°!Ç#'PÏ™nuøÿùöÞŽœÀ	¿äðî›„Eá¬o“Lfã®˜1Þ§\R¥M!ê@É]‰SKÑE²¶R±œ^ »žê0-ðì\0¡:wvþ¸EåÖÔö—….„äŸ“õL†åGà9ž%åµÔä´/Œµnc-Ci	ñ@_ ¸„†Öõ ]úƒÙ\¨ƒæJGtåéá`àQæó} A8ô¦ ã'Ã¦19	zPVÏýàŠT¶+¼Mà[Íùç…k’2½
+Ì,9gùµ¦Œ1,ÌEy‘¡™	½û´þ'‘•Z`Hæªµ¾±ÚYáfÅPMKQXÁÒ®ÍÜqƒˆ•©TøÒ‰Yáš‡M«a¨Kä1w²
+€{0)älŸì ­Ì‰~¢K¸-ãÏ@gÐ$ÞÍT¹8•=LÉâ05z@K*TÁ¯ê3Ý8æà…¯Vtµe"{Jjùóñ”–Ezm‚3vRÚ‹”Ú)Í¢õFMÒDf¬„ZpåíŒT’)P…Xð2[ÖÞ¥7eCùâ5LåŽ²ÇŠW„w‘"ÏfÞ¥;>I”@¢¼¬v!œ¨2‰YªÎ³Eÿíþ›]¯ÕëuSÖ±¹õÓNñA“Á'¶3u—wFŽ7.ìÁ¢Ðéµ:ìõqgÊ%Á´\‰«ê>å9®,{¿½ë‹Ê–9¹'ô;z‚®»X#É^HP¤ƒ·^÷ºê,¸KÆ‰Ü@«'½õh¥2øq5o6ÅàfJ{«XÀè… ÁÔ”J[C½ ¢åv3åYPÓÈ\ åú´²Œ ÆˆIä¥K™ª]«BÒQàcÈ:Œ/¸ç  %CªœQ¥"rÎÍÖpï"ªIÀíÒ–‰¤AµgÁ,3Ç––IY	‰d¿#1Ôæ¤*Ü‡jƒ­Òü›ðn„—o_œŒyb;ŽâÛ•otŒAÃÛÍ'.lWúk‘ 9¶å„/å(ÆdÚéH‘¾Ç_ª°SèYáÀÊ˜(ò“&Ì™	šYk’(«ƒê¬ºi0õsz+}¿ŸÔtƒ&ú¾`âSË‡(
+ú²	…¦$ç_ŒÙ›L	fÞzGI”—ó°Z\á/r¹S•#X»9U,^Ø–±Bèì€ù£^´63G=?'ãÞóCwÞ›
+:J«ú5p8-<’@âî{á”·¸ƒKCŒGsXÍ²ÒÅÕò<Öƒó	aùáó|»PØƒø°b.¢¯Å¶«Ô
+%ÖC,Qú°´¢”Öéí9ÃUÆjd²M¶²G¿‘ñÔ¯=“ZàD/Å´š·°~â‚Ï-j;¬âWjyBOËß ’™¦B^Y Jyí³'‡Þž™GJÞÌÔÉýÉÀ7X"™8ó®˜œC¼Ùüê
+½ë¾<	Ë‹œ‘×+]7!wz§3­“/æª(›;;´"$MYÐèå¼($_!œçðA%ÃJÁV³~;‡Ö0Ùg’®ah,×Ëº¬>aÊ²u5U)<Tô]{.Bqº1C°_ižìÜV0tƒ©E<»‘
+`™rº~/8fgómdóm{­”CB0U§Y´©MY4u‚Þ‰&±¶²¨…‰§ò«ym‹€­K!LX"_ª"“hPÐq²iÇR´‹QH¡Ø.^(ß"jÏ¹Ô!>¸Øi5lñé3E»±@aÌÄÂÉì¼Ì¬+ÖÀ6mÝÝ™¥¼¨àj{¾´EO®…pÜJG2Â&kÇC¸/9Ðõ4¼¥©>utòD» þHŒ9i¸cu¾É3ï­ã\!êä¹÷ÖCI]1Å¹#ænóOv~CN^n?ßÿæ+òõáwdÿ„|wøòWšpµz…¬†ÊÀ~ô|?oàZ;—Ì&ñYcdÚbÉgÍÐð
+c¹&hIð'¢B„SBøœœ|Ð’:H“[¦šbMP¸_b‚2Cl ÄÁñ¨<‚yšTH¥ªRnuGZâ¢¼D#¦¢Z’`f+R˜BÀj¹Ò±ë½¡9ÉNÅIF58†ò³jdgèc%1‡Œ0bX¼LËç´©Ha™cÏÿùÜ¦ê|HüY@FF¬ˆ{	\0â=käÀ÷¿G€'½€\x‚Àéá*jÝè‡÷ð³3é£Í…Ê	‡¨ÍÌÚAÙ’–E:ÊÊÉ¾öÜ‡-QËMäTÉïƒrº£™›Uæ œøqÝD¬Fx”c×´Î&²;ëŸ»Ñý‘Ìs·‡ˆÄÀÚÈxû H…½×Ñ%‡_È…ƒ… |š½MÑð¼ZàÔT#¿›zÎn}ä””â/½1‹f‡æ1,ADé‰]ycÄýz8$tntõ.	Fò,@1Éóz’yé@%î\ÜÍ4jd84lBPª‹	xÀ„ãRÝõÆ$B#òHNGj²sáÜ¸âKLBâðÛ÷À'.°Qæâny]aÃ4¢dèôz”r?º_E(lê,œúÍ¥·rêìó=ó.‰i:¦£ÛðŸ´=9}#v£{ ¥fE&Pëp¿‚:yqôˆŽ¶‚pO(K…ÕFª©¼ zp‚~…DN7å2pMcRÃ#Ì™\FØ_ÚR€ ~ú}BX„LG³é‡ÚGbdÙJÙáÓÀöp~ï„ŒÒª«–ÎRøç>˜C8Õ$.5%©«Ô«8Æœ•´ü$7‡w‰BŠÒö³ÃW'ä•F/Úîú³èÕ-Rxa=JÁzÐy&3…Š5/%ó{„î ¥2+Šp<œ…Z²i2ÁÏ	F»Ã„M‡ó8QUöàk‡­›˜« sƒ¨k(sŽòçˆâEJ¨0e]lùái:xèªæ«EB’4 l¦l€¥¤‹Dí¹WzAòæB½]p»ÿ¤ç¶T%A3Òœ9éýÙéL¿Š‘‰Ÿ’ú|a5mã!Z:KG¦®qcFQ„Œ{¸Y6a¦0¿D7”žà÷[›ÀÓ:·ˆ&£Í{ÔIòÿ!,¸>"]õøðŸ¡Ï"‚ÙŠÀ¥rò°)Q*fVª”­Ú0–W*p­Œñ.a;ëéF`­…|­ÿöæ=‹³	Ü>¨êÝ’í^ÏEü·rµ„Aö u„•	=%ýœ™±3ïL9¿f!œœ0/˜K“h½Gî¼5|{j’Y¥Ù©¡‹RÉV¥aW|æ_nUêÀömb7+µ~«B¥
+r9MÂ­Ê0Š¦›kkµ‹FÍÎ×ì:è‘Ð°Î¯¸½(~i£¾_Àû’÷p©±¢óä÷¼ Gvž± Ã½+öo°UYêŒÙ}V¯[ÏÊ4‚Ð4²·¾±khdêÀñÐßª¼°:Ä‚çv¬v>µéÍšEÿµá*Ù¨mú%|Ý!m¼u£fÃov~ÿÀø7}¿ÃgY³¿Mû³×Úæ¢ìÏœ|a|ë…NYŠh7ÑÄñÝE¤Ó·ƒnÕÚ6&×k-Äý°¿¶aðv“~õ5ÞôÛV­A,k‡þ»NšÌT»Æ?4kë;üƒEšu¸Ü¨5Icþ±wÒ ðX‹ îE£	75h¦^ëàû Qh ‹²ÓßHcZ=°mÔwšô;?<€¤àuÚ|§÷Á§6ÿÔ¨µwØ'xi6è	4ÓÁñX;Í6þÏ­cxÚbts ×6pé;p^ë@3ðd?­cû-úi§AŸÅkl^ZÐ
+Ÿ¡ß¾°l¸N§®C‡dÀ7tdM˜ŽV’NW‡~¶±üº]kìØüº…±6ð_˜†zmƒ.ÑA½fá‡vºhmú•µÃ_š|t·Ð€Ï-þ–ö…,X­Ø!¶°úðªƒd¿}awpRp<°j­ƒ†tsÃBê‰ïHwŒÕl4w4;Ø¸cþnç™qÃd·ìt-ó$‘äx$Q6‰¤ò^tW)o µõ"•z$x½øÆRR­1HPÞðUG5ëRÐ3s+èñ8tÒí</O5Ïy’ÌÊË§Fét©V2ÏêÛç½1ËÄLýÚÇ,¶‘AÑ˜‹|.˜ÄD´(üÛBKMÑ,ïÇ™\ás7¦ä$³i˜éºw8ý~à†á‚"°.L3ž•ÅðaôÏ(tøÂñFï€¦4ZÇ@cóæ•bl¾‰lZ[£Û¼ 4*–[\f¬”Ec&³Âfj+
+Èê‡QÆoy‰ ßò¹‘ÚìOàþ4þ‰Î‚ Ÿ @p¢<Ö3ú	h©ÆÊkæì`Û•§‚¾a{§]]>þÁ²Ã&~I&þ¯Ê/€tsŒŠ˜Mo#öãf­Ý„;½j„z«ÖêTAvnÕšvÕªY Ô¬ø
+t†V.«ZkCKµz£
+÷Öê-¸­nWkN•=Œ÷u:ø%\€«µfÕ®Ùü~ÆÚðoƒ>r1¾¦
+Q‹¾ddîÆaÔÖÛð©½wUámô«	×«´KuhºÞâŸ¡6(5ðí™…ÒsÍ®‚šÐF%	mYøÎÚ¿]¨5ÛUl~‡–mx!\Â	°°=¸ŒßÓ™hâ è mP‚ðêNÅ:6¿¬£.lC×7`Î:Í*èc ±ÕÖéÀA]Â^XÐ2Ì-}cÇ†ÎÂ:Ck8¼æN2vŸ~ õÄÿÝ¢CÆ¹b·~ %@+ñ¤»†Gƒ0ÜÅHªÅYÇœ:ã=¥‘O¶O^ï“o÷w¿Ë×Ñ9qº48»œ1š…nXY¸¢NŠƒ:pðöm>Ê°[Åx iòµ„
+«v‰ˆRZÔýd—È˜q¢&Ý‰<ë€eJÚ†âW'ÏRN¡ü©"5#&jÞsº/Þr…FÚTV4È¨™ÈÔêxË©…¹­’Á°‘ªvm´3ŽÂ“­À'Õìí ð/(þºÚPp£Ú/s®€N(“âNú„×fâYÜj}]‰ŒqªÐS8Ø4ù>f¯<}îŽý8>JŸ‹¯~#…&Î¦±±k‚Z Ÿ^ÓØÏˆ´¤G~ïj¹/~ÆÂW	p‡ þfE‡	 æq1u—#ä,úØ ×o5ZR):·Û¯7RÔJŒ3h‹H	‚u$ÌÄã–4Ð„îD½©u>|“~9’Íë¯ÌóàM¯RYÀûxÔ¶!3jJ-7ÀöX"ZÊsžu¤Á©Õ¬SÜÿ¡tâäcGxZUâ×nÚYè	ëTëhÒ€çxÌO+5.©)‘:^ø¸½tð]ˆ>bÃ›_ø¥šf ¸À1 ­gãQÌ×Á`sÚQŒG/%,o:´ºîcí¦rÞ­dÉ/G)Dlj°æ*×h1½âKÐ¨3¼=9‚1Õ¥;Ò¤ncžÐËÝ]²³ýòyIë-‚W€l·ÖJÎÎ|Ê[Ò{žÔË¡¨™ˆ§r’Ê]<+ß¥$b¨ŠÇy“TãÈ¡LoTyòÜsÆþ$õ³ê ñ)4"­ýë.pþ¦ÕV–œÌDè•LãP·CãfÕ8R\œ†{ëêìÅªî]¿ùŒK‘X¬˜mI–é‡-ažßeÖõzo£×¥$±D6éwt®,©6&ìÑ¥nv3Ã©%yœ°¥h´Vþˆ×pö Û†£g4`Vé77»š*ÆÀ–N¨q€ \ù R45¿ÁèSÆèt¼šŒüÞ÷nIËa2z*ˆ'¶ß7èˆçAcKv.î;¿I-*:Ç»X&ËŒ²6Táþû‘‡-X Â1÷*·0ü†>ž Å(gDJ¨çdÐÖ„x5[?n­ °.?jáq:Æ’€dÕ—DDsóóâåÝŽŒºY1M894].E9Lm)lZ?p°$Mÿ×qã:	øeag—_5$3	Àm.zû
+[.sË\Ä.°R3Ý›ß¼0s‹:­fO“Ø	WžæKåVžªõ­8=¹ò5©~à\8£˜ÉäžPe™£èðôßþøïãgæÜ¬·î¸z"é}'ÂÁËjCw4ÍÂ‡íOÞ"»Ø<P–?¨Á£®=õAO„ÁN˜‚qO¿½sdÙáZù«”›øâ“_«w¿0Z«ßˆG_Þ‹ÛˆîIÃŒ{	é\a•Çx<±Ï§>¢Ic‘ï“‘Jš	cà¬Å©âáøÒ¿¯@Ìã ÂB²qz“·n±±c¥f(Úû=:”_i<fHöíþü3&Ï‡1†#X&Ž	(ïÁ‡ÑëýI8h¦î N£ã;&ÝBq.o€Æ ½ú‡1´³Qäz6é#²3®|='Bï|"ôïw§w°´·OÐ ?é;ù#§û]oìg:ý0úüNäáèŠì€È„î#r„9©þ€´>§›x[š²ÒÁl$ë£ïùÀ¾A5ÏÇ
+M$œM1IûÃèz,ày1;G\›ë+½ˆÇ³ß<Gëê»1±¢mEÈô×ÄN÷a“Á|xVØãÈA¦Ü¿KlÜZ‘5vc>GnäöùþŸõ#òtuþ¬ÆZ«·å‚R²´ò1s¥ÙÍtg41øâ°úúš?9ã¯"iö2ÄÑÔii<AÕM×õmàO^Mãµ•‹g0ÚÊžŠµfH´úà¼¦Úû0Z3›5«‘Ði}^Êfý°&ëG›ò=Ú”íG›òBo~´)§¡w•§Òw®n¥_|°fe:~Æ>?kÝÊ&òÎŒËÂ€!~þQØ˜e(XÖvèŽ=–3¢×Jh‚‚è¯8ÜÙIúhƒ~´A?Ú mÐ6èGô£úÑýSµAuxð@öçq_]Ö¦ñ öe“9`QsZOúÃ³0Öå²
+5¾Æˆ¢—s¢‡qÃ–­Â4@¥iYtôšÕœTÙ- ^ ÁE'þ3't—›v«¾J–ž=?YZÑ$»˜ÞBƒÖH™÷ÔëE/2Mc‘­E‘%WkÑ@/åX^d N[Ïðþ&ZÇ’úçrNgqµæû²é<ÚÁ?.;øFýc°ƒÓ)¡‰ç£Šû£NÂSËŒ¥C*k'§8ˆ…–r…¡¼­0”£¼Qh'/e&¿'+¹’å½™ˆ2(ÉØçØ–÷jœ|
+BXˆwŸlð¢-¹ZCïBGaÇèpi¿õùÃ^+t.é=zoÊ›þí&ú³àÑóøoZï…ÿfn‰øÑ‰óèÄytâ<:qÞã¡=:q8NœG'ÎéÄ!sXÞ#ŽŸ¦,eÏ™`ÅøO”éÚ¬IJ˜MK¨ƒzn°´ò…ù©ÈwÂ¨Æityé% XÊÀcRo%•Û|2›žÓ’‚,žú“‚ÜhÃ¦ñ'ïÀšVJXºHcÕÑôÁ”â†Óúëæôò5Æ»¿Î»Î²Ý²Wm«±Új¬Ök•3Qí´^Ûèœ)ÐÓâ£ŠýŠÍ“IÇV"R‰7ÜµWìíœŠ(þ·ÛƒÁ÷[ôAcŒª‘_íTÐn€‹øK³ß³ÏŠÝø…ÎÝÈ–ý7Ø—*ýî¤5!ñ
+[.«Þ"? )K¶†~Ú¬oØÐ¡µ†Î¾¯0³~jYÖ™"A"µpqKÜeµEÁÍ€ 5¹a¤ô›É¦±x‚(œ¾(ùØ‹Ããrtxôê`û¥ÙÒž_QÜ(Cúw\ ·IOÎg³•NµÑ4‡U2_Yvìî,än”t3Xî‡öÿ
+t1Ÿ+øÔng(m`e¼2¸£ÄNÞ*ÊÐ2›ôøüiø˜ùBÜ§ƒ™×‰(é`î´Þ‘ƒ™ÒÔš}ÏfÆá˜me\ËÂù[g§/½õì¡]Î:nžaÖÒÊ
+LîÉ¬±•ÝÇêƒ€D{âOÉž’Qàxžæµ6YFÀ…
+üÕ‹:4•2-õkÄ&Cô0˜<~šHO±Gä)@‰a÷ÔÂÚÊÓ=n)æ#÷o‘‰ÃVy]ðò3Å$cGÿ*®Ïê{Â}4Á5o–ÿíö„jrîjåAõ³&ã÷xý³†Úû'#›ÁŒ¾9ÍŸb‘Â1qt‚ÅµEã@íhã!CtØ™ƒŒÑä«NØ§Œá}OÁ:ìmí»ÖIE«5Xç=
+®™“®æ	zÈá;‚(aÓ|€›dû<t„M¼Á$Âæ'E`·³IubÕï?È&G{ds_Ô÷ÀA6¢¦ò€A6ìµ…‚l¸ÿŽlâžkf²qß6|ô<º¦óðá5éÒ-^#À~øÜè¤@ÌÝÇÖÜCüÌû>soc|_"hîm€DsoÃ¸ï8š{ëø{Jso£{ˆhš{ëü=ÔÜ[¿ß£˜Ñ™£… i™¢¶ECPcÎ‡ïS€Í‚øÀ¢må{z³à8Þ—8œòN“8*çîSš¥ÂR:ÓË×v–R_¥t)± Û¢&î-åèåîñÉþW·-`uúi»k[N'ˆÇ¡¬»¶ÝsyJ«cõ:ë%âPLa(ÙÀ’F£á:gÔÿ;_,„ptJ´ZÆµ]4,âôS§ÓjÖ|õ„F @xçnÉøˆé,˜Âã†w!Á§´ÿµvÉ0‰F»þŽâ$xg7Zuôüßk°DJn1aFL|Úït›ƒ÷;fBSAÔ¿³Sÿ)ÅMPYuûúC;Í%áúótëøÌ·û}*9#”ãÙ„^Ñ	õÄ…}xº¨1K
+©þþIäpj³%w¯X×1|íÁ¹áx“èªFö'½À–ÓOì¤IAiŸ4ÌœA­Ç ‹Ç ‹{²(KW¶ü#	²¸M°ÃOc¡
+ÁïYÐ,è?†<†<pØAã1ìà1ìà1ìà1ìà1ìà1ìà1ìàû}¿Á÷Gãï>ÄàÞÆö ÷ÖûÇp‚Çp‚‚r×2¤_WnâFŸœxc÷·þÄ}á÷AèHn÷ÂÃ©;Ùº‡þ…tK´€-~èÆ-¡go^Àqã
+$Cw§ÛïÚºŽø'±Ýcz×Öµ^Mzdyâ^œüÃ÷Å­ð;D88–yD È\É@ÈDÁUTôdØb³iß‰Üç~o¹ÿwWI½°ae•íÕf^eUKg“Ð>e¾¿ÉAÆÈ 4opDäxž÷£O5ÑkÚV-p§°-Üåµ×kç«d‰,­Ü¼É4ÜÆ‰zC²ì¹1‚ìÉ¹5øÒ–+{œP}†lƒ/£Ç—oÂ`±LÛ?S}N`nÖB}²=ñÆÐ†!¸À¬R"¤ätÊ…¿Ýg÷óŸã¹ãOÞù—µ‘îMø÷¯Ý‰ÓÅþÁ-Ë"]}Ü÷5dSRÿ¼	0g´u}•l’z†Ça]“n²²7¹—^dnF<¼KZ%èûÕÓø93XÑù¯‰	r]á@›dÖá.t@ÞûÚ‘æ„2>Jm£µJ`Lv}Õ0@i¦ø£}N|,7séÜÍû:aF“C†Ÿcç²
+Ì½Ù¤®øø8mÐ ‘l¤’b'fFW#:8œûsÚ(ÚÔÒc÷œÞ@þð²ôi¯ßØ¥ì8²\Ã¾(—$ÏØy˜úÒÂae0°8wOŽ½*&SJïj’8ìŠ†+]T;dÿKñ	]6ë"ÚO!='G9{½`é!ÝÃ™3t>îg%r™ê×Fq.¢+=ë±?½šlƒªXkÝê{øÔ«`”eGü…ê°='œÂA¤»Ö8c‚åXŽÝ<3£?ñÆçjù,z[iÕ=¼Q?êŒ¢­
+½·¢¾!ß}³ãw‡£èá+1ÁF>Õ/·*#ç‡+e€RÄI¥ø‡nú€¢t”Åë hÚÎl|Q<7ài<ò"Ðß”«ÝÚŠ€½Ž²&Ù¤¹@·zôu7OÖ†v¾Š®í6(e½À›Òmç§Š8§å¦<s£žt)O8è~Gß}áµ0ˆi©1”ÛÍ'ÐQý˜Ì¨‚s 
+¢è¨%{ì±¼l•ýa¦¢šRtak Ì½®9ùÞ)hÔŸºµø„÷¥²12£1­jõmt^…P£fé¨3¥å õÊ[ŽjŒìÉZ*É
+˜êzÒâ“µœ˜\N~þ¦ìp°”ˆÐ |œ
+YñwÜO…º+j{0ˆ¾Yc…7©«ÀŠÐã–È‘ª£K-@¥–!ÊMŽ™÷ÐÎ)žegn	­Í%´v,¡Á_Cü+F[kÉâZy¹,	eÈÉeù-¦”JdQÌnbÊÊc¹‰Iü@†•#’¢QŒ¢ÕG~×aÁË#çŠŒèIìèö*—!-‹ƒ¨j­ÙD ã¼¤@EiÔ©Š2L>Q6¹··k7wÎhKq`_N}GRuß¢‡ª:Aµ_Y—¬D/AÇib,JSNº·÷|·ùœg…ìíl×­½LèõDì˜‚Ý c[«¶m¯®¯s‹.F2Õƒvª—7W¦¯4v×rxG-ÛjX³9‰>NT¡§M’µbõ¬>ßæhFåÏœþ¹{äØ'øf=Oðé¬Rþ•‹]ÏO\gEŸ‚Rl
+T|¡Diîü8i„ %Ú©ƒv,œÿÞÈ›Vñ‹ìbpª*bÂEþV^¡Ù”E‰Çix<Ä8f¦-‚Ì£âÕ®R&•ÌqÑAŒ, ×cvÐÅÎ0jÜqGn7p”óÐ%b>0CZ¦%÷S*ùX®åÚ3Tiå“
+3¦dkj#"´r¦èÖÊY†«¡÷ ÃæR{¦¥×ëS-!_CûÎù&©ü¿ÿø§‚ÿÿWeãÐÛ.Zív§ÞøÅ/~Wß:#¸²Qÿ-œÌR×¾™]û
+¹Y-õÞÿÿÿù½ëëVÃßÛiçÞ›ñ·Æ¦nóÎŽÝ¶7¤w6rïôa[œ»”²á­ü7ZHK'%ŸÕÆÎty™Ð*ñ¨ ÔKø¥¯ïÝ«­kïFãKRÛ´MMç´W–Ì4tý&•@ÄÂü!óÙ5¾®FgõF2%A!×÷y¢¼¹yzíýÒº)k¯Œ«âš¹ÈªÆ}Pfi—‘xJäVšOŠxI…†âá¬s'Í
+âWs*-÷öRüú°²Š÷©‹(±`ÉÄà+D’ÄÖYØ<·MA[QHÂ¦ø³÷FÊaÓúheØÃ«OÊócåH*äÅ“Ñy‚RúõçnaäôS§í¸ÝÉil’F:œ\N@ ézçç4WâD³`‚*É"Òˆ½ao7êg4L6«7'ÒˆÝdÒH[,2;Úz±CV””:þþÿŸÒIõO‡þä¼n×ÉiüÙºÕ\m¯¯×æ8åÿ
+ÿÿEjûÅ,„†¯Üð÷3nÓÆÛu{µc7j Ù/.B¼tÆNÚdÓî¬6Û¬Éw,Ü\`ŒKW7tÓØ0þÓ¡¨õæƒìcIYÀ¦¡w  ÄÝÍ‰/œ¨âîç\A:ìßáY/!aøùGzÓ"H4¾í'q”¿š„‘?b”ÙóƒÞ<¶…;9Î'³q¾õI4äÇ{œçOÅï<7úÿ}r0¶êëvëîðf«e7n©ÿ7%›C£Ój[g÷ãÙýxv<¢ôvÞÞÍYÎÏyùÁUÎ»I¯~ë¹@gRÇà,<7Üº>>9|¹¿{,’;?÷Ì/·®ã0TÚ½&ß­m¥w+<zk%‡ÍÇæ…ÛÓé™‘‡—ÛñZ×)ˆ«i­gmÉãþ&ýø€=è;ï:9þæœËÏÝð{8SWr¾±œ‹¶ãïCß×:•ÅFç›ø™ç ,Öï]·Û‰|“=¦0–4f—xL;¯Šá9µV‰½J«¤¹JZŒ{zÆ²ì7!LA5„ñW?þýæFæ“rxÜè<‰iÖcOyu:zàb!-7Ž h*)»ïTÒ²Šçƒø“YdoR½¨Öù´ªæÖökýéÒªœyŒ¦Ó]9XVøÜn&.ÌÌªu³«VlÆ¦¶EM»¤RŒv-u³0ßÉ—?òrK9÷úéÛ¦ºL[<EÓíAñòïòe[6Çƒ$8ÁÜÞÉ+ç Á»ý¢¨œûî¤ÏpˆÌaŠ@Þòk‚û£ÏÒâ iÉ©uûÖd%©ÁŒ(©ài,ëòa
+ð=˜6Ó¥?Ôz„é7bŒ(652KCwRÜñdÎvejLƒ×BØØóê	x€Þ³»ÿ7Ì¹’pœX,*ÔF„Ñù'R2ü°/Š?Œä3øÍ9âèà_H•!ô3Peh@à?×§µZm;€i[n´W¸ú:VA™…6›W²U7ÛA\¥ì?Çj,¸X]?Šü1L	ŸâÁÚe¨[í¹N˜È÷ÕÂ[–‰•`‘†Ù)ÎßÓr˜—4èìÈ™¸£2¢¶n2ó"·ÝNƒÌ,ÇêZƒ3u¶Rn‰Y ô¤.’ÂT}H %ç>ùV:mKI<ömÎ­{ÑœToZ¤$OC£hš÷%ÐPy¢óàMÞ†Ù$<áxa
+ëäúïŽÝÀõ1–Yµ4¾[™ò]ºó¿èæå®9ó‚B”g0¨õ©’èRŽ¡â4QYC³AÆ)BÕÈ]CŒÝ¾	ø!Þ±ÈÎ¸ÝÜÈ°vw¼ô¯¹sò×NO,è9´2§¥ë¬¤P|Ö!cìw«ç­RÎhg•ÿ9ŒD·8J\. È\{B×gå‹ŸÝ|ñ³ÿ  ÿÿ TŽøç

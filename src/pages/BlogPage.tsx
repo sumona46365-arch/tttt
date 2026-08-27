@@ -6,7 +6,8 @@ import {
   Gift, Info, BookOpen, ShieldCheck, ChevronDown, CheckCircle, 
   HelpCircle, Users, TrendingUp, DollarSign, Smartphone, Laptop, 
   ChevronRight, Star, Lock, Activity, ArrowRight, Play, Search,
-  Globe, Coins, Shield, FileText, Check, Cpu, Layers, RefreshCw
+  Globe, Coins, Shield, FileText, Check, Cpu, Layers, RefreshCw,
+  AlertTriangle, ArrowUpRight
 } from 'lucide-react';
 import { db, collection, getDocs, query, where, orderBy } from '../firebase';
 import SEO from '../components/SEO';
@@ -61,6 +62,39 @@ export default function BlogPage() {
     fetchBlogs();
   }, []);
 
+  const defaultShowcasePosts: BlogItem[] = [
+    {
+      id: 'copy-trading-masterclass',
+      title: 'Bivaax Copy Trading: Follow Top Professionals & Grow Your Portfolio',
+      description: 'New to trading? No problem. With Bivaax Copy Trading, you can automatically replicate the trades of top-performing professionals like ALEX FOREX and TRADEMINATOR. Set your budget, choose a master trader with a high win rate (80%+), and let our system handle the execution. It is the easiest way for beginners to start earning while they learn the markets.',
+      imageUrl: 'https://i.postimg.cc/Tw9xf0K9/Screenshot-20260826-141703.png',
+      link: '/copytrading',
+      createdAt: Date.now(),
+      order: 0,
+      isActive: true
+    },
+    {
+      id: 'referral-affiliate-program',
+      title: 'Bivaax Referral Program: Earn $10-$20 per Friend & Up to 80% RevShare',
+      description: 'Unlock a new stream of income by inviting your network to Bivaax. Whether you are a casual trader or a professional affiliate, our system offers industry-leading payouts. Share your unique link, invite active traders, and watch your balance grow as your community trades. Learn the rules of the road and the fastest way to scale your commissions.',
+      imageUrl: 'https://i.postimg.cc/GhDMD2QL/Screenshot-20260826-141630.png',
+      link: '/affiliate',
+      createdAt: Date.now(),
+      order: 0,
+      isActive: true
+    },
+    {
+      id: 'landscape-mobile-terminal',
+      title: 'Pro Mobile Landscape Trading Terminal - Fully Responsive Layout',
+      description: 'Experience true desktop-grade trading on mobile devices. When rotating your phone horizontally into landscape mode, Bivaax Trade dynamically switches into a full-screen trading view featuring real-time candlestick charts, live asset selection (e.g., AUD/USD OTC @ 90% Payout), remaining countdown timer, live community sentiment gauge (51% Call / 49% Put), and a vertical scrollable order entry panel for seamless Call/Put execution.',
+      imageUrl: 'https://i.postimg.cc/XqSnstSs/Screenshot-20260826-140147.png',
+      link: '/trade',
+      createdAt: Date.now(),
+      order: 1,
+      isActive: true
+    }
+  ];
+
   const fetchBlogs = async () => {
     try {
       const q = query(
@@ -70,9 +104,15 @@ export default function BlogPage() {
       );
       const snap = await getDocs(q);
       const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as BlogItem[];
-      setBlogs(data);
+      const hasSpotlight = data.some(b => b.id === 'landscape-mobile-terminal' || b.id === 'referral-affiliate-program' || b.id === 'copy-trading-masterclass');
+      if (!hasSpotlight) {
+        setBlogs([...defaultShowcasePosts, ...data]);
+      } else {
+        setBlogs(data);
+      }
     } catch (error) {
       console.error("Error fetching blogs:", error);
+      setBlogs(defaultShowcasePosts);
     } finally {
       setLoading(false);
     }
@@ -218,7 +258,7 @@ export default function BlogPage() {
       <SEO 
         title="Official Blog & Platform Intelligence Hub | Bivaax Trade"
         description="The ultimate comprehensive guide to Bivaax Trade: platform specifications, asset yields, 7-tier VIP statuses, 1-click execution engine, security policies, and official updates."
-        keywords="Bivaax blog, Bivaax official hub, binary options trading guide, bivaax vip statuses, crypto deposits, withdraw profit, trading tutorial, bivaax platform specs"
+        keywords="Bivaax blog, Bivaax official hub, Bivaax referral program, invite friends bivaax, bivaax affiliate rewards, binary options trading guide, bivaax vip statuses, crypto deposits, withdraw profit, trading tutorial, bivaax platform specs"
       />
 
       {/* Floating Header */}
@@ -520,6 +560,277 @@ export default function BlogPage() {
                 <p className="text-gray-400 text-xs leading-relaxed">{step.desc}</p>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+      
+      {/* Featured Copy Trading Showcase */}
+      <section className="py-20 px-6 max-w-7xl mx-auto border-b border-white/5" id="copy-trading-showcase">
+        <div className="bg-[#0c0d12] border border-emerald-500/30 rounded-[32px] p-6 sm:p-10 relative overflow-hidden shadow-2xl">
+          <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+
+          <div className="flex flex-col lg:flex-row gap-10 items-center">
+            {/* Image Preview Container */}
+            <div className="w-full lg:w-1/2">
+              <div className="relative rounded-2xl overflow-hidden border border-white/10 group shadow-2xl bg-[#1a1b22]">
+                <img 
+                  src="https://i.postimg.cc/Tw9xf0K9/Screenshot-20260826-141703.png" 
+                  alt="Bivaax Copy Trading Terminal - Top Traders List"
+                  className="w-full h-auto object-cover group-hover:scale-[1.02] transition-transform duration-500"
+                  referrerPolicy="no-referrer"
+                />
+                <div className="absolute top-3 left-3 bg-black/80 backdrop-blur-md px-3 py-1 rounded-full border border-white/10 text-[10px] font-black uppercase text-emerald-400 tracking-widest flex items-center gap-1.5">
+                  <TrendingUp size={12} />
+                  <span>80%+ Weekly Gain Possible</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Showcase Details */}
+            <div className="w-full lg:w-1/2 space-y-6">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-black uppercase tracking-widest">
+                <Activity size={12} fill="currentColor" />
+                <span>Passive Income Mechanic</span>
+              </div>
+
+              <h2 className="text-2xl sm:text-4xl font-black uppercase tracking-tight text-white leading-tight">
+                Copy Top Traders & Learn <span className="text-emerald-400">Profitably</span>
+              </h2>
+
+              <p className="text-gray-300 text-sm leading-relaxed">
+                Bivaax Copy Trading allows you to synchronize your account with professional "Master Traders". When they place a trade, your account automatically replicates the same trade in real-time, adjusted to your balance.
+              </p>
+
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <h4 className="text-white font-bold text-sm">Real-time Performance</h4>
+                    <p className="text-xs text-gray-400 leading-relaxed">Monitor win/loss ratios, weekly gains, and the number of active copiers for each master trader before committing.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <h4 className="text-white font-bold text-sm">Automatic Execution</h4>
+                    <p className="text-xs text-gray-400 leading-relaxed">No need to stay online. Our servers mirror the master's trades instantly, even while you sleep.</p>
+                  </div>
+                </div>
+
+                <div className="bg-white/5 p-4 rounded-2xl border border-white/5 space-y-3">
+                   <h3 className="text-emerald-400 font-black uppercase text-xs tracking-wider">How to Start Copying:</h3>
+                   <div className="space-y-2 text-[13px] text-gray-300">
+                      <div className="flex items-start gap-3">
+                        <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">1</div>
+                        <span>Browse the <strong>Top Traders</strong> list and check their stats (e.g. ALEX FOREX @ 92% Profit).</span>
+                      </div>
+                      <div className="flex items-start gap-3">
+                        <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">2</div>
+                        <span>Click on a Trader to see their <strong>Commission Rate</strong> (typically 10% on profit).</span>
+                      </div>
+                      <div className="flex items-start gap-3">
+                        <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">3</div>
+                        <span>Set your <strong>Allocation Limit</strong> and click 'Start Copying'.</span>
+                      </div>
+                   </div>
+                </div>
+
+                <div className="flex items-start gap-2 text-[12px] text-gray-400 italic bg-red-500/5 p-3 rounded-xl border border-red-500/10">
+                   <Shield size={14} className="text-red-500 shrink-0 mt-0.5" />
+                   <span><strong>Risk Warning:</strong> Trading involves risk. Copying a trader does not guarantee profits. Always manage your capital wisely.</span>
+                </div>
+              </div>
+
+              <div className="pt-4 flex flex-wrap gap-3">
+                <button
+                  onClick={() => handleNavigation('/copytrading')}
+                  className="px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase tracking-widest text-[13px] rounded-2xl transition-all shadow-lg flex items-center gap-2"
+                >
+                  <span>Go to Copy Trading</span>
+                  <ArrowRight size={16} />
+                </button>
+                <button
+                  onClick={() => handleNavigation('/trade')}
+                  className="px-6 py-4 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold uppercase tracking-widest text-[11px] rounded-2xl transition-all"
+                >
+                  Become a Master
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Official Referral & Affiliate Program Showcase */}
+      <section className="py-20 px-6 max-w-7xl mx-auto border-b border-white/5" id="referral-program-showcase">
+        <div className="bg-[#0c0d12] border border-blue-500/30 rounded-[32px] p-6 sm:p-10 relative overflow-hidden shadow-2xl">
+          <div className="absolute top-0 right-0 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
+
+          <div className="flex flex-col lg:flex-row-reverse gap-10 items-center">
+            {/* Image Preview Container */}
+            <div className="w-full lg:w-1/2">
+              <div className="relative rounded-2xl overflow-hidden border border-white/10 group shadow-2xl bg-[#1a1b22]">
+                <img 
+                  src="https://i.postimg.cc/GhDMD2QL/Screenshot-20260826-141630.png" 
+                  alt="Bivaax Referral & Invite Friends Program"
+                  className="w-full h-auto object-cover group-hover:scale-[1.02] transition-transform duration-500"
+                  referrerPolicy="no-referrer"
+                />
+                <div className="absolute top-3 left-3 bg-black/80 backdrop-blur-md px-3 py-1 rounded-full border border-white/10 text-[10px] font-black uppercase text-blue-400 tracking-widest flex items-center gap-1.5">
+                  <Gift size={12} />
+                  <span>Referral Rewards Enabled</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Showcase Details */}
+            <div className="w-full lg:w-1/2 space-y-6">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 text-blue-400 text-[10px] font-black uppercase tracking-widest">
+                <Users size={12} fill="currentColor" />
+                <span>Partner with Bivaax</span>
+              </div>
+
+              <h2 className="text-2xl sm:text-4xl font-black uppercase tracking-tight text-white leading-tight">
+                Invite Friends & Earn <span className="text-blue-400">$10-$20*</span> per Trader
+              </h2>
+
+              <p className="text-gray-300 text-sm leading-relaxed">
+                Our Referral and Affiliate programs are designed to reward your influence. From simple social sharing to professional partnership models, we offer the most competitive payout structures in the market.
+              </p>
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                   <h3 className="text-[#FFE24C] font-black uppercase text-xs tracking-wider">How it Works:</h3>
+                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[13px] text-gray-300">
+                      <div className="flex items-center gap-2">
+                        <div className="w-5 h-5 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold text-[10px]">1</div>
+                        <span>Copy your unique Link from Profile</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-5 h-5 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold text-[10px]">2</div>
+                        <span>Share on Social Media or Blogs</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-5 h-5 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold text-[10px]">3</div>
+                        <span>Friends sign up and start trading</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-5 h-5 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold text-[10px]">4</div>
+                        <span>Earn $10-20* or up to 80% RevShare</span>
+                      </div>
+                   </div>
+                </div>
+
+                <div className="space-y-2 pt-2 border-t border-white/5">
+                   <h3 className="text-red-400 font-black uppercase text-xs tracking-wider">Strict Program Rules:</h3>
+                   <div className="grid grid-cols-1 gap-2 text-[12px] text-gray-400 italic">
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle size={14} className="text-red-500 shrink-0 mt-0.5" />
+                        <span><strong>No Self-Referrals:</strong> Referring your own accounts or family on the same IP is prohibited.</span>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle size={14} className="text-red-500 shrink-0 mt-0.5" />
+                        <span><strong>No Brand Bidding:</strong> Search ads using "Bivaax" keywords are strictly forbidden.</span>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle size={14} className="text-red-500 shrink-0 mt-0.5" />
+                        <span><strong>Authentic Traffic:</strong> No spamming or misleading claims about trading profits.</span>
+                      </div>
+                   </div>
+                </div>
+              </div>
+
+              <div className="pt-4 flex flex-wrap gap-3">
+                <button
+                  onClick={() => handleNavigation('/affiliate')}
+                  className="px-8 py-4 bg-blue-600 hover:bg-blue-500 text-white font-black uppercase tracking-widest text-[13px] rounded-2xl transition-all shadow-lg flex items-center gap-2"
+                >
+                  <span>Access Affiliate Hub</span>
+                  <ArrowUpRight size={16} />
+                </button>
+                <button
+                  onClick={() => handleNavigation('/trade')}
+                  className="px-6 py-4 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold uppercase tracking-widest text-[11px] rounded-2xl transition-all"
+                >
+                  Invite Friends (Profile)
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Featured Mobile Landscape Terminal Showcase */}
+      <section className="py-20 px-6 max-w-7xl mx-auto border-b border-white/5" id="mobile-landscape-showcase">
+        <div className="bg-[#0c0d12] border border-[#FFE24C]/30 rounded-[32px] p-6 sm:p-10 relative overflow-hidden shadow-2xl">
+          <div className="absolute top-0 right-0 w-96 h-96 bg-[#FFE24C]/10 rounded-full blur-3xl pointer-events-none" />
+
+          <div className="flex flex-col lg:flex-row gap-10 items-center">
+            {/* Image Preview Container */}
+            <div className="w-full lg:w-1/2">
+              <div className="relative rounded-2xl overflow-hidden border border-white/10 group shadow-2xl bg-black">
+                <img 
+                  src="https://i.postimg.cc/XqSnstSs/Screenshot-20260826-140147.png" 
+                  alt="Pro Mobile Landscape Trading Terminal View"
+                  className="w-full h-auto object-cover group-hover:scale-[1.02] transition-transform duration-500"
+                  referrerPolicy="no-referrer"
+                />
+                <div className="absolute top-3 left-3 bg-black/80 backdrop-blur-md px-3 py-1 rounded-full border border-white/10 text-[10px] font-black uppercase text-[#FFE24C] tracking-widest flex items-center gap-1.5">
+                  <Smartphone size={12} />
+                  <span>Landscape Auto-Rotate Mode</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Showcase Details */}
+            <div className="w-full lg:w-1/2 space-y-5">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-yellow-500/10 text-[#FFE24C] text-[10px] font-black uppercase tracking-widest">
+                <Zap size={12} fill="currentColor" />
+                <span>Featured Interface Release</span>
+              </div>
+
+              <h2 className="text-2xl sm:text-4xl font-black uppercase tracking-tight text-white leading-tight">
+                Pro Mobile Landscape Trading Terminal
+              </h2>
+
+              <p className="text-gray-300 text-sm leading-relaxed">
+                Experience full desktop-grade trading capabilities on mobile devices. Rotating your phone horizontally instantly activates the full-screen landscape interface with optimized chart scaling and touch controls:
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-gray-300 font-medium">
+                <div className="flex items-start gap-2 bg-white/5 p-3 rounded-xl border border-white/5">
+                  <CheckCircle size={16} className="text-[#FFE24C] shrink-0 mt-0.5" />
+                  <span><strong>AUD/USD (OTC) 90% Payout</strong> real-time price feeds</span>
+                </div>
+                <div className="flex items-start gap-2 bg-white/5 p-3 rounded-xl border border-white/5">
+                  <CheckCircle size={16} className="text-[#FFE24C] shrink-0 mt-0.5" />
+                  <span><strong>Live Remaining Time</strong> countdown indicator</span>
+                </div>
+                <div className="flex items-start gap-2 bg-white/5 p-3 rounded-xl border border-white/5">
+                  <CheckCircle size={16} className="text-[#FFE24C] shrink-0 mt-0.5" />
+                  <span><strong>Majority Opinion Meter</strong> (51% Call / 49% Put)</span>
+                </div>
+                <div className="flex items-start gap-2 bg-white/5 p-3 rounded-xl border border-white/5">
+                  <CheckCircle size={16} className="text-[#FFE24C] shrink-0 mt-0.5" />
+                  <span><strong>Scrollable Order Panel</strong> for smooth Call/Put access</span>
+                </div>
+              </div>
+
+              <div className="pt-2 flex flex-wrap gap-3">
+                <button
+                  onClick={() => handleNavigation('/trade')}
+                  className="px-6 py-3 bg-[#FFE24C] hover:bg-[#e6cb44] text-black font-black uppercase tracking-widest text-xs rounded-xl transition-all shadow-lg flex items-center gap-2"
+                >
+                  <span>Test Landscape Terminal</span>
+                  <ArrowRight size={14} />
+                </button>
+                <a
+                  href="https://i.postimg.cc/XqSnstSs/Screenshot-20260826-140147.png"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-5 py-3 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold uppercase tracking-widest text-xs rounded-xl transition-all flex items-center gap-2"
+                >
+                  <span>View High-Res Image</span>
+                  <ExternalLink size={14} />
+                </a>
+              </div>
+            </div>
           </div>
         </div>
       </section>

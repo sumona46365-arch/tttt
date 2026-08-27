@@ -203,11 +203,15 @@ export async function authoritativeSync(userId: string, emitSocket = true) {
 
     const rawFireRealBal = fireData.real_balance ?? fireData.realBalance ?? fireData.balance;
     const fireRealBal = (rawFireRealBal !== undefined && rawFireRealBal !== null) ? parseFloat(rawFireRealBal.toString()) : null;
-    const finalRealBal = (fireRealBal !== null && !isNaN(fireRealBal)) ? fireRealBal : (oldUser ? parseFloat((oldUser.real_balance ?? 0).toString()) : 0);
+    const finalRealBal = (oldUser && oldUser.real_balance !== undefined && oldUser.real_balance !== null) 
+      ? parseFloat((oldUser.real_balance ?? 0).toString()) 
+      : ((fireRealBal !== null && !isNaN(fireRealBal)) ? fireRealBal : 0);
 
     const rawFireDemoBal = fireData.demo_balance ?? fireData.demoBalance;
     const fireDemoBal = (rawFireDemoBal !== undefined && rawFireDemoBal !== null) ? parseFloat(rawFireDemoBal.toString()) : null;
-    const finalDemoBal = (fireDemoBal !== null && !isNaN(fireDemoBal)) ? fireDemoBal : (oldUser ? parseFloat((oldUser.demo_balance ?? 10000).toString()) : 10000);
+    const finalDemoBal = (oldUser && oldUser.demo_balance !== undefined && oldUser.demo_balance !== null) 
+      ? parseFloat((oldUser.demo_balance ?? 10000).toString()) 
+      : ((fireDemoBal !== null && !isNaN(fireDemoBal)) ? fireDemoBal : 10000);
 
     const rawFireAffBal = fireData.affiliate_balance ?? fireData.affiliateBalance;
     const fireAffBal = (rawFireAffBal !== undefined && rawFireAffBal !== null) ? parseFloat(rawFireAffBal.toString()) : null;
@@ -218,7 +222,14 @@ export async function authoritativeSync(userId: string, emitSocket = true) {
     const fireFirstName = fireData.firstName || fireData.first_name || (user ? user.first_name : null);
     const fireLastName = fireData.lastName || fireData.last_name || (user ? user.last_name : null);
     const fireGender = fireData.gender || (user ? user.gender : null);
-    const fireDob = typeof fireData.dob === 'object' && fireData.dob !== null ? JSON.stringify(fireData.dob) : (fireData.dob || (user ? user.dob : null));
+    const fireDob = (() => {
+      if (typeof fireData.dob === 'object' && fireData.dob !== null) return JSON.stringify(fireData.dob);
+      if (fireData.dob) return fireData.dob;
+      if (fireData.birthDay || fireData.birthMonth || fireData.birthYear) {
+        return JSON.stringify({ day: fireData.birthDay || '--', month: fireData.birthMonth || '--', year: fireData.birthYear || '--' });
+      }
+      return user ? user.dob : null;
+    })();
     const fireNickname = fireData.nickname || (user ? user.nickname : null);
     const firePhone = fireData.phone || fireData.phoneNumber || (user ? user.phone : null);
     const isVerifiedVal = (fireData.is_verified || fireData.isVerified || fireData.emailVerified || fireData.isEmailVerified || fireData.is_email_verified || (user && (user.is_verified || user.is_email_verified))) ? 1 : 0;

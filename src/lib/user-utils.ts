@@ -10,7 +10,7 @@ export function mapUserForFrontend(user: any) {
     displayName: user.display_name || user.displayName || user.first_name || user.email?.split('@')[0] || 'User',
     firstName: user.first_name || user.firstName,
     lastName: user.last_name || user.lastName,
-    gender: user.gender,
+    gender: user.gender || 'Male',
     dob: (() => {
       if (!user.dob) return null;
       try {
@@ -18,6 +18,30 @@ export function mapUserForFrontend(user: any) {
       } catch (e) {
         return user.dob;
       }
+    })(),
+    birthDay: (() => {
+      if (user.birthDay || user.birth_day) return String(user.birthDay || user.birth_day);
+      if (!user.dob) return '--';
+      try {
+        const obj = typeof user.dob === 'string' ? JSON.parse(user.dob) : user.dob;
+        return obj?.day ? String(obj.day) : '--';
+      } catch (e) { return '--'; }
+    })(),
+    birthMonth: (() => {
+      if (user.birthMonth || user.birth_month) return String(user.birthMonth || user.birth_month);
+      if (!user.dob) return '--';
+      try {
+        const obj = typeof user.dob === 'string' ? JSON.parse(user.dob) : user.dob;
+        return obj?.month ? String(obj.month) : '--';
+      } catch (e) { return '--'; }
+    })(),
+    birthYear: (() => {
+      if (user.birthYear || user.birth_year) return String(user.birthYear || user.birth_year);
+      if (!user.dob) return '--';
+      try {
+        const obj = typeof user.dob === 'string' ? JSON.parse(user.dob) : user.dob;
+        return obj?.year ? String(obj.year) : '--';
+      } catch (e) { return '--'; }
     })(),
     nickname: user.nickname || user.displayName,
     photoURL: user.photo_url || user.photoURL || '',

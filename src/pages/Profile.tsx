@@ -443,13 +443,29 @@ export default function ProfilePage() {
   const handleSaveProfile = async () => {
     if (!user) return;
     setIsSubmitting(true);
+    const dobObj = JSON.stringify({ day: dobDay, month: dobMonth, year: dobYear });
     try {
+      try {
+        localStorage.setItem(`bivax_personal_data_${user.uid}`, JSON.stringify({
+          firstName,
+          lastName,
+          gender,
+          day: dobDay,
+          month: dobMonth,
+          year: dobYear,
+          country: depositCountry
+        }));
+      } catch(e) {}
+
       await updateDoc(doc(db, 'users', user.uid), {
         firstName,
         lastName,
         name: `${firstName} ${lastName}`.trim(),
         gender,
-        dob: { day: dobDay, month: dobMonth, year: dobYear },
+        birthDay: dobDay,
+        birthMonth: dobMonth,
+        birthYear: dobYear,
+        dob: dobObj,
         newsletter: emailNewsletter,
         allowNotifications,
         country: depositCountry,
@@ -461,8 +477,8 @@ export default function ProfilePage() {
       
       // Sync with SQL Backend
       const token = await auth.currentUser?.getIdToken();
-      await fetch(`/api/users/${user.uid}`, {
-        method: 'PATCH',
+      await fetch('/api/user/profile/update', {
+        method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
           ...(token ? { 'Authorization': `Bearer ${token}` } : {})
@@ -474,7 +490,10 @@ export default function ProfilePage() {
           firstName,
           lastName,
           gender,
-          dob: { day: dobDay, month: dobMonth, year: dobYear }
+          birthDay: dobDay,
+          birthMonth: dobMonth,
+          birthYear: dobYear,
+          dob: dobObj
         })
       });
 
